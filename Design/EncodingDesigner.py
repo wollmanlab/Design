@@ -303,6 +303,7 @@ class EncodingDesigner(nn.Module):
             'n_iterations': 5000,
             'total_n_probes': 30e4,
             'probe_weight': 1,
+            'probe_under_weight_factor': 0.05, # Penalty factor for when total_n_probes is below target but we still want to push it down
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
             'gene_constraint_weight': 1,
@@ -914,12 +915,52 @@ class EncodingDesigner(nn.Module):
         total_loss = torch.tensor(0.0, device=self.user_parameters['device'], requires_grad=True)
 
         # -- Probe Weight Loss (Global) --
-        if self.user_parameters['probe_weight'] != 0:
-            probe_count = E.sum()
-            probe_weight_loss = self.user_parameters['probe_weight'] * (F.relu(probe_count - self.user_parameters['total_n_probes']) + 1).log10()
-            current_stats['total_n_probes' + suffix] = probe_count.item()
-            current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
-            total_loss = total_loss + probe_weight_loss
+        # This section calculates penalties related to the total number of probes.
+        # probe_count is E.sum(), which is the sum of all encoding weights.
+        probe_count = E.sum() 
+        current_stats['total_n_probes' + suffix] = probe_count.item()
+        
+        # Initialize probe_weight_loss to zero. It will be updated if any relevant penalties apply.
+        probe_weight_loss = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+        
+        probe_weight_for_over = self.user_parameters['probe_weight'] 
+        # 'probe_under_weight_factor' is used for the "push down" penalty when under target.
+        push_down_weight_for_under = self.user_parameters['probe_under_weight_factor'] 
+
+        # Proceed only if at least one of the weights is non-zero.
+        if probe_weight_for_over != 0.0 or push_down_weight_for_under != 0.0:
+            total_n_probes_target = float(self.user_parameters['total_n_probes'])
+
+            # 1. Penalty for `probe_count` being OVER `total_n_probes_target`
+            # This penalty increases as `probe_count` exceeds `total_n_probes_target`.
+            # It is zero if `probe_count` is at or below `total_n_probes_target`.
+            penalty_over = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+            if probe_weight_for_over != 0.0:
+                diff_over = probe_count - total_n_probes_target
+                penalty_over = probe_weight_for_over * (F.relu(diff_over) + 1).log10()
+
+            # 2. Penalty for `probe_count` being UNDER `total_n_probes_target` (Push Down Penalty)
+            # This penalty is designed to encourage `probe_count` to be even lower if it's already
+            # below `total_n_probes_target`. The penalty is larger when `probe_count` is closer
+            # to `total_n_probes_target` (from below) and smaller as `probe_count` decreases.
+            # It is zero if `probe_count` is zero or if `probe_count` >= `total_n_probes_target`.
+            penalty_push_down = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+            if push_down_weight_for_under != 0.0:
+                if probe_count < total_n_probes_target:
+                    # Ensure total_n_probes_target is not zero for division.
+                    safe_total_n_probes_target = max(total_n_probes_target, 1e-8)
+                    # The term (probe_count / safe_total_n_probes_target) is in [0, 1) when probe_count < target.
+                    # So, ( (probe_count / safe_total_n_probes_target) + 1 ) is in [1, 2).
+                    # The .log10() of this will range from log10(1)=0 to approx log10(2) as probe_count approaches target.
+                    # This makes its scale comparable to the (F.relu(diff_over)+1).log10() term when diff_over is small (e.g., 1).
+                    normalized_under_log_argument = (probe_count / safe_total_n_probes_target) + 1
+                    penalty_push_down = push_down_weight_for_under * normalized_under_log_argument.log10()
+            
+            probe_weight_loss = penalty_over + penalty_push_down
+        
+        current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
+        # Add to total_loss. probe_weight_loss is a tensor (potentially 0.0).
+        total_loss = total_loss + probe_weight_loss
 
         # -- Categorical Loss (already calculated) --
         if self.user_parameters['categorical_weight'] != 0:
