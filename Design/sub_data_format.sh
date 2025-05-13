@@ -1,7 +1,7 @@
 #!/bin/bash
 #$ -cwd
 # error = Merged with joblog
-#$ -o joblog.$JOB_ID
+#$ -o job_data_format.$JOB_ID
 #$ -j y
 ## Edit the line below as needed:
 #$ -l h_rt=1:00:00,h_data=64G

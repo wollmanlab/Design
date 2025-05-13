@@ -363,7 +363,12 @@ class EncodingDesigner(nn.Module):
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         logging.basicConfig(level=logging.INFO) # Reset basic config
-        self.log_file = os.path.join(temp_output_dir, 'designer.log')
+        
+        # Extract filename from user_parameters_path and remove .csv extension
+        input_filename = os.path.basename(user_parameters_path) if user_parameters_path else "default"
+        input_filename = os.path.splitext(input_filename)[0]  # Remove .csv extension
+        self.log_file = os.path.join(temp_output_dir, f'log_{input_filename}.log')
+        
         if os.path.exists(self.log_file):
             os.remove(self.log_file)
         logging.basicConfig(
@@ -998,6 +1003,8 @@ class EncodingDesigner(nn.Module):
              current_stats['type_correlation_mean' + suffix] = np.nan
              current_stats['type_correlation_mean_loss' + suffix] = 0.0
              current_stats['type_correlation_max_loss' + suffix] = 0.0
+
+        # Add a "Tree" element to the seperation similar to TreeDPNMF approach
 
         # --- Total Loss ---
         current_stats['total_loss' + suffix] = total_loss.item()
@@ -1794,7 +1801,9 @@ if __name__ == '__main__':
     user_parameters_path = args.user_parameters_path
     
     model = EncodingDesigner(user_parameters_path=user_parameters_path)
-    model.initialize()
+    if not model.initialize():
+        print("Initialization failed. Check the log file for details.")
+        exit(1)
     model.fit()
     model.evaluate()
     model.visualize(show_plots=False)

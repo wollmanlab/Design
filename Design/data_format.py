@@ -8,6 +8,7 @@ import os
 
 # %%
 data_path = '/u/project/rwollman/data/Allen_WMB_2024Mar06'
+output_path = f"/u/home/r/rwollman/project-rwollman/atlas_design/Design/Training_data/"
 
 # %%
 available_cells = np.array(pd.read_csv(f"{data_path}/metadata/WMB-10X/20230830/available_cells.csv",index_col=0).index)
@@ -116,7 +117,7 @@ for feature_matrix_label in chosen_cell_metadata['feature_matrix_label'].unique(
 X_train.shape,X_test.shape,y_train.shape,y_test.shape,r_train.shape,r_test.shape
 
 # %%
-output_path = f"{data_path}/Training_data/"
+
 if not os.path.exists(output_path):
     os.mkdir(output_path)
 pd.DataFrame(categorical_converter.values(),index=categorical_converter.keys(),columns=['label']).to_csv(f"{output_path}/categorical_converter.csv")
