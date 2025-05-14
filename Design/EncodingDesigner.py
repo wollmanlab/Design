@@ -332,6 +332,8 @@ class EncodingDesigner(nn.Module):
             'r_train': 'r_train.pt',          # Default filename
             'y_label_converter_path': 'categorical_converter.csv', # Default filename
             'r_label_converter_path': 'region_categorical_converter.csv', # Default filename
+            'hierarchical_scatter_weight': 0.0,  # Weight for the new hierarchical scatter loss
+            'y_hierarchy_file_path': 'child_parent_relationships.csv',     # Path to the file defining cell type hierarchy (e.g., 'cell_type_hierarchy.csv')
         }
 
         # --- Logging Setup (Must happen before parameter loading/conversion uses the logger) ---
@@ -578,6 +580,8 @@ class EncodingDesigner(nn.Module):
         self.y_unique_labels = None # Stores original y labels
         self.r_unique_labels = None # Stores original r labels
         self.mapped_region_indices = None # Internal region indices [0..N-1]
+        self.y_parent_child_map = None # Stores {internal_parent_idx: [internal_child1_idx, ...]}
+        self.y_child_to_parent_map = None # Optional: Stores {internal_child_idx: internal_parent_idx}
 
     def _convert_param_to_int(self, param_key):
         """
@@ -731,7 +735,57 @@ class EncodingDesigner(nn.Module):
                 self.type_cooccurrence_mask = ~torch.eye(self.n_categories, dtype=torch.bool, device=current_device)
                 self.log.info("Not using region info, all type pairs considered co-occurring for correlation loss.")
 
+            # --- Load Cell Type Hierarchy (New Section) ---
+            hierarchy_file_path = self.user_parameters.get('y_hierarchy_file_path', None)
+            if isinstance(hierarchy_file_path, str) and os.path.exists(hierarchy_file_path) and \
+            self.user_parameters.get('hierarchical_scatter_weight', 0) != 0:
+                self.log.info(f"Loading cell type hierarchy from: {hierarchy_file_path}")
+                try:
+                    hierarchy_df = pd.read_csv(hierarchy_file_path)
+                    if 'child_label' not in hierarchy_df.columns or 'parent_label' not in hierarchy_df.columns:
+                        self.log.error("Hierarchy file must contain 'child_label' and 'parent_label' columns. Hierarchical loss disabled.")
+                        self.y_parent_child_map = None
+                    else:
+                        self.y_parent_child_map = {}
+                        self.y_child_to_parent_map = {} # Initialize this too if needed elsewhere
 
+                        for _, row in hierarchy_df.iterrows():
+                            child_str = str(row['child_label'])
+                            parent_str = str(row['parent_label'])
+
+                            if child_str in self.y_label_map and parent_str in self.y_label_map:
+                                child_idx = self.y_label_map[child_str]
+                                parent_idx = self.y_label_map[parent_str]
+
+                                if parent_idx not in self.y_parent_child_map:
+                                    self.y_parent_child_map[parent_idx] = []
+                                if child_idx not in self.y_parent_child_map[parent_idx]: # Avoid duplicates
+                                    self.y_parent_child_map[parent_idx].append(child_idx)
+                                
+                                # Populate child_to_parent map (can be useful for validation or other logic)
+                                if child_idx in self.y_child_to_parent_map and self.y_child_to_parent_map[child_idx] != parent_idx:
+                                    self.log.warning(f"Child type '{child_str}' (idx {child_idx}) mapped to multiple parents. Using last one: '{parent_str}' (idx {parent_idx}).")
+                                self.y_child_to_parent_map[child_idx] = parent_idx
+                            else:
+                                self.log.warning(f"Skipping hierarchy entry: child '{child_str}' or parent '{parent_str}'. Label(s) not found in y_label_map.")
+                        
+                        if self.y_parent_child_map:
+                            self.log.info(f"Successfully processed hierarchy: {len(self.y_parent_child_map)} parent groups mapped.")
+                            # For debugging, you can log the structure:
+                            # for p_idx, c_indices in self.y_parent_child_map.items():
+                            #     p_name = self.y_reverse_label_map.get(p_idx, f"ParentIdx_{p_idx}")
+                            #     c_names = [self.y_reverse_label_map.get(c_idx, f"ChildIdx_{c_idx}") for c_idx in c_indices]
+                            #     self.log.debug(f"Hierarchy: {p_name} -> {c_names}")
+                        else:
+                            self.log.warning("Hierarchy map is empty after processing the file. Hierarchical loss might not be effective.")
+
+                except Exception as e:
+                    self.log.error(f"Failed to load or process hierarchy file {hierarchy_file_path}: {e}. Hierarchical loss disabled.")
+                    self.y_parent_child_map = None
+            elif self.user_parameters.get('hierarchical_scatter_weight', 0) != 0:
+                self.log.warning("hierarchical_scatter_weight > 0 but 'y_hierarchy_file_path' is not provided, file not found, or path is not a string. Hierarchical loss will not be active.")
+                self.y_parent_child_map = None
+            # --- End of New Section for Hierarchy ---
 
             # --- Attempt to Load Pre-trained Model State ---
             if os.path.exists(model_state_path):
@@ -975,30 +1029,33 @@ class EncodingDesigner(nn.Module):
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
             total_loss = total_loss + gene_constraint_loss
 
-        # -- Pnormalized Standard Deviation Loss (using min, gentler loss) --
-        pnorm_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        min_pnorm_std = np.nan
-        if self.user_parameters['pnorm_std_weight'] != 0 and Pnormalized.shape[0] > 1 and Pnormalized.shape[1] > 0: # Need samples and bits
-            std_per_bit = Pnormalized.std(dim=0) # Shape: [n_bits]
-            min_pnorm_std_tensor = std_per_bit.min()
-            min_pnorm_std = min_pnorm_std_tensor.item()
-            pnorm_std_loss = self.user_parameters['pnorm_std_weight'] * (-min_pnorm_std_tensor)
-            total_loss = total_loss + pnorm_std_loss
+        # -- P Standard Deviation Loss (using min, gentler loss) --
+        # Previously used Pnormalized, now uses P directly
+        p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        min_p_std = np.nan
+        if self.user_parameters['pnorm_std_weight'] != 0 and P.shape[0] > 1 and P.shape[1] > 0: # Need samples and bits
+            std_per_bit = P.std(dim=0) # Shape: [n_bits]
+            min_p_std_tensor = std_per_bit.min()
+            min_p_std = min_p_std_tensor.item()
+            p_std_loss = self.user_parameters['pnorm_std_weight'] * (-min_p_std_tensor)
+            total_loss = total_loss + p_std_loss
 
-        current_stats['pnorm_std_min' + suffix] = min_pnorm_std
-        current_stats['pnorm_std_loss' + suffix] = pnorm_std_loss.item()
+        # Keep parameter names in stats as pnorm_std for backward compatibility
+        current_stats['p_std_min' + suffix] = min_p_std
+        current_stats['p_std_loss' + suffix] = p_std_loss.item()
 
         # -- Type Correlation Loss (using co-occurrence mask) --
         # Calculate based on P_type_region for the current batch
-        P_type_batch = torch.zeros((self.n_categories, Pnormalized.shape[1]), device=Pnormalized.device)
+        # Using raw Projected values 
+        P_type_batch = torch.zeros((self.n_categories, P.shape[1]), device=P.device)
         unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True) # Get unique types IN THIS BATCH
-        valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=Pnormalized.device)
+        valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P.device)
 
-        # Calculate mean Pnormalized for types present in the batch
+        # Calculate mean P for types present in the batch
         for i, type_idx in enumerate(unique_y_batch):
              if 0 <= type_idx.item() < self.n_categories:
                  mask = (y == type_idx)
-                 P_type_batch[type_idx] = Pnormalized[mask].mean(dim=0) # Use Pnormalized for correlation
+                 P_type_batch[type_idx] = P[mask].mean(dim=0) # Use raw P values for correlation
                  valid_types_in_batch_mask[type_idx] = True
 
         P_corr = P_type_batch[valid_types_in_batch_mask] # Filter P_type for types present in batch
@@ -1049,6 +1106,76 @@ class EncodingDesigner(nn.Module):
 
         # --- Total Loss ---
         current_stats['total_loss' + suffix] = total_loss.item()
+
+        # --- Hierarchical Scatter Loss (Inspired by DPNMF's Sb_tree) ---
+        # This loss aims to maximize the (weighted) squared distance between 
+        # child-type centroids and their parent-type centroids in the P space.
+        
+        hierarchical_scatter_value_stat = 0.0 # For logging the positive value we maximize
+        hierarchical_scatter_loss = torch.tensor(0.0, device=P.device) # Using P.device
+
+        # Determine which representation to use for scatter calculation
+        # Using raw P (projected values that are non-negative and linear)
+        P_for_scatter = P
+        # Option for Pnormalized (tanh transformed) if needed:
+        # P_for_scatter = Pnormalized
+
+        # Check if the loss weight is active and the hierarchy map is validly loaded
+        hierarchical_scatter_weight = self.user_parameters.get('hierarchical_scatter_weight', 0)
+        if hierarchical_scatter_weight != 0 and \
+           hasattr(self, 'y_parent_child_map') and self.y_parent_child_map and \
+           P_for_scatter.shape[0] > 1: # Need at least 2 samples in batch for meaningful centroids
+
+            # Get unique labels present in the current batch `y` (these are internal 0..N-1 indices)
+            # and their counts (for potential weighting, analogous to N_c in DPNMF's S_b)
+            unique_y_in_batch, y_counts_in_batch = torch.unique(y, return_counts=True)
+            # Create a dictionary for quick lookup of counts for labels present in the batch
+            map_batch_labels_to_counts = {label.item(): count.item() for label, count in zip(unique_y_in_batch, y_counts_in_batch)}
+
+            accumulated_weighted_squared_distances = []
+
+            # Iterate through parent categories defined in the loaded hierarchy map
+            for parent_idx, child_idx_list in self.y_parent_child_map.items():
+                # Check if this parent category is actually present in the current batch
+                if parent_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[parent_idx] >= 1: # Min 1 cell for parent centroid
+                    parent_mask = (y == parent_idx)
+                    parent_centroid = P_for_scatter[parent_mask].mean(dim=0)
+
+                    # Iterate through its children as defined in the hierarchy
+                    for child_idx in child_idx_list:
+                        # Check if this child category is also present in the current batch
+                        if child_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[child_idx] >= 1: # Min 1 cell for child centroid
+                            child_mask = (y == child_idx)
+                            child_centroid = P_for_scatter[child_mask].mean(dim=0)
+                            
+                            # Number of cells of this child type in the current batch
+                            n_child_in_batch = map_batch_labels_to_counts[child_idx]
+                            
+                            # Calculate squared Euclidean distance: || child_centroid - parent_centroid ||^2
+                            squared_distance = ((child_centroid - parent_centroid)**2).sum()
+                            
+                            # Weight by the number of child cells in batch (analogous to N_Ci * ||mu_Ci - mu_P||^2 in Tr(Sb))
+                            # We want to MAXIMIZE this term.
+                            weighted_squared_distance = n_child_in_batch * squared_distance
+                            accumulated_weighted_squared_distances.append(weighted_squared_distance)
+
+            if accumulated_weighted_squared_distances:
+                # This is the sum of N_Ci * ||mu_Ci - mu_P||^2 terms for all relevant parent-child pairs in the batch.
+                # We want to maximize this value.
+                hierarchical_scatter_value = torch.stack(accumulated_weighted_squared_distances).sum()
+                
+                # The loss is the negative of this value, scaled by the weight, because optimizers minimize loss.
+                hierarchical_scatter_loss = hierarchical_scatter_weight * (-hierarchical_scatter_value)
+                hierarchical_scatter_value_stat = hierarchical_scatter_value.item() # For logging
+
+        # Store stats for this loss component
+        current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
+        current_stats['hierarchical_scatter_loss' + suffix] = hierarchical_scatter_loss.item()
+        
+        # Add this hierarchical scatter loss to the total loss
+        total_loss = total_loss + hierarchical_scatter_loss
+        # --- End of Hierarchical Scatter Loss ---
+
         return total_loss, current_stats
 
     def fit(self):
