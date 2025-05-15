@@ -6,7 +6,22 @@ import itertools
 from datetime import datetime
 
 # Create output directory for parameter files and all other requires directories under base_dir
-base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/opt_design_run_2/'
+base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/Runs/'
+# Check if a command line argument was provided for the run directory
+import sys
+if len(sys.argv) > 1:
+    run_dir = sys.argv[1]
+    base_dir = os.path.join(base_dir, run_dir)
+else:
+    # Exit with an error message if no run directory is specified
+    print("Error: You must provide a run directory name as an argument.")
+    print("Usage: python create_parameter_file.py <run_directory_name>")
+    sys.exit(1)
+
+# Ensure the base directory exists
+os.makedirs(base_dir, exist_ok=True)
+
+
 input_param_path = os.path.join(base_dir,'params_files_to_scan')
 os.makedirs(input_param_path, exist_ok=True)
 os.makedirs(os.path.join(base_dir, 'params_files_scanned'), exist_ok=True)
@@ -48,12 +63,9 @@ user_parameters = {
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'hierarchical_scatter_weight': [0.01, 0.05, 0.1, 0.2, 0.5],
-    'learning_rate': [0.01, 0.05, 0.1],
-    'type_correlation_max_weight' : [0.01, 0.05, 0.1, 0.2, 0.5]
+    'hierarchical_scatter_weight': [0, 0.01],
+    'type_correlation_max_weight' : [0,0.01]
 }
-
-
 
 # Generate all parameter combinations
 param_names = list(parameter_variants.keys())

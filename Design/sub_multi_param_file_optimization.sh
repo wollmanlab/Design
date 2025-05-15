@@ -11,7 +11,16 @@
 #$ -t 1-N  # This will be replaced with actual number of files
 
 # Define paths first
-OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/opt_design_run_2"
+OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Runs"
+# Check if a directory argument was provided
+if [ $# -ge 1 ]; then
+    OPT_DIR="${OPT_DIR}/$1"
+else
+    echo "Error: You must provide a run directory name as an argument."
+    echo "Usage: $0 /path/to/run/directory"
+    exit 1
+fi
+
 TODO_JOBS_DIR="${OPT_DIR}/params_files_to_scan"
 FINISHED_JOBS_DIR="${OPT_DIR}/params_files_scanned"
 CODE_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Design/Design"
