@@ -29,6 +29,9 @@ OUTPUT_DIR="${OPT_DIR}/design_results"
 # load the job environment:
 . /u/local/Modules/default/init/modules.sh
 module load conda
+
+# Initialize conda for bash shell
+eval "$(conda shell.bash hook)"
 conda activate designer_3.12
 
 # Dual purpose script:
@@ -37,16 +40,19 @@ conda activate designer_3.12
 
 # Get git version information
 GIT_REPO_DIR=$(dirname "$CODE_DIR")
-COMMIT_HASH=$(git -C "$GIT_REPO_DIR" rev-parse HEAD)
-SHORT_COMMIT_HASH=$(git -C "$GIT_REPO_DIR" rev-parse --short=7 HEAD)
-BRANCH_NAME_RAW=$(git -C "$GIT_REPO_DIR" rev-parse --abbrev-ref HEAD)
+cd "$GIT_REPO_DIR"
+COMMIT_HASH=$(git rev-parse HEAD)
+SHORT_COMMIT_HASH=$(git rev-parse --short=7 HEAD)
+BRANCH_NAME_RAW=$(git rev-parse --abbrev-ref HEAD)
 # Check if repository is dirty (has uncommitted changes)
-IS_DIRTY_OUTPUT=$(git -C "$GIT_REPO_DIR" status --porcelain)
+IS_DIRTY_OUTPUT=$(git status --porcelain)
 if [ -n "$IS_DIRTY_OUTPUT" ]; then
   IS_DIRTY="true"
 else
   IS_DIRTY="false"
 fi
+# Change back to original directory
+cd - > /dev/null
 
 # Check if running as part of an array job (SGE_TASK_ID is set)
 if [[ -n "$SGE_TASK_ID" ]]; then
@@ -74,7 +80,7 @@ if [[ -n "$SGE_TASK_ID" ]]; then
 
     # add to FILENAME the git information
     # Add git information to the parameter file
-    echo "repo_path:$REPO_PATH" >> "$FILE_PATH"
+    echo "repo_path:$GIT_REPO_DIR" >> "$FILE_PATH"
     echo "commit_hash:$COMMIT_HASH" >> "$FILE_PATH"
     echo "short_commit_hash:$SHORT_COMMIT_HASH" >> "$FILE_PATH"
     echo "branch_name:$BRANCH_NAME_RAW" >> "$FILE_PATH"
@@ -126,7 +132,7 @@ else
     chmod +x "${0}.tmp"
     
     # Submit the job array
-    qsub "${0}.tmp"
+    qsub "${0}.tmp" "$1"
     
     # Clean up
     rm "${0}.tmp"
