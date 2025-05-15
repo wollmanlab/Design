@@ -2,7 +2,18 @@
 """ Set Parameters """
 import pandas as pd
 import os
-import shutil
+import itertools
+from datetime import datetime
+
+# Create output directory for parameter files and all other requires directories under base_dir
+base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/opt_design_run_2/'
+input_param_path = os.path.join(base_dir,'params_files_to_scan')
+os.makedirs(input_param_path, exist_ok=True)
+os.makedirs(os.path.join(base_dir, 'params_files_scanned'), exist_ok=True)
+os.makedirs(os.path.join(base_dir, 'design_results'), exist_ok=True)
+os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
+
+# Default parameter values
 user_parameters = {
             'device': 'cpu',
             'Verbose': 1,
@@ -11,6 +22,7 @@ user_parameters = {
             'n_iterations': 10000,
             'total_n_probes': 30e4,
             'probe_weight': 1,
+            'probe_under_weight_factor': 0.05,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
             'gene_constraint_weight': 1,
@@ -28,17 +40,44 @@ user_parameters = {
             'region_embedding_dim': 0, 
             'correlation_thresh': 0.9,
             'pnorm_std_weight': 10,
+            'hierarchical_scatter_weight': 0.5,  # Weight for the new hierarchical scatter loss
+            'y_hierarchy_file_path': 'child_parent_relationships.csv',  # Path to the file defining cell type hierarchy
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
             'input':'/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
         }
 
-if os.path.exists(user_parameters['output']):
-    shutil.rmtree(user_parameters['output'])
+# Define parameter variants - parameters to vary and their possible values
+parameter_variants = {
+    'hierarchical_scatter_weight': [0.01, 0.05, 0.1, 0.2, 0.5],
+    'learning_rate': [0.01, 0.05, 0.1],
+    'type_correlation_max_weight' : [0.01, 0.05, 0.1, 0.2, 0.5]
+}
 
 
-input_param_path = '/u/home/r/rwollman/project-rwollman/atlas_design/opt_design_run_1/params_files_to_scan'
-param_file_name = 'user_parameters_single_cpu_no_region_embedding'
-fullfilepath = os.path.join(input_param_path, f"{param_file_name}.csv")
-pd.DataFrame(user_parameters.values(),index=user_parameters.keys(),columns=['values']).to_csv(fullfilepath)
+
+# Generate all parameter combinations
+param_names = list(parameter_variants.keys())
+param_values = list(parameter_variants.values())
+
+# Generate all combinations of parameter values
+combinations = list(itertools.product(*param_values))
+for i, combination in enumerate(combinations):
+    # Create a copy of default parameters
+    current_params = user_parameters.copy()
+    
+    # Update with current combination
+    param_desc = []
+    for j, param_name in enumerate(param_names):
+        current_params[param_name] = combination[j]
+        param_desc.append(f"{param_name}_{combination[j]}")
+    
+    # Create parameter file name
+    param_file_name = f"params_{'_'.join(param_desc)}"
+    fullfilepath = os.path.join(input_param_path, f"{param_file_name}.csv")
+    
+    # Save parameter file
+    pd.DataFrame(current_params.values(), index=current_params.keys(), columns=['values']).to_csv(fullfilepath)
+
+print(f"Generated {len(combinations)} parameter files in {input_param_path}")
 
 
