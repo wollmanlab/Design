@@ -34,7 +34,7 @@ user_parameters = {
             'Verbose': 1,
             'n_cpu': 1,
             'n_bit': 25,
-            'n_iterations': 10000,
+            'n_iterations': 5000,
             'total_n_probes': 30e4,
             'probe_weight': 1,
             'probe_under_weight_factor': 0.05,
