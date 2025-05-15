@@ -11,7 +11,7 @@
 #$ -t 1-N  # This will be replaced with actual number of files
 
 # Define paths first
-OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/opt_design_run_1"
+OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/opt_design_run_2"
 TODO_JOBS_DIR="${OPT_DIR}/params_files_to_scan"
 FINISHED_JOBS_DIR="${OPT_DIR}/params_files_scanned"
 CODE_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Design/Design"
@@ -25,6 +25,19 @@ conda activate designer_3.12
 # Dual purpose script:
 # 1. When run directly: submits an array job to process multipe design files
 # 2. When run as part of array job: processes a specific design job
+
+# Get git version information
+GIT_REPO_DIR=$(dirname "$CODE_DIR")
+COMMIT_HASH=$(git -C "$GIT_REPO_DIR" rev-parse HEAD)
+SHORT_COMMIT_HASH=$(git -C "$GIT_REPO_DIR" rev-parse --short=7 HEAD)
+BRANCH_NAME_RAW=$(git -C "$GIT_REPO_DIR" rev-parse --abbrev-ref HEAD)
+# Check if repository is dirty (has uncommitted changes)
+IS_DIRTY_OUTPUT=$(git -C "$GIT_REPO_DIR" status --porcelain)
+if [ -n "$IS_DIRTY_OUTPUT" ]; then
+  IS_DIRTY="true"
+else
+  IS_DIRTY="false"
+fi
 
 # Check if running as part of an array job (SGE_TASK_ID is set)
 if [[ -n "$SGE_TASK_ID" ]]; then
@@ -49,6 +62,14 @@ if [[ -n "$SGE_TASK_ID" ]]; then
     # Update the output directory in the parameter file
     # Extract the filename without extension
     FILENAME=$(basename "$CURRENT_FILE" .csv)
+
+    # add to FILENAME the git information
+    # Add git information to the parameter file
+    echo "repo_path:$REPO_PATH" >> "$FILE_PATH"
+    echo "commit_hash:$COMMIT_HASH" >> "$FILE_PATH"
+    echo "short_commit_hash:$SHORT_COMMIT_HASH" >> "$FILE_PATH"
+    echo "branch_name:$BRANCH_NAME_RAW" >> "$FILE_PATH"
+    echo "is_dirty:$IS_DIRTY" >> "$FILE_PATH"
     
     # Create a full output directory path that includes the filename
     FULL_OUTPUT_DIR="${OUTPUT_DIR}/${FILENAME}"
