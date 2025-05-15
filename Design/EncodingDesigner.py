@@ -1032,16 +1032,21 @@ class EncodingDesigner(nn.Module):
         # -- P Standard Deviation Loss (using min, gentler loss) --
         # Previously used Pnormalized, now uses P directly
         p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        min_p_std = np.nan
+        min_p_cv = np.nan # Changed variable name for clarity, will be logged as p_std_min
+
         if self.user_parameters['pnorm_std_weight'] != 0 and P.shape[0] > 1 and P.shape[1] > 0: # Need samples and bits
+            mean_per_bit = P.mean(dim=0)
             std_per_bit = P.std(dim=0) # Shape: [n_bits]
-            min_p_std_tensor = std_per_bit.min()
-            min_p_std = min_p_std_tensor.item()
-            p_std_loss = self.user_parameters['pnorm_std_weight'] * (-min_p_std_tensor)
+            epsilon = 1 # To prevent division by zero if mean is zero
+            cv_per_bit = std_per_bit / (mean_per_bit + epsilon)
+            min_p_cv_tensor = cv_per_bit.min()
+            min_p_cv = min_p_cv_tensor.item()
+            p_std_loss = self.user_parameters['pnorm_std_weight'] * (-min_p_cv_tensor) # Maximize min CV
             total_loss = total_loss + p_std_loss
 
-        # Keep parameter names in stats as pnorm_std for backward compatibility
-        current_stats['p_std_min' + suffix] = min_p_std
+        # Keep parameter names in stats as pnorm_std for backward compatibility in learning_curve.csv
+        # but the value now comes from CV.
+        current_stats['p_std_min' + suffix] = min_p_cv
         current_stats['p_std_loss' + suffix] = p_std_loss.item()
 
         # -- Type Correlation Loss (using co-occurrence mask) --
