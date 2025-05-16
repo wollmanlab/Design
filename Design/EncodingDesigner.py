@@ -68,15 +68,15 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
         try:
             plt.savefig(plot_path, dpi=100)
         except Exception as e:
-             logger.error(f"Failed to save empty plot {plot_path}: {e}")
+            logger.error(f"Failed to save empty plot {plot_path}: {e}")
         finally:
             plt.close(fig)
         return
 
 
     fig, axes = plt.subplots(total_rows, total_cols,
-                             figsize=(12, 5 * total_rows), # e.g., 14 inches wide, 7 per row height
-                             squeeze=False) # Ensure axes is always 2D
+                                 figsize=(12, 5 * total_rows), # e.g., 14 inches wide, 7 per row height
+                                 squeeze=False) # Ensure axes is always 2D
 
     # --- 4. Initialize Variables for Plot 2 Coloring --- (Keep Original)
     color_mapper = {}
@@ -156,7 +156,7 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
             # Use original imshow parameters (cmap='bwr')
             # Use extent to map bins to axes correctly
             im1 = ax1.imshow(img.T, vmin=vmin_img, vmax=vmax_img, cmap='bwr', origin='lower', aspect='auto', interpolation='nearest',
-                       extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]])
+                           extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]])
 
             # Set ticks and labels for Plot 1 (Original Logic, but use extent)
             num_ticks = 5
@@ -292,6 +292,15 @@ class EncodingDesigner(nn.Module):
                                                  Defaults to None, in which case default parameters are used.
         """
         super().__init__() # Call super constructor first
+        self.gradnorm_task_names = [
+            'probe_weight',
+            'categorical',
+            'gene_constraint',
+            'p_std', # Corresponds to pnorm_std_weight, aims to maximize min CV
+            'type_correlation_max', # Assuming this is the primary correlation loss you want to balance
+            # 'type_correlation_mean', # Add if you want to balance this separately
+            'hierarchical_scatter' # Aims to maximize scatter value
+        ]
 
         # --- Defaults ---
         # These are the base defaults. They will be potentially overwritten by the loaded file.
@@ -324,16 +333,16 @@ class EncodingDesigner(nn.Module):
             'output': './',
             'input': './', # Added input directory parameter
             'constraints': 'constraints.csv', # Default filename
-            'X_test': 'X_test.pt',            # Default filename
-            'y_test': 'y_test.pt',            # Default filename
-            'r_test': 'r_test.pt',            # Default filename
-            'X_train': 'X_train.pt',          # Default filename
-            'y_train': 'y_train.pt',          # Default filename
-            'r_train': 'r_train.pt',          # Default filename
+            'X_test': 'X_test.pt',           # Default filename
+            'y_test': 'y_test.pt',           # Default filename
+            'r_test': 'r_test.pt',           # Default filename
+            'X_train': 'X_train.pt',         # Default filename
+            'y_train': 'y_train.pt',         # Default filename
+            'r_train': 'r_train.pt',         # Default filename
             'y_label_converter_path': 'categorical_converter.csv', # Default filename
             'r_label_converter_path': 'region_categorical_converter.csv', # Default filename
             'hierarchical_scatter_weight': 0.0,  # Weight for the new hierarchical scatter loss
-            'y_hierarchy_file_path': 'child_parent_relationships.csv',     # Path to the file defining cell type hierarchy (e.g., 'cell_type_hierarchy.csv')
+            'y_hierarchy_file_path': 'child_parent_relationships.csv',      # Path to the file defining cell type hierarchy (e.g., 'cell_type_hierarchy.csv')
         }
 
         # --- Logging Setup (Must happen before parameter loading/conversion uses the logger) ---
@@ -342,23 +351,23 @@ class EncodingDesigner(nn.Module):
         # If a path was provided, try to get the output dir from there for logging setup
         loaded_params_temp = {}
         if user_parameters_path is not None:
-             try:
-                 # Load temporarily just to check for 'output' dir for logging
-                 df_temp = pd.read_csv(user_parameters_path, index_col=0, low_memory=False)
-                 if 'values' not in df_temp.columns:
-                     # Log using a basic config temporarily if logger not fully set up
-                     logging.basicConfig(level=logging.ERROR)
-                     logging.error(f"Parameter file {user_parameters_path} missing 'values' column.")
-                     # Continue without loaded params, defaults will be used.
-                 else:
+            try:
+                # Load temporarily just to check for 'output' dir for logging
+                df_temp = pd.read_csv(user_parameters_path, index_col=0, low_memory=False)
+                if 'values' not in df_temp.columns:
+                    # Log using a basic config temporarily if logger not fully set up
+                    logging.basicConfig(level=logging.ERROR)
+                    logging.error(f"Parameter file {user_parameters_path} missing 'values' column.")
+                    # Continue without loaded params, defaults will be used.
+                else:
                     loaded_params_temp = dict(zip(df_temp.index, df_temp['values']))
                     temp_output_dir = loaded_params_temp.get('output', temp_output_dir) # Update if present
-             except FileNotFoundError:
-                 logging.basicConfig(level=logging.ERROR)
-                 logging.error(f"Parameter file not found at: {user_parameters_path}. Using default parameters.")
-             except Exception as e:
-                 logging.basicConfig(level=logging.ERROR)
-                 logging.error(f"Error loading parameter file {user_parameters_path}: {e}. Using default parameters.")
+            except FileNotFoundError:
+                logging.basicConfig(level=logging.ERROR)
+                logging.error(f"Parameter file not found at: {user_parameters_path}. Using default parameters.")
+            except Exception as e:
+                logging.basicConfig(level=logging.ERROR)
+                logging.error(f"Error loading parameter file {user_parameters_path}: {e}. Using default parameters.")
 
 
         if not os.path.exists(temp_output_dir):
@@ -393,7 +402,7 @@ class EncodingDesigner(nn.Module):
             try:
                 user_parameters_df = pd.read_csv(user_parameters_path, index_col=0, low_memory=False)
                 if 'values' not in user_parameters_df.columns:
-                     self.log.error(f"Parameter file {user_parameters_path} missing 'values' column. Sticking to defaults.")
+                    self.log.error(f"Parameter file {user_parameters_path} missing 'values' column. Sticking to defaults.")
                 else:
                     # Convert DataFrame to dictionary
                     loaded_user_parameters = dict(zip(user_parameters_df.index, user_parameters_df['values']))
@@ -453,8 +462,8 @@ class EncodingDesigner(nn.Module):
             # Check if it's likely just a filename (no directory component)
             # Also check if it's not already an absolute path
             if current_path and not os.path.dirname(current_path) and not os.path.isabs(current_path):
-                 self.user_parameters[param_key] = os.path.join(input_dir, current_path)
-                 self.log.info(f"Constructed path for '{param_key}': {self.user_parameters[param_key]}")
+                self.user_parameters[param_key] = os.path.join(input_dir, current_path)
+                self.log.info(f"Constructed path for '{param_key}': {self.user_parameters[param_key]}")
 
 
         # --- Force integer types using helper function ---
@@ -463,7 +472,7 @@ class EncodingDesigner(nn.Module):
         params_to_int = ['n_bit', 'n_iterations', 'report_freq', 'batch_size', 'n_cpu',
                          'use_region_info', 'region_embedding_dim'] # Added use_region_info, region_embedding_dim
         for param_key in params_to_int:
-             self._convert_param_to_int(param_key) # This will raise error if conversion fails
+            self._convert_param_to_int(param_key) # This will raise error if conversion fails
 
 
         self.log.info(f"Final Parameters (after path construction & type conversion):")
@@ -498,9 +507,9 @@ class EncodingDesigner(nn.Module):
 
         # Add the user parameters file itself, if provided
         if user_parameters_path is not None and isinstance(user_parameters_path, str):
-             input_files_to_link.append(user_parameters_path)
-             # Also add the 'used_user_parameters.csv' we just saved
-             input_files_to_link.append(os.path.join(output_dir, 'used_user_parameters.csv'))
+            input_files_to_link.append(user_parameters_path)
+            # Also add the 'used_user_parameters.csv' we just saved
+            input_files_to_link.append(os.path.join(output_dir, 'used_user_parameters.csv'))
 
 
         linked_count = 0
@@ -558,8 +567,11 @@ class EncodingDesigner(nn.Module):
         self.constraints = None
         self.encoder = None
         # *** REVERTED: Back to ModuleDict ***
-        self.decoders = None
-        # *** REMOVED: self.decoder and self.region_embedder ***
+        self.decoders = None # This was from an older version, ensure it's decoder for single decoder logic
+        self.decoder = None  # Explicitly define for single decoder model
+        self.region_embedder = None # Explicitly define for single decoder model
+
+        # *** REMOVED: self.decoder and self.region_embedder (they are defined above now) ***
         self.optimizer_gen = None
         self.learning_stats = {}
         self.saved_models = {}
@@ -582,6 +594,35 @@ class EncodingDesigner(nn.Module):
         self.mapped_region_indices = None # Internal region indices [0..N-1]
         self.y_parent_child_map = None # Stores {internal_parent_idx: [internal_child1_idx, ...]}
         self.y_child_to_parent_map = None # Optional: Stores {internal_child_idx: internal_parent_idx}
+
+        # --- GradNorm Specific Initializations ---
+        self.log.info("Initializing GradNorm components...")
+        self.gradnorm_log_weights = nn.ParameterDict()
+        for task_name in self.gradnorm_task_names:
+            # Initialize log_weights to 0, so initial weights are exp(0)=1
+            self.gradnorm_log_weights[task_name] = nn.Parameter(torch.tensor(0.0, device=self.user_parameters['device']))
+
+        # Hyperparameter for GradNorm's relative learning rate balancing (alpha in the paper)
+        self.gradnorm_alpha = self.user_parameters.get('gradnorm_alpha', 1.5) # Add 'gradnorm_alpha' to your params file, default 1.5
+
+        # To store initial loss values L_i(0) for each task
+        self.gradnorm_initial_losses = {task_name: None for task_name in self.gradnorm_task_names}
+        self.gradnorm_weights_activated = False # Flag to start GradNorm after first few iterations
+        self.gradnorm_start_iter = self.user_parameters.get('gradnorm_start_iter', 100) # e.g., start after 100 iterations
+
+        # Store the original weights from user_parameters to use before GradNorm activates
+        self.gradnorm_original_static_weights = {}
+        self.gradnorm_original_static_weights['probe_weight'] = self.user_parameters.get('probe_weight', 1.0)
+        self.gradnorm_original_static_weights['categorical'] = self.user_parameters.get('categorical_weight', 1.0)
+        self.gradnorm_original_static_weights['gene_constraint'] = self.user_parameters.get('gene_constraint_weight', 1.0)
+        self.gradnorm_original_static_weights['p_std'] = self.user_parameters.get('pnorm_std_weight', 0.1)
+        self.gradnorm_original_static_weights['type_correlation_max'] = self.user_parameters.get('type_correlation_max_weight', 1.0)
+        # self.gradnorm_original_static_weights['type_correlation_mean'] = self.user_parameters.get('type_correlation_mean_weight', 0.0)
+        self.gradnorm_original_static_weights['hierarchical_scatter'] = self.user_parameters.get('hierarchical_scatter_weight', 0.0)
+
+        self.log.info(f"GradNorm learnable log_weights initialized for tasks: {list(self.gradnorm_log_weights.keys())}")
+        self.log.info(f"GradNorm alpha: {self.gradnorm_alpha}, GradNorm start iteration: {self.gradnorm_start_iter}")
+
 
     def _convert_param_to_int(self, param_key):
         """
@@ -636,7 +677,7 @@ class EncodingDesigner(nn.Module):
             def load_tensor(path, dtype, device):
                 self.log.info(f"Loading {os.path.basename(path)} from {path}")
                 if not os.path.exists(path):
-                     raise FileNotFoundError(f"Data file not found: {path}")
+                    raise FileNotFoundError(f"Data file not found: {path}")
                 loaded_data = torch.load(path)
                 if not isinstance(loaded_data, torch.Tensor):
                     tensor = torch.tensor(loaded_data, dtype=dtype, device=device)
@@ -807,8 +848,8 @@ class EncodingDesigner(nn.Module):
                         final_E = self.get_encoding_weights().detach().clone()
                         self.log.info("Enforcing constraints on loaded E matrix...")
                         if self.constraints is None:
-                             self.log.error("Cannot enforce constraints: self.constraints is None.")
-                             self.E = final_E # Store unconstrained E if constraints missing
+                            self.log.error("Cannot enforce constraints: self.constraints is None.")
+                            self.E = final_E # Store unconstrained E if constraints missing
                         else:
                             E_final_constrained = torch.clip(final_E.round(), 0, None)
                             T = self.constraints.clone().detach()
@@ -850,11 +891,11 @@ class EncodingDesigner(nn.Module):
             self.log.error(f"Initialization failed: Input file not found. {e}")
             return False
         except KeyError as e:
-             self.log.error(f"Initialization failed: Missing expected column or key. {e}")
-             return False
+            self.log.error(f"Initialization failed: Missing expected column or key. {e}")
+            return False
         except ValueError as e:
-             self.log.error(f"Initialization failed: Data validation error. {e}")
-             return False
+            self.log.error(f"Initialization failed: Data validation error. {e}")
+            return False
         except Exception as e:
             self.log.exception(f"An unexpected error occurred during initialization: {e}")
             return False
@@ -862,7 +903,7 @@ class EncodingDesigner(nn.Module):
     def get_encoding_weights(self):
         """ Get encoding weights from the shared encoder. """
         if self.encoder is None:
-             raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
+            raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
         E = F.softplus(self.encoder.weight)
         if self.E_scaling_constant is None:
             self.E_scaling_constant = (self.user_parameters['total_n_probes'] / E.sum().clamp(min=1e-8)).detach()
@@ -904,9 +945,9 @@ class EncodingDesigner(nn.Module):
         if self.decoder is None or self.region_embedder is None:
             raise RuntimeError("Decoder or region_embedder not initialized.")
         if not isinstance(self.decoder, nn.Module):
-             raise ValueError("Invalid decoder module.")
+            raise ValueError("Invalid decoder module.")
         if not isinstance(self.region_embedder, nn.Module):
-             raise ValueError("Invalid region_embedder module.")
+            raise ValueError("Invalid region_embedder module.")
 
         # Get region embeddings for the batch
         if r_labels.min() < 0 or r_labels.max() >= self.n_regions:
@@ -929,11 +970,11 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['categorical_weight'] != 0:
             loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
             if y.min() < 0 or y.max() >= self.n_categories:
-                 self.log.error(f"Target labels y out of bounds ({y.min()}-{y.max()}) for CrossEntropyLoss (expected 0-{self.n_categories-1}).")
-                 categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True) # Fallback
+                self.log.error(f"Target labels y out of bounds ({y.min()}-{y.max()}) for CrossEntropyLoss (expected 0-{self.n_categories-1}).")
+                categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True) # Fallback
             else:
-                 # Raw categorical loss value
-                 categorical_loss = loss_fn(R, y)
+                # Raw categorical loss value
+                categorical_loss = loss_fn(R, y)
         else:
             categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
 
@@ -994,7 +1035,12 @@ class EncodingDesigner(nn.Module):
             raw_probe_weight_loss = penalty_over + penalty_push_down
         
         raw_losses['probe_weight'] = raw_probe_weight_loss
-        current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() # Log raw value, effective weight applied in fit
+        # Log raw value for probe_weight_loss, effective weight applied in fit
+        # For consistency in logging, if gradnorm_original_static_weights is available, use it
+        static_probe_weight_for_logging = self.gradnorm_original_static_weights.get('probe_weight', self.user_parameters['probe_weight']) \
+                                           if hasattr(self, 'gradnorm_original_static_weights') else self.user_parameters['probe_weight']
+        current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() * static_probe_weight_for_logging
+
 
         # -- Categorical Loss --
         if self.user_parameters['categorical_weight'] != 0: # Still check if static weight is zero to disable calculation
@@ -1042,10 +1088,10 @@ class EncodingDesigner(nn.Module):
         valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P.device)
 
         for i, type_idx in enumerate(unique_y_batch):
-             if 0 <= type_idx.item() < self.n_categories:
-                 mask = (y == type_idx)
-                 P_type_batch[type_idx] = P[mask].mean(dim=0) 
-                 valid_types_in_batch_mask[type_idx] = True
+            if 0 <= type_idx.item() < self.n_categories:
+                mask = (y == type_idx)
+                P_type_batch[type_idx] = P[mask].mean(dim=0) 
+                valid_types_in_batch_mask[type_idx] = True
 
         P_corr = P_type_batch[valid_types_in_batch_mask] 
         batch_type_indices = torch.where(valid_types_in_batch_mask)[0] 
@@ -1087,11 +1133,11 @@ class EncodingDesigner(nn.Module):
                 current_stats['type_correlation_max_loss' + suffix] = 0.0
                 current_stats['type_correlation_mean_loss' + suffix] = 0.0
         else: 
-             current_stats['type_correlation_max' + suffix] = np.nan
-             current_stats['type_correlation_min' + suffix] = np.nan
-             current_stats['type_correlation_mean' + suffix] = np.nan
-             current_stats['type_correlation_max_loss' + suffix] = 0.0
-             current_stats['type_correlation_mean_loss' + suffix] = 0.0
+            current_stats['type_correlation_max' + suffix] = np.nan
+            current_stats['type_correlation_min' + suffix] = np.nan
+            current_stats['type_correlation_mean' + suffix] = np.nan
+            current_stats['type_correlation_max_loss' + suffix] = 0.0
+            current_stats['type_correlation_mean_loss' + suffix] = 0.0
         raw_losses['type_correlation_max'] = raw_type_correlation_max_loss
 
         # --- Hierarchical Scatter Loss (Minimizing -Value, so maximizing Value) ---
@@ -1128,27 +1174,21 @@ class EncodingDesigner(nn.Module):
                 hierarchical_scatter_value_stat = hierarchical_scatter_value.item()
                 current_stats['hierarchical_scatter_loss' + suffix] = raw_hierarchical_scatter_loss.item() * hierarchical_scatter_weight
             else:
-                 current_stats['hierarchical_scatter_loss' + suffix] = 0.0
+                current_stats['hierarchical_scatter_loss' + suffix] = 0.0
         else:
             current_stats['hierarchical_scatter_loss' + suffix] = 0.0
         
         raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss
         current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
         
-        # Total loss is no longer calculated and returned here.
-        # It will be calculated in fit() using effective_weights.
-        # For stats, we can log a sum of raw weighted losses for rough comparison if needed,
-        # but the primary 'total_loss_train' will be the GradNorm weighted one from fit().
-        # For now, total_loss_train stat will be populated in fit().
-
         return raw_losses, current_stats
 
     def fit(self):
         """ Fits the EncodingDesigner model using a single decoder and vectorized batches. """
         # --- Check if initialized ---
         if self.X_train is None or self.y_train is None or self.r_train is None or self.constraints is None or self.decoder is None or self.region_embedder is None:
-             self.log.error("Model is not initialized. Call initialize() before fit().")
-             raise RuntimeError("Model is not initialized. Call initialize() before fit().")
+            self.log.error("Model is not initialized. Call initialize() before fit().")
+            raise RuntimeError("Model is not initialized. Call initialize() before fit().")
 
         # --- Initializations ---
         self.learning_stats = {} # Reset learning stats for this fit run
@@ -1184,7 +1224,7 @@ class EncodingDesigner(nn.Module):
                     if not self.is_initialized_from_file:
                         self.log.info("Model not initialized from file, using randomly initialized weights.")
                     else:
-                         self.log.info("Using model loaded during initialization.")
+                        self.log.info("Using model loaded during initialization.")
                     self.to(current_device)
 
                     # Optimizer uses STARTING LR - include all trainable parameters
@@ -1251,11 +1291,13 @@ class EncodingDesigner(nn.Module):
 
                 for task_name in self.gradnorm_task_names:
                     raw_loss_component = raw_losses_batch.get(task_name)
-                    if raw_loss_component is not None and effective_weights[task_name] > 0: # Process if weight is non-zero
+                    if raw_loss_component is not None and task_name in effective_weights and effective_weights[task_name] > 0: # Process if weight is non-zero and task is valid
                         total_loss_weighted = total_loss_weighted + effective_weights[task_name] * raw_loss_component
                         active_raw_losses_for_gradnorm[task_name] = raw_loss_component
                     # Log effective weight (can be verbose, consider frequency)
-                    # self.learning_stats[iteration][f'weight_{task_name}'] = effective_weights[task_name].item()
+                    if task_name in effective_weights: # Ensure key exists
+                         self.learning_stats[iteration][f'weight_{task_name}'] = effective_weights[task_name].item()
+
 
                 # Update the logged total_loss_train stat (this is the primary loss for best model tracking)
                 self.learning_stats[iteration]['total_loss_train'] = total_loss_weighted.item()
@@ -1268,12 +1310,12 @@ class EncodingDesigner(nn.Module):
                 for name, param in self.named_parameters():
                     if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
                         # Check if this parameter belongs to gradnorm_log_weights, if so, don't treat as model param NaN
-                        if name not in self.gradnorm_log_weights:
+                        if not name.startswith("gradnorm_log_weights."): # Check if param is NOT a gradnorm weight
                             nan_detected = True
                             self.log.warning(f"NaNs or Infs detected in gradients of model parameter '{name}' at iteration {iteration}. Skipping step and attempting revert.")
                             self.optimizer_gen.zero_grad() # Zero the corrupted model gradients
                             break
-
+                
                 if not nan_detected:
                     self.optimizer_gen.step()
 
@@ -1286,7 +1328,7 @@ class EncodingDesigner(nn.Module):
                                 self.log.info(f"GradNorm: Stored initial loss for {task_name}: {self.gradnorm_initial_losses[task_name].item():.4f}")
 
                         # 2. Calculate Task-Specific Gradient Norms (G_W_i)
-                        if self.encoder.weight.grad is not None: # Clear grads on encoder from main backward pass before specific grad calcs
+                        if self.encoder.weight.grad is not None: 
                             self.encoder.weight.grad.zero_()
                         
                         task_gradient_norms = {}
@@ -1294,14 +1336,18 @@ class EncodingDesigner(nn.Module):
 
                         for task_name, raw_loss_val in active_raw_losses_for_gradnorm.items():
                             if raw_loss_val is not None and self.gradnorm_initial_losses.get(task_name) is not None:
-                                grad_Li_W = torch.autograd.grad(raw_loss_val, shared_params, retain_graph=True, allow_unused=False)
-                                if grad_Li_W[0] is not None:
-                                     task_gradient_norms[task_name] = torch.norm(grad_Li_W[0], p=2)
+                                # Detach raw_loss_val ONLY IF it's not needed for L_grad's graph.
+                                # However, to allow gradients to flow to log_weights through L_grad,
+                                # raw_loss_val itself (if it depends on model params that gradnorm_log_weights might indirectly affect)
+                                # should be part of the graph.
+                                # The grad() call computes d(raw_loss_val)/d(shared_params).
+                                grad_Li_W_tuple = torch.autograd.grad(raw_loss_val, shared_params, retain_graph=True, allow_unused=False)
+                                if grad_Li_W_tuple[0] is not None:
+                                    task_gradient_norms[task_name] = torch.norm(grad_Li_W_tuple[0], p=2)
                                 else: 
-                                     self.log.warning(f"GradNorm: Grad for {task_name} w.r.t shared_params is None.")
-                                     task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device) 
-                            if self.encoder.weight.grad is not None: # Clean up for next grad computation
-                                self.encoder.weight.grad.zero_()
+                                    self.log.warning(f"GradNorm: Grad for {task_name} w.r.t shared_params is None.")
+                                    task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device) 
+                                # MINIMAL CHANGE: Removed the .zero_() from inside this loop (original Line 1052 area)
                         
                         if not task_gradient_norms: 
                             self.log.debug("GradNorm: No valid task gradient norms to compute GradNorm loss.")
@@ -1309,68 +1355,77 @@ class EncodingDesigner(nn.Module):
                             # 3. Compute Average Gradient Norm (G_W_avg)
                             weighted_grad_norms = []
                             for task_name_norm in task_gradient_norms.keys(): 
-                                if task_gradient_norms[task_name_norm] is not None:
-                                     weighted_grad_norms.append(effective_weights[task_name_norm] * task_gradient_norms[task_name_norm])
+                                if task_name_norm in effective_weights and task_gradient_norms[task_name_norm] is not None : # Check effective_weights too
+                                    weighted_grad_norms.append(effective_weights[task_name_norm].detach() * task_gradient_norms[task_name_norm]) # Detach effective_weights here
 
                             if not weighted_grad_norms:
                                 self.log.debug("GradNorm: No weighted_grad_norms to compute G_W_avg.")
+                                G_W_avg = torch.tensor(0.0, device=current_device) # Fallback for G_W_avg
+                                self.learning_stats[iteration]['gradnorm_G_W_avg'] = G_W_avg.item()
                             else:
                                 G_W_avg = torch.stack(weighted_grad_norms).mean()
                                 self.learning_stats[iteration]['gradnorm_G_W_avg'] = G_W_avg.item()
 
-                                # 4. Calculate Relative Inverse Training Rates (r_i)
-                                loss_ratios_tilde = {}
-                                valid_loss_ratios = []
-                                for task_name_ratio, raw_loss_val_ratio in active_raw_losses_for_gradnorm.items():
-                                    if raw_loss_val_ratio is not None and self.gradnorm_initial_losses.get(task_name_ratio) is not None \
-                                       and self.gradnorm_initial_losses[task_name_ratio].abs() > 1e-8: 
-                                        loss_ratios_tilde[task_name_ratio] = raw_loss_val_ratio.detach() / self.gradnorm_initial_losses[task_name_ratio]
-                                        valid_loss_ratios.append(loss_ratios_tilde[task_name_ratio])
+                            # 4. Calculate Relative Inverse Training Rates (r_i)
+                            loss_ratios_tilde = {}
+                            valid_loss_ratios = []
+                            for task_name_ratio, raw_loss_val_ratio in active_raw_losses_for_gradnorm.items():
+                                if raw_loss_val_ratio is not None and self.gradnorm_initial_losses.get(task_name_ratio) is not None \
+                                   and self.gradnorm_initial_losses[task_name_ratio].abs() > 1e-8: 
+                                    loss_ratios_tilde[task_name_ratio] = raw_loss_val_ratio.detach() / self.gradnorm_initial_losses[task_name_ratio]
+                                    valid_loss_ratios.append(loss_ratios_tilde[task_name_ratio])
 
-                                if not valid_loss_ratios:
-                                     self.log.debug("GradNorm: No valid loss ratios to compute relative rates.")
-                                else:
-                                    mean_loss_ratio_tilde = torch.stack(valid_loss_ratios).mean()
-                                    self.learning_stats[iteration]['gradnorm_mean_loss_ratio'] = mean_loss_ratio_tilde.item()
+                            if not valid_loss_ratios:
+                                self.log.debug("GradNorm: No valid loss ratios to compute relative rates.")
+                                mean_loss_ratio_tilde = torch.tensor(1.0, device=current_device) # Fallback
+                                self.learning_stats[iteration]['gradnorm_mean_loss_ratio'] = mean_loss_ratio_tilde.item()
 
-                                    relative_inv_rates = {}
-                                    for task_name_rate in loss_ratios_tilde.keys():
-                                        if mean_loss_ratio_tilde.abs() > 1e-8:
-                                            relative_inv_rates[task_name_rate] = loss_ratios_tilde[task_name_rate] / mean_loss_ratio_tilde
-                                        else: 
-                                            relative_inv_rates[task_name_rate] = torch.tensor(1.0, device=current_device) 
-                                        self.learning_stats[iteration][f'gradnorm_rel_inv_rate_{task_name_rate}'] = relative_inv_rates[task_name_rate].item()
+                            else:
+                                mean_loss_ratio_tilde = torch.stack(valid_loss_ratios).mean()
+                                self.learning_stats[iteration]['gradnorm_mean_loss_ratio'] = mean_loss_ratio_tilde.item()
 
-                                    # 5. Compute GradNorm Loss (L_grad)
-                                    gradnorm_loss_terms = []
-                                    for task_name_loss in task_gradient_norms.keys(): 
-                                        if task_name_loss in relative_inv_rates:
-                                            Gi_W = task_gradient_norms[task_name_loss]
-                                            ri = relative_inv_rates[task_name_loss]
-                                            target_grad_norm_i = G_W_avg * (ri.clamp(min=1e-8)**self.gradnorm_alpha)
-                                            # Ensure effective_weights[task_name_loss] is part of the graph for L_grad backward
-                                            gradnorm_loss_terms.append(torch.abs(torch.exp(self.gradnorm_log_weights[task_name_loss]) * Gi_W - target_grad_norm_i))
+                            relative_inv_rates = {}
+                            for task_name_rate in loss_ratios_tilde.keys(): # Iterate based on successfully computed tilde
+                                if mean_loss_ratio_tilde.abs() > 1e-8:
+                                    relative_inv_rates[task_name_rate] = loss_ratios_tilde[task_name_rate] / mean_loss_ratio_tilde
+                                else: 
+                                    relative_inv_rates[task_name_rate] = torch.tensor(1.0, device=current_device) 
+                                self.learning_stats[iteration][f'gradnorm_rel_inv_rate_{task_name_rate}'] = relative_inv_rates[task_name_rate].item()
 
-                                    if gradnorm_loss_terms:
-                                        L_grad = torch.stack(gradnorm_loss_terms).sum()
-                                        self.learning_stats[iteration]['gradnorm_L_grad'] = L_grad.item()
+                            # 5. Compute GradNorm Loss (L_grad)
+                            gradnorm_loss_terms = []
+                            for task_name_loss in task_gradient_norms.keys(): 
+                                if task_name_loss in relative_inv_rates and task_name_loss in effective_weights: # Ensure all keys exist
+                                    Gi_W = task_gradient_norms[task_name_loss] # This is ||nabla_W L_i||
+                                    ri = relative_inv_rates[task_name_loss]
+                                    # Target is G_W_avg * (ri)^alpha. We want w_i * G_i_W to be close to this target.
+                                    # L_grad = sum | w_i * G_i_W - G_W_avg * ri^alpha |
+                                    target_grad_norm_i = G_W_avg.detach() * (ri.clamp(min=1e-8)**self.gradnorm_alpha) # Detach G_W_avg as it depends on w_i
+                                    # gradnorm_log_weights[task_name_loss] is the nn.Parameter, exp() makes it the weight w_i
+                                    current_weighted_norm = torch.exp(self.gradnorm_log_weights[task_name_loss]) * Gi_W.detach() # Detach Gi_W as its grad is for model params
+                                    gradnorm_loss_terms.append(torch.abs(current_weighted_norm - target_grad_norm_i))
 
-                                        # 6. Update GradNorm Loss Weights
-                                        # Gradients for GradNorm weights were zeroed earlier or will be zeroed now
-                                        self.optimizer_gradnorm_weights.zero_grad() 
-                                        L_grad.backward()
-                                        self.optimizer_gradnorm_weights.step()
 
-                                        # 7. Log new effective weights
-                                        if is_report_iter : 
-                                            log_msg_gn_weights = "GradNorm Effective Weights: "
-                                            for name_val in self.gradnorm_task_names:
-                                                eff_w = torch.exp(self.gradnorm_log_weights[name_val]).item()
-                                                self.learning_stats[iteration][f'gradnorm_eff_w_{name_val}'] = eff_w
-                                                log_msg_gn_weights += f"{name_val}: {eff_w:.4f} "
-                                            self.log.info(log_msg_gn_weights)
-                                    else:
-                                        self.learning_stats[iteration]['gradnorm_L_grad'] = 0.0
+                            if gradnorm_loss_terms:
+                                L_grad = torch.stack(gradnorm_loss_terms).sum()
+                                self.learning_stats[iteration]['gradnorm_L_grad'] = L_grad.item()
+
+                                # 6. Update GradNorm Loss Weights
+                                self.optimizer_gradnorm_weights.zero_grad() 
+                                L_grad.backward() # This computes dL_grad / d(log_weights)
+                                self.optimizer_gradnorm_weights.step()
+
+                                # 7. Log new effective weights
+                                if is_report_iter : 
+                                    log_msg_gn_weights = "GradNorm Effective Weights: "
+                                    for name_val in self.gradnorm_task_names:
+                                        if name_val in self.gradnorm_log_weights: # Check key exists
+                                            eff_w = torch.exp(self.gradnorm_log_weights[name_val]).item()
+                                            self.learning_stats[iteration][f'gradnorm_eff_w_{name_val}'] = eff_w
+                                            log_msg_gn_weights += f"{name_val}: {eff_w:.4f} "
+                                    self.log.info(log_msg_gn_weights)
+                            else:
+                                self.learning_stats[iteration]['gradnorm_L_grad'] = 0.0
                     # --- End of GradNorm Update Step ---
 
                     # --- F. Update Stats and Best Model ---
@@ -1384,8 +1439,8 @@ class EncodingDesigner(nn.Module):
                         self.log.info(f"*** New best model found at iteration {iteration} (Train Loss: {self.best_loss:.4f}) ***")
 
                     if is_report_iter or iteration == self.best_iteration: 
-                         self.saved_models[iteration] = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
-                         self.saved_optimizer_states[iteration] = self.optimizer_gen.state_dict()
+                        self.saved_models[iteration] = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
+                        self.saved_optimizer_states[iteration] = self.optimizer_gen.state_dict()
                 else: # NaN detected in model parameter gradients
                     # --- Revert Logic ---
                     valid_iters = [k for k in self.saved_models if k < iteration]
@@ -1407,12 +1462,12 @@ class EncodingDesigner(nn.Module):
                                     if isinstance(v, torch.Tensor):
                                         state[k] = v.to(current_device)
                         except Exception as e:
-                             self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
-                             self.optimizer_gen = torch.optim.Adam([
-                                 {'params': self.encoder.parameters(), 'lr': lr_start},
-                                 {'params': self.region_embedder.parameters(), 'lr': lr_start},
-                                 {'params': self.decoder.parameters(), 'lr': lr_start}
-                             ])
+                            self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
+                            self.optimizer_gen = torch.optim.Adam([
+                                {'params': self.encoder.parameters(), 'lr': lr_start},
+                                {'params': self.region_embedder.parameters(), 'lr': lr_start},
+                                {'params': self.decoder.parameters(), 'lr': lr_start}
+                            ])
                         # Clear current iteration's stats as it's invalid due to revert
                         self.learning_stats[iteration] = {} # Reset dict for this iter
                         self.learning_stats[iteration]['status'] = f'Reverted from NaN at {iteration}'
@@ -1436,12 +1491,15 @@ class EncodingDesigner(nn.Module):
                         
                         # Determine effective weights for test evaluation (consistent with training state)
                         eval_effective_weights = {}
-                        if self.gradnorm_weights_activated: # Use current gradnorm weights
-                            for name in self.gradnorm_task_names:
+                        # Use the same effective_weights determined for the current training iteration for consistency in reporting
+                        for name in self.gradnorm_task_names:
+                            if name in effective_weights: # Use weights from current training iteration state
+                                eval_effective_weights[name] = effective_weights[name].item() if isinstance(effective_weights[name], torch.Tensor) else effective_weights[name]
+                            elif self.gradnorm_weights_activated : # Fallback if task somehow missing but GN active
                                 eval_effective_weights[name] = torch.exp(self.gradnorm_log_weights[name]).item()
-                        else: # Use static weights
-                            for name in self.gradnorm_task_names:
+                            else: # Fallback to static if GN not active
                                 eval_effective_weights[name] = self.gradnorm_original_static_weights.get(name, 1.0)
+
 
                         # Calculate weighted test loss
                         weighted_test_loss_val = 0.0
@@ -1533,10 +1591,10 @@ class EncodingDesigner(nn.Module):
             output_dir = self.user_parameters['output']
             final_model_path = os.path.join(output_dir, 'final_model_state.pt')
             try:
-                 torch.save(self.state_dict(), final_model_path)
-                 self.log.info(f"Final model state dictionary saved to {final_model_path}")
+                torch.save(self.state_dict(), final_model_path)
+                self.log.info(f"Final model state dictionary saved to {final_model_path}")
             except Exception as e:
-                 self.log.error(f"Failed to save final model state: {e}")
+                self.log.error(f"Failed to save final model state: {e}")
 
 
             # --- Final Evaluation (using the loaded best or final state) ---
@@ -1545,12 +1603,33 @@ class EncodingDesigner(nn.Module):
             self.learning_stats[final_iter_key] = {}
             # Calculate final stats globally
             with torch.no_grad():
-                # *** Pass iteration number instead of region_index ***
-                final_loss, final_stats = self.calculate_loss(
+                # MINIMAL CHANGE: Apply Correction 2 here
+                raw_final_losses_dict, final_stats_dict = self.calculate_loss(
                     self.X_test, self.y_test, self.r_test, iteration=final_iter_key, suffix='_test'
                 )
-            self.learning_stats[final_iter_key].update(final_stats)
-            self.learning_stats[final_iter_key]['total_loss_test_avg'] = final_loss.item() # Store final loss
+
+                final_eval_effective_weights = {}
+                # Use current effective_weights if available and GradNorm was active, otherwise static/initial
+                # This ensures consistency with how the model was last trained or would be used
+                current_training_effective_weights = {}
+                if hasattr(self, 'gradnorm_weights_activated') and self.gradnorm_weights_activated:
+                    for name_gn in self.gradnorm_task_names:
+                         if name_gn in self.gradnorm_log_weights: # Check key exists
+                            current_training_effective_weights[name_gn] = torch.exp(self.gradnorm_log_weights[name_gn]).item()
+                else:
+                    for name_gn in self.gradnorm_task_names:
+                        current_training_effective_weights[name_gn] = self.gradnorm_original_static_weights.get(name_gn, 1.0)
+                
+                final_eval_effective_weights = current_training_effective_weights
+
+                final_weighted_loss_value = 0.0
+                for task_name, raw_loss_comp in raw_final_losses_dict.items():
+                    if raw_loss_comp is not None and task_name in final_eval_effective_weights:
+                        loss_item = raw_loss_comp.item() if isinstance(raw_loss_comp, torch.Tensor) else raw_loss_comp
+                        final_weighted_loss_value += final_eval_effective_weights[task_name] * loss_item
+                
+                self.learning_stats[final_iter_key].update(final_stats_dict)
+                self.learning_stats[final_iter_key]['total_loss_test_avg'] = final_weighted_loss_value
 
 
             # --- Final Reporting ---
@@ -1560,12 +1639,12 @@ class EncodingDesigner(nn.Module):
             self.log.info(log_prefix)
             if self.user_parameters['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
             for name, item in self.learning_stats[final_iter_key].items():
-                 # Include the reinstated correlation stats and pnorm_std_min
-                 if 'loss' in name or 'accuracy' in name or 'correlation_' in name or \
+                # Include the reinstated correlation stats and pnorm_std_min
+                if 'loss' in name or 'accuracy' in name or 'correlation_' in name or \
                     'total_n_probes' in name or 'pnorm_std' in name or 'median brightness' in name: # Added median brightness
-                     log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
-                     self.log.info(log_msg)
-                     if self.user_parameters['Verbose'] == 1: print(log_msg)
+                    log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
+                    self.log.info(log_msg)
+                    if self.user_parameters['Verbose'] == 1: print(log_msg)
             self.log.info('------------------')
 
 
@@ -1706,7 +1785,7 @@ class EncodingDesigner(nn.Module):
                         type_idx = type_idx_tensor.item()
                         type_mask = (y_region == type_idx_tensor)
                         if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
-                                P_type_current[type_idx] = P_region_cpu[type_mask].mean(dim=0)
+                            P_type_current[type_idx] = P_region_cpu[type_mask].mean(dim=0)
                     all_P_type.append(P_type_current)
 
         if all_P_type:
@@ -1720,14 +1799,14 @@ class EncodingDesigner(nn.Module):
                 self.results[f"Average Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].mean().item()
                 self.results[f"Maximum Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].max().item()
         else:
-             self.log.warning("Could not calculate average P_type for evaluation stats.")
+            self.log.warning("Could not calculate average P_type for evaluation stats.")
 
         # Log basic stats
         self.log.info("--- Basic Evaluation Stats ---")
         for key, val in self.results.items():
-             log_msg = f" {key}: {round(val, 4) if isinstance(val, (float, int)) else val}"
-             self.log.info(log_msg)
-             if self.user_parameters['Verbose'] == 1: print(log_msg)
+            log_msg = f" {key}: {round(val, 4) if isinstance(val, (float, int)) else val}"
+            self.log.info(log_msg)
+            if self.user_parameters['Verbose'] == 1: print(log_msg)
         self.log.info("-----------------------------")
 
         # --- Accuracy Evaluation with Noise ---
@@ -1780,7 +1859,7 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['Verbose'] == 1:
             print("--- Evaluation Summary ---")
             for key, val in self.results.items():
-                 print(f" {key}: {round(val, 4) if isinstance(val, (float, int)) and not np.isnan(val) else val}")
+                print(f" {key}: {round(val, 4) if isinstance(val, (float, int)) and not np.isnan(val) else val}")
             print("-------------------------------------------------")
 
     def visualize(self, show_plots=False): 
@@ -1855,7 +1934,7 @@ class EncodingDesigner(nn.Module):
                             # Get string label using the reverse map
                             valid_type_labels.append(self.y_reverse_label_map.get(type_idx, f"Type_{type_idx}"))
                         else:
-                             self.log.warning(f"Skipping type index {type_idx} in region {region_name_str} during P_type calculation (out of bounds).")
+                            self.log.warning(f"Skipping type index {type_idx} in region {region_name_str} during P_type calculation (out of bounds).")
 
                 # Filter P_type_region to only include types present in this region
                 if not valid_type_indices:
@@ -1947,7 +2026,7 @@ class EncodingDesigner(nn.Module):
                     finally:
                         # Clustermap creates its own figure, close it
                         if cluster_fig is not None:
-                             plt.close(cluster_fig.fig)
+                            plt.close(cluster_fig.fig)
 
                 else:
                     # This case should have been caught earlier, but added for safety
@@ -1974,7 +2053,7 @@ class EncodingDesigner(nn.Module):
                         # Use str(e) for explicit conversion in log message
                         self.log.error(f"Error generating projection space density plot for {region_name_str}: {str(e)}")
                 elif n_bits < 2:
-                     self.log.warning(f"Skipping projection space density plot for {region_name_str}: Requires at least 2 bits (found {n_bits}).")
+                    self.log.warning(f"Skipping projection space density plot for {region_name_str}: Requires at least 2 bits (found {n_bits}).")
                 # else: (n_types_present == 0) - Already handled above
 
                 # --- Plot 4: Confusion Matrix for Test Set ---
