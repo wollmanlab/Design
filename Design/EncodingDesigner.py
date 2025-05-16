@@ -930,9 +930,10 @@ class EncodingDesigner(nn.Module):
             loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
             if y.min() < 0 or y.max() >= self.n_categories:
                  self.log.error(f"Target labels y out of bounds ({y.min()}-{y.max()}) for CrossEntropyLoss (expected 0-{self.n_categories-1}).")
-                 categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
+                 categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True) # Fallback
             else:
-                 categorical_loss = self.user_parameters['categorical_weight'] * (loss_fn(R, y))#.log()
+                 # Raw categorical loss value
+                 categorical_loss = loss_fn(R, y)
         else:
             categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
 
@@ -942,6 +943,7 @@ class EncodingDesigner(nn.Module):
         """
         Calculate loss for the EncodingDesigner model for a batch of data.
         Uses the single decoder structure and co-occurrence mask for type correlation.
+        Returns raw loss components for GradNorm.
 
         Args:
             X (Tensor): Input data batch.
@@ -951,128 +953,112 @@ class EncodingDesigner(nn.Module):
             suffix (str): Suffix for logging stats ('_train' or '_test').
 
         Returns:
-            Tuple[Tensor, Dict]: Total loss tensor, dictionary of stats.
+            Tuple[Dict, Dict]: Dictionary of raw loss tensors, dictionary of stats.
         """
         # --- Shared Encoder Forward Pass ---
         E = self.get_encoding_weights()
         P, Pnormalized, Pnormalized_dropout = self.project(X, E) # Pnormalized is the tanh output
 
         # --- Decode using the single decoder (incorporates region embedding) ---
-        y_predict, accuracy, categorical_loss = self.decode(Pnormalized_dropout, r_labels, y)
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, r_labels, y)
+
+        # --- Initialize Dictionaries ---
+        raw_losses = {}
+        current_stats = {}
 
         # --- Calculate Stats (on the full batch) ---
-        current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
         current_stats['median brightness' + suffix] = P.median().item()
 
-        # --- Loss Components ---
-        total_loss = torch.tensor(0.0, device=self.user_parameters['device'], requires_grad=True)
-
         # -- Probe Weight Loss (Global) --
-        # This section calculates penalties related to the total number of probes.
-        # probe_count is E.sum(), which is the sum of all encoding weights.
-        probe_count = E.sum() 
+        probe_count = E.sum()
         current_stats['total_n_probes' + suffix] = probe_count.item()
-        
-        # Initialize probe_weight_loss to zero. It will be updated if any relevant penalties apply.
-        probe_weight_loss = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-        
-        probe_weight_for_over = self.user_parameters['probe_weight'] 
-        # 'probe_under_weight_factor' is used for the "push down" penalty when under target.
-        push_down_weight_for_under = self.user_parameters['probe_under_weight_factor'] 
 
-        # Proceed only if at least one of the weights is non-zero.
+        raw_probe_weight_loss = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+        probe_weight_for_over = self.user_parameters['probe_weight']
+        push_down_weight_for_under = self.user_parameters['probe_under_weight_factor']
+
         if probe_weight_for_over != 0.0 or push_down_weight_for_under != 0.0:
             total_n_probes_target = float(self.user_parameters['total_n_probes'])
-
-            # 1. Penalty for `probe_count` being OVER `total_n_probes_target`
-            # This penalty increases as `probe_count` exceeds `total_n_probes_target`.
-            # It is zero if `probe_count` is at or below `total_n_probes_target`.
             penalty_over = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
             if probe_weight_for_over != 0.0:
                 diff_over = probe_count - total_n_probes_target
                 penalty_over = probe_weight_for_over * (F.relu(diff_over) + 1).log10()
 
-            # 2. Penalty for `probe_count` being UNDER `total_n_probes_target` (Push Down Penalty)
-            # This penalty is designed to encourage `probe_count` to be even lower if it's already
-            # below `total_n_probes_target`. The penalty is larger when `probe_count` is closer
-            # to `total_n_probes_target` (from below) and smaller as `probe_count` decreases.
-            # It is zero if `probe_count` is zero or if `probe_count` >= `total_n_probes_target`.
             penalty_push_down = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
             if push_down_weight_for_under != 0.0:
                 if probe_count < total_n_probes_target:
-                    # Ensure total_n_probes_target is not zero for division.
                     safe_total_n_probes_target = max(total_n_probes_target, 1e-8)
-                    # The term (probe_count / safe_total_n_probes_target) is in [0, 1) when probe_count < target.
-                    # So, ( (probe_count / safe_total_n_probes_target) + 1 ) is in [1, 2).
-                    # The .log10() of this will range from log10(1)=0 to approx log10(2) as probe_count approaches target.
-                    # This makes its scale comparable to the (F.relu(diff_over)+1).log10() term when diff_over is small (e.g., 1).
                     normalized_under_log_argument = (probe_count / safe_total_n_probes_target) + 1
                     penalty_push_down = push_down_weight_for_under * normalized_under_log_argument.log10()
-            
-            probe_weight_loss = penalty_over + penalty_push_down
+            raw_probe_weight_loss = penalty_over + penalty_push_down
         
-        current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
-        # Add to total_loss. probe_weight_loss is a tensor (potentially 0.0).
-        total_loss = total_loss + probe_weight_loss
+        raw_losses['probe_weight'] = raw_probe_weight_loss
+        current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() # Log raw value, effective weight applied in fit
 
-        # -- Categorical Loss (already calculated) --
-        if self.user_parameters['categorical_weight'] != 0:
-            current_stats['categorical_loss' + suffix] = categorical_loss.item()
-            total_loss = total_loss + categorical_loss
+        # -- Categorical Loss --
+        if self.user_parameters['categorical_weight'] != 0: # Still check if static weight is zero to disable calculation
+            raw_losses['categorical'] = raw_categorical_loss_component
+            # Log weighted by original static weight for comparison to pre-GradNorm runs
+            current_stats['categorical_loss' + suffix] = raw_categorical_loss_component.item() * self.user_parameters['categorical_weight']
+        else:
+            raw_losses['categorical'] = torch.tensor(0.0, device=self.user_parameters['device'])
+            current_stats['categorical_loss' + suffix] = 0.0
 
         # -- Gene Constraint Loss (Global) --
+        raw_gene_constraint_loss = torch.tensor(0.0, device=self.user_parameters['device'])
         if self.user_parameters['gene_constraint_weight'] != 0:
             if self.constraints is None: raise RuntimeError("Constraints not loaded. Run initialize() first.")
             constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
-            gene_constraint_loss = self.user_parameters['gene_constraint_weight'] * torch.sqrt(constraint_violation.mean().clamp(min=1e-8))
-            current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
-            total_loss = total_loss + gene_constraint_loss
+            raw_gene_constraint_loss = torch.sqrt(constraint_violation.mean().clamp(min=1e-8))
+            current_stats['gene_constraint_loss' + suffix] = raw_gene_constraint_loss.item() * self.user_parameters['gene_constraint_weight']
+        else:
+            current_stats['gene_constraint_loss' + suffix] = 0.0
+        raw_losses['gene_constraint'] = raw_gene_constraint_loss
+        
 
-        # -- P Standard Deviation Loss (using min, gentler loss) --
-        # Previously used Pnormalized, now uses P directly
-        p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        min_p_cv = np.nan # Changed variable name for clarity, will be logged as p_std_min
+        # -- P Standard Deviation Loss (Minimizing -CV, so maximizing CV) --
+        raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        min_p_cv_val = np.nan 
 
-        if self.user_parameters['pnorm_std_weight'] != 0 and P.shape[0] > 1 and P.shape[1] > 0: # Need samples and bits
+        if self.user_parameters['pnorm_std_weight'] != 0 and P.shape[0] > 1 and P.shape[1] > 0: 
             mean_per_bit = P.mean(dim=0)
-            std_per_bit = P.std(dim=0) # Shape: [n_bits]
-            epsilon = 1 # To prevent division by zero if mean is zero
+            std_per_bit = P.std(dim=0) 
+            epsilon = 1e-8 # Avoid division by zero if mean is zero or very small
             cv_per_bit = std_per_bit / (mean_per_bit + epsilon)
             min_p_cv_tensor = cv_per_bit.min()
-            min_p_cv = min_p_cv_tensor.item()
-            p_std_loss = self.user_parameters['pnorm_std_weight'] * (-min_p_cv_tensor) # Maximize min CV
-            total_loss = total_loss + p_std_loss
-
-        # Keep parameter names in stats as pnorm_std for backward compatibility in learning_curve.csv
-        # but the value now comes from CV.
-        current_stats['p_std_min' + suffix] = min_p_cv
-        current_stats['p_std_loss' + suffix] = p_std_loss.item()
+            min_p_cv_val = min_p_cv_tensor.item()
+            raw_p_std_loss = -min_p_cv_tensor # GradNorm minimizes this (thus maximizes min_p_cv_tensor)
+            current_stats['p_std_loss' + suffix] = raw_p_std_loss.item() * self.user_parameters['pnorm_std_weight']
+        else:
+            current_stats['p_std_loss' + suffix] = 0.0
+        raw_losses['p_std'] = raw_p_std_loss
+        current_stats['p_std_min' + suffix] = min_p_cv_val # Log the actual min CV value
+        
 
         # -- Type Correlation Loss (using co-occurrence mask) --
-        # Calculate based on P_type_region for the current batch
-        # Using raw Projected values 
         P_type_batch = torch.zeros((self.n_categories, P.shape[1]), device=P.device)
-        unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True) # Get unique types IN THIS BATCH
+        unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True) 
         valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P.device)
 
-        # Calculate mean P for types present in the batch
         for i, type_idx in enumerate(unique_y_batch):
              if 0 <= type_idx.item() < self.n_categories:
                  mask = (y == type_idx)
-                 P_type_batch[type_idx] = P[mask].mean(dim=0) # Use raw P values for correlation
+                 P_type_batch[type_idx] = P[mask].mean(dim=0) 
                  valid_types_in_batch_mask[type_idx] = True
 
-        P_corr = P_type_batch[valid_types_in_batch_mask] # Filter P_type for types present in batch
-        batch_type_indices = torch.where(valid_types_in_batch_mask)[0] # Get the actual indices (0..n_cat-1) of present types
+        P_corr = P_type_batch[valid_types_in_batch_mask] 
+        batch_type_indices = torch.where(valid_types_in_batch_mask)[0] 
         n_types_batch = P_corr.shape[0]
 
-        if (n_types_batch > 1) and (self.user_parameters['type_correlation_mean_weight'] != 0 or self.user_parameters['type_correlation_max_weight'] != 0):
+        raw_type_correlation_max_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+
+        if (n_types_batch > 1) and (self.user_parameters['type_correlation_max_weight'] != 0): # Only calculate if weight is non-zero
             n_bits = P_corr.shape[1]
             P_type_centered_types = P_corr - P_corr.mean(dim=1, keepdim=True)
             P_type_std_types = P_type_centered_types.std(dim=1, keepdim=True).clamp(min=1e-6)
-            P_type_norm_types = P_type_centered_types / P_type_std_types # Shape [n_types_batch, n_bits]
-            correlation_matrix_types = P_type_norm_types @ P_type_norm_types.T / n_bits # Shape [n_types_batch, n_types_batch]
+            P_type_norm_types = P_type_centered_types / P_type_std_types 
+            correlation_matrix_types = P_type_norm_types @ P_type_norm_types.T / n_bits 
 
             batch_off_diag_mask = torch.eye(n_types_batch, device=P_corr.device) == 0
             batch_cooccurrence_mask = self.type_cooccurrence_mask[batch_type_indices][:, batch_type_indices]
@@ -1085,103 +1071,77 @@ class EncodingDesigner(nn.Module):
                 current_stats['type_correlation_mean' + suffix] = relevant_corrs.mean().item()
                 correlation_thresh = self.user_parameters['correlation_thresh']
                 off_diag_corr_types_loss = F.relu((relevant_corrs.abs() - correlation_thresh) / (correlation_thresh + 1e-8))
-
-                if self.user_parameters['type_correlation_mean_weight'] != 0:
-                    type_correlation_mean_loss = self.user_parameters['type_correlation_mean_weight'] * off_diag_corr_types_loss.mean()
-                    total_loss = total_loss + type_correlation_mean_loss
-                    current_stats['type_correlation_mean_loss' + suffix] = type_correlation_mean_loss.item()
-                if self.user_parameters['type_correlation_max_weight'] != 0:
-                    type_correlation_max_loss = self.user_parameters['type_correlation_max_weight'] * off_diag_corr_types_loss.max()
-                    total_loss = total_loss + type_correlation_max_loss
-                    current_stats['type_correlation_max_loss' + suffix] = type_correlation_max_loss.item()
-            else: # No relevant pairs
+                
+                raw_type_correlation_max_loss = off_diag_corr_types_loss.max()
+                current_stats['type_correlation_max_loss' + suffix] = raw_type_correlation_max_loss.item() * self.user_parameters['type_correlation_max_weight']
+                # Note: type_correlation_mean_loss is not part of GradNorm tasks by default per instructions
+                if self.user_parameters['type_correlation_mean_weight'] != 0: 
+                    type_correlation_mean_loss_val = self.user_parameters['type_correlation_mean_weight'] * off_diag_corr_types_loss.mean()
+                    current_stats['type_correlation_mean_loss' + suffix] = type_correlation_mean_loss_val.item()
+                else:
+                    current_stats['type_correlation_mean_loss' + suffix] = 0.0
+            else: 
                 current_stats['type_correlation_max' + suffix] = np.nan
                 current_stats['type_correlation_min' + suffix] = np.nan
                 current_stats['type_correlation_mean' + suffix] = np.nan
-                current_stats['type_correlation_mean_loss' + suffix] = 0.0
                 current_stats['type_correlation_max_loss' + suffix] = 0.0
-        else: # Only one type in batch
+                current_stats['type_correlation_mean_loss' + suffix] = 0.0
+        else: 
              current_stats['type_correlation_max' + suffix] = np.nan
              current_stats['type_correlation_min' + suffix] = np.nan
              current_stats['type_correlation_mean' + suffix] = np.nan
-             current_stats['type_correlation_mean_loss' + suffix] = 0.0
              current_stats['type_correlation_max_loss' + suffix] = 0.0
+             current_stats['type_correlation_mean_loss' + suffix] = 0.0
+        raw_losses['type_correlation_max'] = raw_type_correlation_max_loss
 
-        # Add a "Tree" element to the seperation similar to TreeDPNMF approach
+        # --- Hierarchical Scatter Loss (Minimizing -Value, so maximizing Value) ---
+        hierarchical_scatter_value_stat = 0.0 
+        raw_hierarchical_scatter_loss = torch.tensor(0.0, device=P.device) 
 
-        # --- Total Loss ---
-        current_stats['total_loss' + suffix] = total_loss.item()
-
-        # --- Hierarchical Scatter Loss (Inspired by DPNMF's Sb_tree) ---
-        # This loss aims to maximize the (weighted) squared distance between 
-        # child-type centroids and their parent-type centroids in the P space.
-        
-        hierarchical_scatter_value_stat = 0.0 # For logging the positive value we maximize
-        hierarchical_scatter_loss = torch.tensor(0.0, device=P.device) # Using P.device
-
-        # Determine which representation to use for scatter calculation
-        # Using raw P (projected values that are non-negative and linear)
-        P_for_scatter = P
-        # Option for Pnormalized (tanh transformed) if needed:
-        # P_for_scatter = Pnormalized
-
-        # Check if the loss weight is active and the hierarchy map is validly loaded
+        P_for_scatter = P 
         hierarchical_scatter_weight = self.user_parameters.get('hierarchical_scatter_weight', 0)
         if hierarchical_scatter_weight != 0 and \
            hasattr(self, 'y_parent_child_map') and self.y_parent_child_map and \
-           P_for_scatter.shape[0] > 1: # Need at least 2 samples in batch for meaningful centroids
+           P_for_scatter.shape[0] > 1: 
 
-            # Get unique labels present in the current batch `y` (these are internal 0..N-1 indices)
-            # and their counts (for potential weighting, analogous to N_c in DPNMF's S_b)
             unique_y_in_batch, y_counts_in_batch = torch.unique(y, return_counts=True)
-            # Create a dictionary for quick lookup of counts for labels present in the batch
             map_batch_labels_to_counts = {label.item(): count.item() for label, count in zip(unique_y_in_batch, y_counts_in_batch)}
-
             accumulated_weighted_squared_distances = []
 
-            # Iterate through parent categories defined in the loaded hierarchy map
             for parent_idx, child_idx_list in self.y_parent_child_map.items():
-                # Check if this parent category is actually present in the current batch
-                if parent_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[parent_idx] >= 1: # Min 1 cell for parent centroid
+                if parent_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[parent_idx] >= 1: 
                     parent_mask = (y == parent_idx)
                     parent_centroid = P_for_scatter[parent_mask].mean(dim=0)
 
-                    # Iterate through its children as defined in the hierarchy
                     for child_idx in child_idx_list:
-                        # Check if this child category is also present in the current batch
-                        if child_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[child_idx] >= 1: # Min 1 cell for child centroid
+                        if child_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[child_idx] >= 1: 
                             child_mask = (y == child_idx)
                             child_centroid = P_for_scatter[child_mask].mean(dim=0)
-                            
-                            # Number of cells of this child type in the current batch
                             n_child_in_batch = map_batch_labels_to_counts[child_idx]
-                            
-                            # Calculate squared Euclidean distance: || child_centroid - parent_centroid ||^2
                             squared_distance = ((child_centroid - parent_centroid)**2).sum()
-                            
-                            # Weight by the number of child cells in batch (analogous to N_Ci * ||mu_Ci - mu_P||^2 in Tr(Sb))
-                            # We want to MAXIMIZE this term.
                             weighted_squared_distance = n_child_in_batch * squared_distance
                             accumulated_weighted_squared_distances.append(weighted_squared_distance)
 
             if accumulated_weighted_squared_distances:
-                # This is the sum of N_Ci * ||mu_Ci - mu_P||^2 terms for all relevant parent-child pairs in the batch.
-                # We want to maximize this value.
                 hierarchical_scatter_value = torch.stack(accumulated_weighted_squared_distances).sum()
-                
-                # The loss is the negative of this value, scaled by the weight, because optimizers minimize loss.
-                hierarchical_scatter_loss = hierarchical_scatter_weight * (-hierarchical_scatter_value)
-                hierarchical_scatter_value_stat = hierarchical_scatter_value.item() # For logging
-
-        # Store stats for this loss component
-        current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
-        current_stats['hierarchical_scatter_loss' + suffix] = hierarchical_scatter_loss.item()
+                raw_hierarchical_scatter_loss = -hierarchical_scatter_value # GradNorm minimizes this
+                hierarchical_scatter_value_stat = hierarchical_scatter_value.item()
+                current_stats['hierarchical_scatter_loss' + suffix] = raw_hierarchical_scatter_loss.item() * hierarchical_scatter_weight
+            else:
+                 current_stats['hierarchical_scatter_loss' + suffix] = 0.0
+        else:
+            current_stats['hierarchical_scatter_loss' + suffix] = 0.0
         
-        # Add this hierarchical scatter loss to the total loss
-        total_loss = total_loss + hierarchical_scatter_loss
-        # --- End of Hierarchical Scatter Loss ---
+        raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss
+        current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
+        
+        # Total loss is no longer calculated and returned here.
+        # It will be calculated in fit() using effective_weights.
+        # For stats, we can log a sum of raw weighted losses for rough comparison if needed,
+        # but the primary 'total_loss_train' will be the GradNorm weighted one from fit().
+        # For now, total_loss_train stat will be populated in fit().
 
-        return total_loss, current_stats
+        return raw_losses, current_stats
 
     def fit(self):
         """ Fits the EncodingDesigner model using a single decoder and vectorized batches. """
@@ -1235,6 +1195,11 @@ class EncodingDesigner(nn.Module):
                     ])
                     self.optimizer_gen = optimizer_gen
 
+                    # Initialize GradNorm Optimizer for loss weights
+                    gradnorm_lr = self.user_parameters.get('gradnorm_lr', 1e-4) # Add to params file
+                    self.optimizer_gradnorm_weights = optim.Adam(self.gradnorm_log_weights.parameters(), lr=gradnorm_lr)
+                    self.log.info(f"GradNorm loss weights optimizer initialized with LR: {gradnorm_lr}")
+
                 # Calculate and Set Current Learning Rate
                 if n_iterations <= 1: current_lr = lr_start
                 else: current_lr = lr_start + (lr_end - lr_start) * (iteration / (n_iterations - 1))
@@ -1245,62 +1210,183 @@ class EncodingDesigner(nn.Module):
                 # --- Training Step (Single Batch from Full Dataset) ---
                 self.train() # Set model to training mode
 
-                # Sample a batch from the entire training set
                 if (batch_size > 0) and (batch_size < n_train_samples):
                     idxs = np.random.choice(n_train_samples, batch_size, replace=False)
                     X_batch = self.X_train[idxs]
                     y_batch = self.y_train[idxs]
-                    r_batch = self.r_train[idxs] # Get corresponding region labels
-                else: # Use full dataset if batch_size is 0 or >= dataset size
+                    r_batch = self.r_train[idxs] 
+                else: 
                     X_batch = self.X_train
                     y_batch = self.y_train
                     r_batch = self.r_train
-                    if batch_size > 0: # Log if using full dataset due to large batch size
+                    if batch_size > 0: 
                         self.log.debug(f"Batch size {batch_size} >= dataset size {n_train_samples}. Using full dataset for iteration {iteration}.")
 
-                # --- Calculate Loss for the Batch ---
-                self.optimizer_gen.zero_grad()
-                # Pass region labels (r_batch) to calculate_loss
-                # *** Pass iteration number instead of region_index ***
-                batch_loss, batch_stats = self.calculate_loss(
+                # --- A. Get Raw Losses ---
+                self.optimizer_gen.zero_grad() # Zero gradients for model parameters first
+                if self.gradnorm_weights_activated: # Zero gradients for GradNorm weights if active
+                    self.optimizer_gradnorm_weights.zero_grad()
+                
+                raw_losses_batch, batch_stats = self.calculate_loss(
                     X_batch, y_batch, r_batch, iteration, suffix='_train'
                 )
+                self.learning_stats[iteration].update(batch_stats) # Store initial stats from calculate_loss
 
-                # --- Backward Pass and Optimizer Step ---
-                batch_loss.backward()
+                # --- B. Determine Effective Loss Weights ---
+                effective_weights = {}
+                if iteration >= self.gradnorm_start_iter:
+                    if not self.gradnorm_weights_activated:
+                        self.log.info(f"--- Activating GradNorm adaptive weights at iteration {iteration} ---")
+                        self.gradnorm_weights_activated = True
+                    for name in self.gradnorm_task_names:
+                        effective_weights[name] = torch.exp(self.gradnorm_log_weights[name])
+                else:
+                    # Use predefined static weights before GradNorm activates
+                    for name in self.gradnorm_task_names:
+                        effective_weights[name] = torch.tensor(self.gradnorm_original_static_weights.get(name, 1.0), device=current_device)
 
-                # Check for NaN/Inf gradients
+                # --- C. Calculate Weighted Total Loss (total_loss_weighted) ---
+                total_loss_weighted = torch.tensor(0.0, device=current_device)
+                active_raw_losses_for_gradnorm = {} # Store losses that will be used in GradNorm calculation
+
+                for task_name in self.gradnorm_task_names:
+                    raw_loss_component = raw_losses_batch.get(task_name)
+                    if raw_loss_component is not None and effective_weights[task_name] > 0: # Process if weight is non-zero
+                        total_loss_weighted = total_loss_weighted + effective_weights[task_name] * raw_loss_component
+                        active_raw_losses_for_gradnorm[task_name] = raw_loss_component
+                    # Log effective weight (can be verbose, consider frequency)
+                    # self.learning_stats[iteration][f'weight_{task_name}'] = effective_weights[task_name].item()
+
+                # Update the logged total_loss_train stat (this is the primary loss for best model tracking)
+                self.learning_stats[iteration]['total_loss_train'] = total_loss_weighted.item()
+
+                # --- D. Main Model Parameter Update ---
+                # Gradients for model parameters were already zeroed
+                total_loss_weighted.backward(retain_graph=True) # Retain graph for GradNorm
+
                 nan_detected = False
                 for name, param in self.named_parameters():
                     if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-                        nan_detected = True
-                        self.log.warning(f"NaNs or Infs detected in gradients of '{name}' at iteration {iteration}. Skipping step and attempting revert.")
-                        self.optimizer_gen.zero_grad() # Zero the corrupted gradients
-                        break
+                        # Check if this parameter belongs to gradnorm_log_weights, if so, don't treat as model param NaN
+                        if name not in self.gradnorm_log_weights:
+                            nan_detected = True
+                            self.log.warning(f"NaNs or Infs detected in gradients of model parameter '{name}' at iteration {iteration}. Skipping step and attempting revert.")
+                            self.optimizer_gen.zero_grad() # Zero the corrupted model gradients
+                            break
 
                 if not nan_detected:
-                    # Optional: Gradient Clipping
-                    # torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
                     self.optimizer_gen.step()
 
-                    # --- Store Stats for Iteration ---
-                    self.learning_stats[iteration].update(batch_stats)
-                    current_loss_item = batch_loss.item()
-                    self.learning_stats[iteration]['total_loss_train'] = current_loss_item # Renamed stat
+                    # --- E. GradNorm Update Step (only if self.gradnorm_weights_activated is True) ---
+                    if self.gradnorm_weights_activated:
+                        # 1. Store Initial Losses L_i(0)
+                        for task_name, loss_val in active_raw_losses_for_gradnorm.items():
+                            if self.gradnorm_initial_losses.get(task_name) is None and loss_val is not None:
+                                self.gradnorm_initial_losses[task_name] = loss_val.detach().clone()
+                                self.log.info(f"GradNorm: Stored initial loss for {task_name}: {self.gradnorm_initial_losses[task_name].item():.4f}")
 
-                    # --- Update Best Model (based on batch training loss) ---
+                        # 2. Calculate Task-Specific Gradient Norms (G_W_i)
+                        if self.encoder.weight.grad is not None: # Clear grads on encoder from main backward pass before specific grad calcs
+                            self.encoder.weight.grad.zero_()
+                        
+                        task_gradient_norms = {}
+                        shared_params = self.encoder.weight 
+
+                        for task_name, raw_loss_val in active_raw_losses_for_gradnorm.items():
+                            if raw_loss_val is not None and self.gradnorm_initial_losses.get(task_name) is not None:
+                                grad_Li_W = torch.autograd.grad(raw_loss_val, shared_params, retain_graph=True, allow_unused=False)
+                                if grad_Li_W[0] is not None:
+                                     task_gradient_norms[task_name] = torch.norm(grad_Li_W[0], p=2)
+                                else: 
+                                     self.log.warning(f"GradNorm: Grad for {task_name} w.r.t shared_params is None.")
+                                     task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device) 
+                            if self.encoder.weight.grad is not None: # Clean up for next grad computation
+                                self.encoder.weight.grad.zero_()
+                        
+                        if not task_gradient_norms: 
+                            self.log.debug("GradNorm: No valid task gradient norms to compute GradNorm loss.")
+                        else:
+                            # 3. Compute Average Gradient Norm (G_W_avg)
+                            weighted_grad_norms = []
+                            for task_name_norm in task_gradient_norms.keys(): 
+                                if task_gradient_norms[task_name_norm] is not None:
+                                     weighted_grad_norms.append(effective_weights[task_name_norm] * task_gradient_norms[task_name_norm])
+
+                            if not weighted_grad_norms:
+                                self.log.debug("GradNorm: No weighted_grad_norms to compute G_W_avg.")
+                            else:
+                                G_W_avg = torch.stack(weighted_grad_norms).mean()
+                                self.learning_stats[iteration]['gradnorm_G_W_avg'] = G_W_avg.item()
+
+                                # 4. Calculate Relative Inverse Training Rates (r_i)
+                                loss_ratios_tilde = {}
+                                valid_loss_ratios = []
+                                for task_name_ratio, raw_loss_val_ratio in active_raw_losses_for_gradnorm.items():
+                                    if raw_loss_val_ratio is not None and self.gradnorm_initial_losses.get(task_name_ratio) is not None \
+                                       and self.gradnorm_initial_losses[task_name_ratio].abs() > 1e-8: 
+                                        loss_ratios_tilde[task_name_ratio] = raw_loss_val_ratio.detach() / self.gradnorm_initial_losses[task_name_ratio]
+                                        valid_loss_ratios.append(loss_ratios_tilde[task_name_ratio])
+
+                                if not valid_loss_ratios:
+                                     self.log.debug("GradNorm: No valid loss ratios to compute relative rates.")
+                                else:
+                                    mean_loss_ratio_tilde = torch.stack(valid_loss_ratios).mean()
+                                    self.learning_stats[iteration]['gradnorm_mean_loss_ratio'] = mean_loss_ratio_tilde.item()
+
+                                    relative_inv_rates = {}
+                                    for task_name_rate in loss_ratios_tilde.keys():
+                                        if mean_loss_ratio_tilde.abs() > 1e-8:
+                                            relative_inv_rates[task_name_rate] = loss_ratios_tilde[task_name_rate] / mean_loss_ratio_tilde
+                                        else: 
+                                            relative_inv_rates[task_name_rate] = torch.tensor(1.0, device=current_device) 
+                                        self.learning_stats[iteration][f'gradnorm_rel_inv_rate_{task_name_rate}'] = relative_inv_rates[task_name_rate].item()
+
+                                    # 5. Compute GradNorm Loss (L_grad)
+                                    gradnorm_loss_terms = []
+                                    for task_name_loss in task_gradient_norms.keys(): 
+                                        if task_name_loss in relative_inv_rates:
+                                            Gi_W = task_gradient_norms[task_name_loss]
+                                            ri = relative_inv_rates[task_name_loss]
+                                            target_grad_norm_i = G_W_avg * (ri.clamp(min=1e-8)**self.gradnorm_alpha)
+                                            # Ensure effective_weights[task_name_loss] is part of the graph for L_grad backward
+                                            gradnorm_loss_terms.append(torch.abs(torch.exp(self.gradnorm_log_weights[task_name_loss]) * Gi_W - target_grad_norm_i))
+
+                                    if gradnorm_loss_terms:
+                                        L_grad = torch.stack(gradnorm_loss_terms).sum()
+                                        self.learning_stats[iteration]['gradnorm_L_grad'] = L_grad.item()
+
+                                        # 6. Update GradNorm Loss Weights
+                                        # Gradients for GradNorm weights were zeroed earlier or will be zeroed now
+                                        self.optimizer_gradnorm_weights.zero_grad() 
+                                        L_grad.backward()
+                                        self.optimizer_gradnorm_weights.step()
+
+                                        # 7. Log new effective weights
+                                        if is_report_iter : 
+                                            log_msg_gn_weights = "GradNorm Effective Weights: "
+                                            for name_val in self.gradnorm_task_names:
+                                                eff_w = torch.exp(self.gradnorm_log_weights[name_val]).item()
+                                                self.learning_stats[iteration][f'gradnorm_eff_w_{name_val}'] = eff_w
+                                                log_msg_gn_weights += f"{name_val}: {eff_w:.4f} "
+                                            self.log.info(log_msg_gn_weights)
+                                    else:
+                                        self.learning_stats[iteration]['gradnorm_L_grad'] = 0.0
+                    # --- End of GradNorm Update Step ---
+
+                    # --- F. Update Stats and Best Model ---
+                    current_loss_item = total_loss_weighted.item() # Use weighted total loss for best model tracking
+                    # self.learning_stats[iteration]['total_loss_train'] was already updated
+
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
                         self.best_loss = current_loss_item
                         self.best_model_state_dict = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
                         self.best_iteration = iteration
                         self.log.info(f"*** New best model found at iteration {iteration} (Train Loss: {self.best_loss:.4f}) ***")
 
-                    # --- Save State Logic ---
-                    if is_report_iter or iteration == self.best_iteration: # Save on report iters and when best
+                    if is_report_iter or iteration == self.best_iteration: 
                          self.saved_models[iteration] = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
                          self.saved_optimizer_states[iteration] = self.optimizer_gen.state_dict()
-
-                else: # NaN detected
+                else: # NaN detected in model parameter gradients
                     # --- Revert Logic ---
                     valid_iters = [k for k in self.saved_models if k < iteration]
                     if valid_iters:
@@ -1309,7 +1395,6 @@ class EncodingDesigner(nn.Module):
                         try:
                             self.load_state_dict(self.saved_models[revert_iter])
                             self.to(current_device)
-                            # Re-initialize optimizer with STARTING LR before loading state
                             optimizer_gen = torch.optim.Adam([
                                 {'params': self.encoder.parameters(), 'lr': lr_start},
                                 {'params': self.region_embedder.parameters(), 'lr': lr_start},
@@ -1317,60 +1402,71 @@ class EncodingDesigner(nn.Module):
                             ])
                             optimizer_gen.load_state_dict(self.saved_optimizer_states[revert_iter])
                             self.optimizer_gen = optimizer_gen
-                            # Ensure optimizer state is on the correct device
                             for state in self.optimizer_gen.state.values():
                                 for k, v in state.items():
                                     if isinstance(v, torch.Tensor):
                                         state[k] = v.to(current_device)
                         except Exception as e:
                              self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
-                             # Re-initialize optimizer with STARTING LR if revert fails
                              self.optimizer_gen = torch.optim.Adam([
                                  {'params': self.encoder.parameters(), 'lr': lr_start},
                                  {'params': self.region_embedder.parameters(), 'lr': lr_start},
                                  {'params': self.decoder.parameters(), 'lr': lr_start}
                              ])
-                        self.learning_stats.pop(iteration, None)
-                        self.learning_stats[iteration] = {}
+                        # Clear current iteration's stats as it's invalid due to revert
+                        self.learning_stats[iteration] = {} # Reset dict for this iter
                         self.learning_stats[iteration]['status'] = f'Reverted from NaN at {iteration}'
                     else:
                         self.log.error(f"NaNs/Infs detected in gradients at iter {iteration}, but no previous state found. Stopping.")
                         raise ValueError("NaNs/Infs encountered and cannot revert.")
                     # --- End Revert ---
 
-
                 # --- Evaluation Step (Periodically) ---
                 if is_report_iter:
                     self.eval()
-                    # Evaluate on the full test set
-                    all_test_stats = []
+                    all_test_stats_list = [] # Renamed to avoid conflict
                     total_test_loss_items = []
 
                     with torch.no_grad():
-                        # *** Pass iteration number instead of region_index ***
-                        test_loss, test_stats = self.calculate_loss(
+                        # For evaluation, calculate loss with current effective_weights (could be static or gradnorm)
+                        # This means calculate_loss will return raw_test_losses, and we weight them here.
+                        raw_test_losses, test_stats_from_calc = self.calculate_loss(
                             self.X_test, self.y_test, self.r_test, iteration, suffix='_test'
                         )
-                        all_test_stats.append(test_stats) # Store global stats
-                        total_test_loss_items.append(test_loss.item())
+                        
+                        # Determine effective weights for test evaluation (consistent with training state)
+                        eval_effective_weights = {}
+                        if self.gradnorm_weights_activated: # Use current gradnorm weights
+                            for name in self.gradnorm_task_names:
+                                eval_effective_weights[name] = torch.exp(self.gradnorm_log_weights[name]).item()
+                        else: # Use static weights
+                            for name in self.gradnorm_task_names:
+                                eval_effective_weights[name] = self.gradnorm_original_static_weights.get(name, 1.0)
 
-                    # Average stats (will just be the global stats here)
+                        # Calculate weighted test loss
+                        weighted_test_loss_val = 0.0
+                        for task_name_test, raw_loss_test_comp in raw_test_losses.items():
+                            if raw_loss_test_comp is not None and task_name_test in eval_effective_weights:
+                                weighted_test_loss_val += eval_effective_weights[task_name_test] * raw_loss_test_comp.item()
+                        
+                        test_stats_from_calc['total_loss_test'] = weighted_test_loss_val # Add weighted total test loss to stats
+                        all_test_stats_list.append(test_stats_from_calc)
+                        total_test_loss_items.append(weighted_test_loss_val)
+
                     avg_test_stats = {}
-                    if all_test_stats:
-                        stat_keys = all_test_stats[0].keys()
+                    if all_test_stats_list:
+                        stat_keys = all_test_stats_list[0].keys()
                         for key in stat_keys:
-                            values = [stats.get(key, np.nan) for stats in all_test_stats]
+                            values = [stats.get(key, np.nan) for stats in all_test_stats_list]
                             valid_values = [v for v in values if not np.isnan(v)]
                             avg_test_stats[key] = np.mean(valid_values) if valid_values else np.nan
                     else:
-                        avg_test_stats = {} # Should not happen
+                        avg_test_stats = {}
 
                     self.learning_stats[iteration].update(avg_test_stats)
-                    # Calculate and store average test loss item (will be just the single test loss)
                     avg_test_loss_item = np.mean(total_test_loss_items) if total_test_loss_items else np.nan
-                    self.learning_stats[iteration]['total_loss_test_avg'] = avg_test_loss_item
+                    self.learning_stats[iteration]['total_loss_test_avg'] = avg_test_loss_item # This is the primary test loss metric
 
-                    # --- Reporting ---
                     current_time = time.time()
                     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     elapsed_time = current_time - last_report_time
