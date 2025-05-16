@@ -36,35 +36,42 @@ user_parameters = {
             'n_bit': 25,
             'n_iterations': 5000,
             'total_n_probes': 30e4,
-            'probe_weight': 1,
+            'probe_weight': 1.0, # Keep as float for consistency if GradNorm handles it
             'probe_under_weight_factor': 0.05,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
-            'gene_constraint_weight': 1,
+            'gene_constraint_weight': 1.0, # Keep as float
             'target_brightness_log': 4.5,
-            'learning_rate': 0.05, 
+            'learning_rate': 0.05,
             'learning_rate_start': 0.1,
             'learning_rate_end': 0.01,
             'report_freq': 500,
-            'type_correlation_mean_weight': 0,
-            'type_correlation_max_weight': 0.01,
+            'type_correlation_mean_weight': 0.0, # Keep as float
+            'type_correlation_max_weight': 0.01, # Keep as float
             'noise_level': 3,
-            'categorical_weight': 1,
+            'categorical_weight': 1.0, # Keep as float
             'batch_size': 2500,
             'use_region_info': 0, #region decoders (1=yes, 0=no)
-            'region_embedding_dim': 0, 
+            'region_embedding_dim': 0,
             'correlation_thresh': 0.9,
-            'pnorm_std_weight': 10,
-            'hierarchical_scatter_weight': 0.5,  # Weight for the new hierarchical scatter loss
+            'pnorm_std_weight': 10.0, # Keep as float
+            'hierarchical_scatter_weight': 0.5,  # Weight for the new hierarchical scatter loss; Keep as float
             'y_hierarchy_file_path': 'child_parent_relationships.csv',  # Path to the file defining cell type hierarchy
-            'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
-            'input':'/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
+            'output': '/u/project/rwollman/rwollman/atlas_design/design_results', # Example, will be overridden per job
+            'input':'/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/',
+            
+            # --- New GradNorm Parameters ---
+            'gradnorm_alpha': 1.5,                 # Default alpha for GradNorm (as suggested)
+            'gradnorm_lr': 0.0001,                 # Default learning rate for GradNorm weights (as suggested)
+            'gradnorm_start_iter': 100,            # Default iteration to start GradNorm (as suggested)
         }
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'hierarchical_scatter_weight': [0, 0.01],
-    'type_correlation_max_weight' : [0,0.01]
+    'hierarchical_scatter_weight': [0, 0.01, 0.1], # Example: added another value
+    'type_correlation_max_weight' : [0, 0.01, 0.1],# Example: added another value
+    'gradnorm_alpha': [1.0, 1.5, 2.0], # Example: If you want to scan GradNorm's alpha
+    'gradnorm_start_iter': [100, 500], # Example: If you want to scan when GradNorm starts
 }
 
 # Generate all parameter combinations
@@ -78,18 +85,28 @@ for i, combination in enumerate(combinations):
     current_params = user_parameters.copy()
     
     # Update with current combination
-    param_desc = []
+    param_desc_list = [] # Use a list to build description parts
     for j, param_name in enumerate(param_names):
         current_params[param_name] = combination[j]
-        param_desc.append(f"{param_name}_{combination[j]}")
+        # Sanitize parameter values for filename (e.g., replace dots with 'p')
+        value_str = str(combination[j]).replace('.', 'p')
+        param_desc_list.append(f"{param_name}_{value_str}")
     
+    # Create a unique identifier for the run based on combination and perhaps a timestamp or run_dir
+    # The 'output' directory will be specific to each run.
+    # We can base it on the param_desc_list and the main run_dir.
+    
+    run_specific_identifier = '_'.join(param_desc_list)
+    # Update the 'output' path to be unique for this parameter combination
+    current_params['output'] = os.path.join(base_dir, 'design_results', run_dir, run_specific_identifier)
+    os.makedirs(current_params['output'], exist_ok=True)
+
+
     # Create parameter file name
-    param_file_name = f"params_{'_'.join(param_desc)}"
+    param_file_name = f"params_{run_specific_identifier}" # More unique name
     fullfilepath = os.path.join(input_param_path, f"{param_file_name}.csv")
     
     # Save parameter file
     pd.DataFrame(current_params.values(), index=current_params.keys(), columns=['values']).to_csv(fullfilepath)
 
 print(f"Generated {len(combinations)} parameter files in {input_param_path}")
-
-
