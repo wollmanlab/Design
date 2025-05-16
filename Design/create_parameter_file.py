@@ -63,7 +63,7 @@ user_parameters = {
             # --- New GradNorm Parameters ---
             'gradnorm_alpha': 1.5,                 # Default alpha for GradNorm (as suggested)
             'gradnorm_lr': 0.0001,                 # Default learning rate for GradNorm weights (as suggested)
-            'gradnorm_start_iter': 100,            # Default iteration to start GradNorm (as suggested)
+            'gradnorm_start_iter': 500,            # Default iteration to start GradNorm (as suggested)
         }
 
 # Define parameter variants - parameters to vary and their possible values
@@ -97,14 +97,22 @@ for i, combination in enumerate(combinations):
     # We can base it on the param_desc_list and the main run_dir.
     
     run_specific_identifier = '_'.join(param_desc_list)
-    # Update the 'output' path to be unique for this parameter combination
-    current_params['output'] = os.path.join(base_dir, 'design_results', run_dir, run_specific_identifier)
-    os.makedirs(current_params['output'], exist_ok=True)
+    
+    # Create the base name for the parameter file and the corresponding output directory.
+    # This ensures consistency with how sub_multi_param_file_optimization.sh constructs paths.
+    param_file_name_base = f"params_{run_specific_identifier}" 
+    
+    # Update the 'output' path to be unique for this parameter combination.
+    # This path will be written into the CSV and is what EncodingDesigner.py will use.
+    # It should be: <base_dir>/design_results/params_<run_specific_identifier>
+    correct_output_dir = os.path.join(base_dir, 'design_results', param_file_name_base)
+    current_params['output'] = correct_output_dir
+    
+    # Create this directory. The .sh script might also try to create it (mkdir -p handles this).
+    os.makedirs(correct_output_dir, exist_ok=True)
 
-
-    # Create parameter file name
-    param_file_name = f"params_{run_specific_identifier}" # More unique name
-    fullfilepath = os.path.join(input_param_path, f"{param_file_name}.csv")
+    # Define the full path for the CSV parameter file, which goes into 'params_files_to_scan'
+    fullfilepath = os.path.join(input_param_path, f"{param_file_name_base}.csv")
     
     # Save parameter file
     pd.DataFrame(current_params.values(), index=current_params.keys(), columns=['values']).to_csv(fullfilepath)
