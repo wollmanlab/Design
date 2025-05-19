@@ -299,7 +299,7 @@ class EncodingDesigner(nn.Module):
             'p_std', # Corresponds to pnorm_std_weight, aims to maximize min CV
             'type_correlation_max', # Assuming this is the primary correlation loss you want to balance
             # 'type_correlation_mean', # Add if you want to balance this separately
-            'hierarchical_scatter' # Aims to maximize scatter value
+            # 'hierarchical_scatter' # <--- Comment this line out
         ]
 
         # --- Defaults ---
@@ -1178,7 +1178,7 @@ class EncodingDesigner(nn.Module):
         else:
             current_stats['hierarchical_scatter_loss' + suffix] = 0.0
         
-        raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss
+        # raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss # Commented out for testing
         current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
         
         return raw_losses, current_stats
@@ -1338,11 +1338,16 @@ class EncodingDesigner(nn.Module):
 
                         for task_name, raw_loss_val in active_raw_losses_for_gradnorm.items():
                             if raw_loss_val is not None and self.gradnorm_initial_losses.get(task_name) is not None:
-                                grad_Li_W_tuple = torch.autograd.grad(raw_loss_val, shared_params, retain_graph=True, allow_unused=False)
-                                if grad_Li_W_tuple[0] is not None:
-                                    task_gradient_norms[task_name] = torch.norm(grad_Li_W_tuple[0], p=2)
-                                else: 
-                                    self.log.warning(f"GradNorm: Grad for {task_name} w.r.t shared_params is None.")
+                                # Check if raw_loss_val is part of the computation graph
+                                if raw_loss_val.grad_fn is not None:
+                                    grad_Li_W_tuple = torch.autograd.grad(raw_loss_val, shared_params, retain_graph=True, allow_unused=False)
+                                    if grad_Li_W_tuple[0] is not None:
+                                        task_gradient_norms[task_name] = torch.norm(grad_Li_W_tuple[0], p=2)
+                                    else: 
+                                        self.log.warning(f"GradNorm: Grad for {task_name} w.r.t shared_params is None, even though grad_fn was present.")
+                                        task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device)
+                                else:
+                                    self.log.warning(f"GradNorm: Skipping gradient calculation for task '{task_name}' because its raw_loss_val (value: {raw_loss_val.item():.4f}) has no grad_fn. This typically occurs if its corresponding static weight in user_parameters is zero, making the raw loss a constant.")
                                     task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device) 
                                 # REMOVED: Redundant self.encoder.weight.grad.zero_() from inside this loop
                         

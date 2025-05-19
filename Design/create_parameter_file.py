@@ -34,7 +34,7 @@ user_parameters = {
             'Verbose': 1,
             'n_cpu': 1,
             'n_bit': 25,
-            'n_iterations': 5000,
+            'n_iterations': 10000,
             'total_n_probes': 30e4,
             'probe_weight': 1.0, # Keep as float for consistency if GradNorm handles it
             'probe_under_weight_factor': 0.05,
@@ -63,15 +63,16 @@ user_parameters = {
             # --- New GradNorm Parameters ---
             'gradnorm_alpha': 1.5,                 # Default alpha for GradNorm (as suggested)
             'gradnorm_lr': 0.0001,                 # Default learning rate for GradNorm weights (as suggested)
-            'gradnorm_start_iter': 500,            # Default iteration to start GradNorm (as suggested)
+            'gradnorm_start_iter': 5000,            # Default iteration to start GradNorm (as suggested)
         }
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'hierarchical_scatter_weight': [0, 0.01, 0.1], # Example: added another value
+    'categorical_weight' : [0.5, 1, 2],
     'type_correlation_max_weight' : [0, 0.01, 0.1],# Example: added another value
-    'gradnorm_alpha': [1.0, 1.5, 2.0], # Example: If you want to scan GradNorm's alpha
-    'gradnorm_start_iter': [100, 500], # Example: If you want to scan when GradNorm starts
+    'target_brightness_log': [4, 4.5, 5, 5.5], 
+    'n_bit' : [20, 25, 30, 35, 40]
+
 }
 
 # Generate all parameter combinations
