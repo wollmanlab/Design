@@ -83,9 +83,8 @@ if [[ -n "$SGE_TASK_ID" ]]; then
     
     FILE_PATH="${TODO_JOBS_DIR}/${CURRENT_FILE}"
     
-    # Create a symbolic link from the SGE output file to our desired name
-    # Use absolute paths for clarity and to avoid issues with CWD
-    ln -sf "${OPT_DIR}/job_logs/job_log.$JOB_ID.$TASK_ID" "${OPT_DIR}/job_logs/job_log.$JOB_ID.${CURRENT_FILE}"
+    # Create a symbolic link from the SGE output file to our desired name to allow easy tracking of errors
+    ln -sf "${OPT_DIR}/job_logs/job_log.$JOB_ID.$TASK_ID" "${OPT_DIR}/job_logs/${CURRENT_FILE%.csv}"
     
     echo "===== RUNNING AS WORKER: Processing file: ${CURRENT_FILE} ====="
     echo "Task ID: $SGE_TASK_ID"
