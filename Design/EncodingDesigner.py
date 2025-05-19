@@ -292,14 +292,14 @@ class EncodingDesigner(nn.Module):
                                                  Defaults to None, in which case default parameters are used.
         """
         super().__init__() # Call super constructor first
-        self.gradnorm_task_names = [
+        self.loss_component_names = [
             'probe_weight',
             'categorical',
             'gene_constraint',
             'p_std', # Corresponds to pnorm_std_weight, aims to maximize min CV
             'type_correlation_max', # Assuming this is the primary correlation loss you want to balance
             # 'type_correlation_mean', # Add if you want to balance this separately
-            # 'hierarchical_scatter' # <--- Comment this line out
+            'hierarchical_scatter' # This component's weight is handled separately if active
         ]
 
         # --- Defaults ---
@@ -594,34 +594,6 @@ class EncodingDesigner(nn.Module):
         self.mapped_region_indices = None # Internal region indices [0..N-1]
         self.y_parent_child_map = None # Stores {internal_parent_idx: [internal_child1_idx, ...]}
         self.y_child_to_parent_map = None # Optional: Stores {internal_child_idx: internal_parent_idx}
-
-        # --- GradNorm Specific Initializations ---
-        self.log.info("Initializing GradNorm components...")
-        self.gradnorm_log_weights = nn.ParameterDict()
-        for task_name in self.gradnorm_task_names:
-            # Initialize log_weights to 0, so initial weights are exp(0)=1
-            self.gradnorm_log_weights[task_name] = nn.Parameter(torch.tensor(0.0, device=self.user_parameters['device']))
-
-        # Hyperparameter for GradNorm's relative learning rate balancing (alpha in the paper)
-        self.gradnorm_alpha = self.user_parameters.get('gradnorm_alpha', 1.5) # Add 'gradnorm_alpha' to your params file, default 1.5
-
-        # To store initial loss values L_i(0) for each task
-        self.gradnorm_initial_losses = {task_name: None for task_name in self.gradnorm_task_names}
-        self.gradnorm_weights_activated = False # Flag to start GradNorm after first few iterations
-        self.gradnorm_start_iter = self.user_parameters.get('gradnorm_start_iter', 100) # e.g., start after 100 iterations
-
-        # Store the original weights from user_parameters to use before GradNorm activates
-        self.gradnorm_original_static_weights = {}
-        self.gradnorm_original_static_weights['probe_weight'] = self.user_parameters.get('probe_weight', 1.0)
-        self.gradnorm_original_static_weights['categorical'] = self.user_parameters.get('categorical_weight', 1.0)
-        self.gradnorm_original_static_weights['gene_constraint'] = self.user_parameters.get('gene_constraint_weight', 1.0)
-        self.gradnorm_original_static_weights['p_std'] = self.user_parameters.get('pnorm_std_weight', 0.1)
-        self.gradnorm_original_static_weights['type_correlation_max'] = self.user_parameters.get('type_correlation_max_weight', 1.0)
-        # self.gradnorm_original_static_weights['type_correlation_mean'] = self.user_parameters.get('type_correlation_mean_weight', 0.0)
-        self.gradnorm_original_static_weights['hierarchical_scatter'] = self.user_parameters.get('hierarchical_scatter_weight', 0.0)
-
-        self.log.info(f"GradNorm learnable log_weights initialized for tasks: {list(self.gradnorm_log_weights.keys())}")
-        self.log.info(f"GradNorm alpha: {self.gradnorm_alpha}, GradNorm start iteration: {self.gradnorm_start_iter}")
 
 
     def _convert_param_to_int(self, param_key):
@@ -1037,8 +1009,7 @@ class EncodingDesigner(nn.Module):
         raw_losses['probe_weight'] = raw_probe_weight_loss
         # Log raw value for probe_weight_loss, effective weight applied in fit
         # For consistency in logging, if gradnorm_original_static_weights is available, use it
-        static_probe_weight_for_logging = self.gradnorm_original_static_weights.get('probe_weight', self.user_parameters['probe_weight']) \
-                                           if hasattr(self, 'gradnorm_original_static_weights') else self.user_parameters['probe_weight']
+        static_probe_weight_for_logging = self.user_parameters['probe_weight']
         current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() * static_probe_weight_for_logging
 
 
@@ -1235,11 +1206,6 @@ class EncodingDesigner(nn.Module):
                     ])
                     self.optimizer_gen = optimizer_gen
 
-                    # Initialize GradNorm Optimizer for loss weights
-                    gradnorm_lr = self.user_parameters.get('gradnorm_lr', 1e-4) # Add to params file
-                    self.optimizer_gradnorm_weights = optim.Adam(self.gradnorm_log_weights.parameters(), lr=gradnorm_lr)
-                    self.log.info(f"GradNorm loss weights optimizer initialized with LR: {gradnorm_lr}")
-
                 # Calculate and Set Current Learning Rate
                 if n_iterations <= 1: current_lr = lr_start
                 else: current_lr = lr_start + (lr_end - lr_start) * (iteration / (n_iterations - 1))
@@ -1264,177 +1230,64 @@ class EncodingDesigner(nn.Module):
 
                 # --- A. Get Raw Losses ---
                 self.optimizer_gen.zero_grad() # Zero gradients for model parameters first
-                if self.gradnorm_weights_activated: # Zero gradients for GradNorm weights if active
-                    self.optimizer_gradnorm_weights.zero_grad()
                 
                 raw_losses_batch, batch_stats = self.calculate_loss(
                     X_batch, y_batch, r_batch, iteration, suffix='_train'
                 )
                 self.learning_stats[iteration].update(batch_stats) # Store initial stats from calculate_loss
 
-                # --- B. Determine Effective Loss Weights ---
-                effective_weights = {}
-                if iteration >= self.gradnorm_start_iter:
-                    if not self.gradnorm_weights_activated:
-                        self.log.info(f"--- Activating GradNorm adaptive weights at iteration {iteration} ---")
-                        self.gradnorm_weights_activated = True
-                    for name in self.gradnorm_task_names:
-                        effective_weights[name] = torch.exp(self.gradnorm_log_weights[name])
-                else:
-                    # Use predefined static weights before GradNorm activates
-                    for name in self.gradnorm_task_names:
-                        effective_weights[name] = torch.tensor(self.gradnorm_original_static_weights.get(name, 1.0), device=current_device)
+                # --- B. Determine Effective Loss Weights (Using Static Weights) ---
+                # Define mapping from raw loss keys (from loss_component_names) to user_parameter keys for weights
+                key_to_weight_param_map = {
+                    'probe_weight': 'probe_weight',
+                    'categorical': 'categorical_weight',
+                    'gene_constraint': 'gene_constraint_weight',
+                    'p_std': 'pnorm_std_weight',
+                    'type_correlation_max': 'type_correlation_max_weight',
+                    'hierarchical_scatter': 'hierarchical_scatter_weight',
+                }
+                
+                effective_weights_for_logging_and_use = {}
+                for task_name_from_list in self.loss_component_names:
+                    weight_param_key = key_to_weight_param_map.get(task_name_from_list)
+                    if weight_param_key:
+                        weight_value = self.user_parameters.get(weight_param_key, 0.0) # Default to 0.0 if key missing
+                        effective_weights_for_logging_and_use[task_name_from_list] = weight_value
+                        self.learning_stats[iteration][f'weight_{task_name_from_list}'] = weight_value
+                    else:
+                        # This case should ideally not happen if loss_component_names and map are consistent
+                        self.log.warning(f"Task '{task_name_from_list}' from loss_component_names not found in key_to_weight_param_map. Weight will be 0.")
+                        effective_weights_for_logging_and_use[task_name_from_list] = 0.0
+                        self.learning_stats[iteration][f'weight_{task_name_from_list}'] = 0.0
+
 
                 # --- C. Calculate Weighted Total Loss (total_loss_weighted) ---
                 total_loss_weighted = torch.tensor(0.0, device=current_device)
-                active_raw_losses_for_gradnorm = {} # Store losses that will be used in GradNorm calculation
-
-                for task_name in self.gradnorm_task_names:
-                    raw_loss_component = raw_losses_batch.get(task_name)
-                    if raw_loss_component is not None and task_name in effective_weights and effective_weights[task_name] > 0: # Process if weight is non-zero and task is valid
-                        total_loss_weighted = total_loss_weighted + effective_weights[task_name] * raw_loss_component
-                        active_raw_losses_for_gradnorm[task_name] = raw_loss_component
-                    # Log effective weight (can be verbose, consider frequency)
-                    if task_name in effective_weights: # Ensure key exists
-                         self.learning_stats[iteration][f'weight_{task_name}'] = effective_weights[task_name].item()
-
-                # Add hierarchical scatter loss if its weight is non-zero and it's available
-                # This loss term is managed independently of GradNorm
-                hierarchical_scatter_raw_loss_component = raw_losses_batch.get('hierarchical_scatter')
-                # Retrieve the static weight defined in user_parameters for this specific loss
-                hierarchical_scatter_static_weight = self.user_parameters.get('hierarchical_scatter_weight', 0.0)
-
-                if hierarchical_scatter_raw_loss_component is not None and hierarchical_scatter_static_weight != 0:
-                    total_loss_weighted = total_loss_weighted + hierarchical_scatter_static_weight * hierarchical_scatter_raw_loss_component
-                    # The weighted contribution ('hierarchical_scatter_loss_train' or '_test') is already logged by calculate_loss.
-
+  
+                for task_name, raw_loss_component in raw_losses_batch.items():
+                    if task_name in self.loss_component_names: # Only consider tasks in our defined list
+                        current_weight = effective_weights_for_logging_and_use.get(task_name, 0.0)
+                        if raw_loss_component is not None and current_weight > 0:
+                            total_loss_weighted = total_loss_weighted + current_weight * raw_loss_component
+                        # Logging of weight already done above when populating effective_weights_for_logging_and_use
+  
                 # Update the logged total_loss_train stat (this is the primary loss for best model tracking)
                 self.learning_stats[iteration]['total_loss_train'] = total_loss_weighted.item()
 
                                 # --- D. Main Model Parameter Update ---
                 # Gradients for model parameters were already zeroed
-                total_loss_weighted.backward(retain_graph=True) # Retain graph for GradNorm
+                total_loss_weighted.backward() # No need for retain_graph=True
 
                 nan_detected = False
                 for name, param in self.named_parameters():
                     if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-                        # Check if this parameter belongs to gradnorm_log_weights, if so, don't treat as model param NaN
-                        if not name.startswith("gradnorm_log_weights."): # Check if param is NOT a gradnorm weight
-                            nan_detected = True
-                            self.log.warning(f"NaNs or Infs detected in gradients of model parameter '{name}' at iteration {iteration}. Skipping step and attempting revert.")
-                            self.optimizer_gen.zero_grad() # Zero the corrupted model gradients
-                            # If main model grads are bad, also zero gradnorm grads if it was about to update
-                            if self.gradnorm_weights_activated and hasattr(self, 'optimizer_gradnorm_weights'):
-                                self.optimizer_gradnorm_weights.zero_grad()
-                            break
+                        nan_detected = True
+                        self.log.warning(f"NaNs or Infs detected in gradients of model parameter '{name}' at iteration {iteration}. Skipping step and attempting revert.")
+                        self.optimizer_gen.zero_grad() # Zero the corrupted model gradients
+                        break
                 
                 if not nan_detected:
-                    # --- E. GradNorm Update Step (MOVED HERE - BEFORE optimizer_gen.step()) ---
-                    if self.gradnorm_weights_activated:
-                        # 1. Store Initial Losses L_i(0)
-                        for task_name, loss_val in active_raw_losses_for_gradnorm.items():
-                            if self.gradnorm_initial_losses.get(task_name) is None and loss_val is not None:
-                                self.gradnorm_initial_losses[task_name] = loss_val.detach().clone()
-                                self.log.info(f"GradNorm: Stored initial loss for {task_name}: {self.gradnorm_initial_losses[task_name].item():.4f}")
-
-                        # 2. Calculate Task-Specific Gradient Norms (G_W_i)
-                        if self.encoder.weight.grad is not None: 
-                            self.encoder.weight.grad.zero_() # Clear potential grads on encoder from main backward pass 
-                                                             # before specific grad calcs for GradNorm using torch.autograd.grad
-                        
-                        task_gradient_norms = {}
-                        shared_params = self.encoder.weight 
-
-                        for task_name, raw_loss_val in active_raw_losses_for_gradnorm.items():
-                            if raw_loss_val is not None and self.gradnorm_initial_losses.get(task_name) is not None:
-                                # Check if raw_loss_val is part of the computation graph
-                                if raw_loss_val.grad_fn is not None:
-                                    grad_Li_W_tuple = torch.autograd.grad(raw_loss_val, shared_params, retain_graph=True, allow_unused=False)
-                                    if grad_Li_W_tuple[0] is not None:
-                                        task_gradient_norms[task_name] = torch.norm(grad_Li_W_tuple[0], p=2)
-                                    else: 
-                                        self.log.warning(f"GradNorm: Grad for {task_name} w.r.t shared_params is None, even though grad_fn was present.")
-                                        task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device)
-                                else:
-                                    self.log.warning(f"GradNorm: Skipping gradient calculation for task '{task_name}' because its raw_loss_val (value: {raw_loss_val.item():.4f}) has no grad_fn. This typically occurs if its corresponding static weight in user_parameters is zero, making the raw loss a constant.")
-                                    task_gradient_norms[task_name] = torch.tensor(0.0, device=current_device) 
-                                # REMOVED: Redundant self.encoder.weight.grad.zero_() from inside this loop
-                        
-                        if not task_gradient_norms: 
-                            self.log.debug("GradNorm: No valid task gradient norms to compute GradNorm loss.")
-                        else:
-                            # 3. Compute Average Gradient Norm (G_W_avg)
-                            weighted_grad_norms = []
-                            for task_name_norm in task_gradient_norms.keys(): 
-                                if task_name_norm in effective_weights and task_gradient_norms[task_name_norm] is not None : 
-                                    weighted_grad_norms.append(effective_weights[task_name_norm].detach() * task_gradient_norms[task_name_norm])
-
-                            if not weighted_grad_norms:
-                                self.log.debug("GradNorm: No weighted_grad_norms to compute G_W_avg.")
-                                G_W_avg = torch.tensor(0.0, device=current_device) 
-                                self.learning_stats[iteration]['gradnorm_G_W_avg'] = G_W_avg.item()
-                            else:
-                                G_W_avg = torch.stack(weighted_grad_norms).mean()
-                                self.learning_stats[iteration]['gradnorm_G_W_avg'] = G_W_avg.item()
-
-                            # 4. Calculate Relative Inverse Training Rates (r_i)
-                            loss_ratios_tilde = {}
-                            valid_loss_ratios = []
-                            for task_name_ratio, raw_loss_val_ratio in active_raw_losses_for_gradnorm.items():
-                                if raw_loss_val_ratio is not None and self.gradnorm_initial_losses.get(task_name_ratio) is not None \
-                                   and self.gradnorm_initial_losses[task_name_ratio].abs() > 1e-8: 
-                                    loss_ratios_tilde[task_name_ratio] = raw_loss_val_ratio.detach() / self.gradnorm_initial_losses[task_name_ratio]
-                                    valid_loss_ratios.append(loss_ratios_tilde[task_name_ratio])
-
-                            if not valid_loss_ratios:
-                                self.log.debug("GradNorm: No valid loss ratios to compute relative rates.")
-                                mean_loss_ratio_tilde = torch.tensor(1.0, device=current_device) 
-                                self.learning_stats[iteration]['gradnorm_mean_loss_ratio'] = mean_loss_ratio_tilde.item()
-                            else:
-                                mean_loss_ratio_tilde = torch.stack(valid_loss_ratios).mean()
-                                self.learning_stats[iteration]['gradnorm_mean_loss_ratio'] = mean_loss_ratio_tilde.item()
-
-                            relative_inv_rates = {}
-                            for task_name_rate in loss_ratios_tilde.keys(): 
-                                if mean_loss_ratio_tilde.abs() > 1e-8:
-                                    relative_inv_rates[task_name_rate] = loss_ratios_tilde[task_name_rate] / mean_loss_ratio_tilde
-                                else: 
-                                    relative_inv_rates[task_name_rate] = torch.tensor(1.0, device=current_device) 
-                                self.learning_stats[iteration][f'gradnorm_rel_inv_rate_{task_name_rate}'] = relative_inv_rates[task_name_rate].item()
-
-                            # 5. Compute GradNorm Loss (L_grad)
-                            gradnorm_loss_terms = []
-                            for task_name_loss in task_gradient_norms.keys(): 
-                                if task_name_loss in relative_inv_rates and task_name_loss in effective_weights: 
-                                    Gi_W = task_gradient_norms[task_name_loss] 
-                                    ri = relative_inv_rates[task_name_loss]
-                                    target_grad_norm_i = G_W_avg.detach() * (ri.clamp(min=1e-8)**self.gradnorm_alpha) 
-                                    current_weighted_norm = torch.exp(self.gradnorm_log_weights[task_name_loss]) * Gi_W.detach() 
-                                    gradnorm_loss_terms.append(torch.abs(current_weighted_norm - target_grad_norm_i))
-
-                            if gradnorm_loss_terms:
-                                L_grad = torch.stack(gradnorm_loss_terms).sum()
-                                self.learning_stats[iteration]['gradnorm_L_grad'] = L_grad.item()
-
-                                # 6. Update GradNorm Loss Weights
-                                # Ensure optimizer_gradnorm_weights was zero_grad()ed earlier if active
-                                L_grad.backward() 
-                                self.optimizer_gradnorm_weights.step()
-
-                                # 7. Log new effective weights
-                                if is_report_iter : 
-                                    log_msg_gn_weights = "GradNorm Effective Weights: "
-                                    for name_val in self.gradnorm_task_names:
-                                        if name_val in self.gradnorm_log_weights: 
-                                            eff_w = torch.exp(self.gradnorm_log_weights[name_val]).item()
-                                            self.learning_stats[iteration][f'gradnorm_eff_w_{name_val}'] = eff_w
-                                            log_msg_gn_weights += f"{name_val}: {eff_w:.4f} "
-                                    self.log.info(log_msg_gn_weights)
-                            else:
-                                self.learning_stats[iteration]['gradnorm_L_grad'] = 0.0
-                    # --- End of GradNorm Update Step ---
-
-                    # Now, step the main model optimizer AFTER GradNorm has used the previous state's graph
+                    # Now, step the main model optimizer
                     self.optimizer_gen.step() 
 
                     # --- F. Update Stats and Best Model ---
@@ -1498,23 +1351,25 @@ class EncodingDesigner(nn.Module):
                             self.X_test, self.y_test, self.r_test, iteration, suffix='_test'
                         )
                         
-                        # Determine effective weights for test evaluation (consistent with training state)
+                        # Determine effective weights for test evaluation (consistent with training static weights)
+                        # Re-use the key_to_weight_param_map defined earlier for consistency
                         eval_effective_weights = {}
-                        # Use the same effective_weights determined for the current training iteration for consistency in reporting
-                        for name in self.gradnorm_task_names:
-                            if name in effective_weights: # Use weights from current training iteration state
-                                eval_effective_weights[name] = effective_weights[name].item() if isinstance(effective_weights[name], torch.Tensor) else effective_weights[name]
-                            elif self.gradnorm_weights_activated : # Fallback if task somehow missing but GN active
-                                eval_effective_weights[name] = torch.exp(self.gradnorm_log_weights[name]).item()
-                            else: # Fallback to static if GN not active
-                                eval_effective_weights[name] = self.gradnorm_original_static_weights.get(name, 1.0)
+                        for task_name_from_list in self.loss_component_names:
+                            weight_param_key = key_to_weight_param_map.get(task_name_from_list)
+                            if weight_param_key:
+                                weight_value = self.user_parameters.get(weight_param_key, 0.0)
+                                eval_effective_weights[task_name_from_list] = weight_value
+                            else:
+                                eval_effective_weights[task_name_from_list] = 0.0
 
 
                         # Calculate weighted test loss
                         weighted_test_loss_val = 0.0
                         for task_name_test, raw_loss_test_comp in raw_test_losses.items():
-                            if raw_loss_test_comp is not None and task_name_test in eval_effective_weights:
-                                weighted_test_loss_val += eval_effective_weights[task_name_test] * raw_loss_test_comp.item()
+                            if task_name_test in self.loss_component_names: # Consider only relevant tasks
+                                current_weight = eval_effective_weights.get(task_name_test, 0.0)
+                                if raw_loss_test_comp is not None and current_weight > 0:
+                                    weighted_test_loss_val += current_weight * raw_loss_test_comp.item()
                         
                         test_stats_from_calc['total_loss_test'] = weighted_test_loss_val # Add weighted total test loss to stats
                         all_test_stats_list.append(test_stats_from_calc)
@@ -1612,30 +1467,37 @@ class EncodingDesigner(nn.Module):
             self.learning_stats[final_iter_key] = {}
             # Calculate final stats globally
             with torch.no_grad():
-                # MINIMAL CHANGE: Apply Correction 2 here
                 raw_final_losses_dict, final_stats_dict = self.calculate_loss(
                     self.X_test, self.y_test, self.r_test, iteration=final_iter_key, suffix='_test'
                 )
 
-                final_eval_effective_weights = {}
-                # Use current effective_weights if available and GradNorm was active, otherwise static/initial
                 # This ensures consistency with how the model was last trained or would be used
-                current_training_effective_weights = {}
-                if hasattr(self, 'gradnorm_weights_activated') and self.gradnorm_weights_activated:
-                    for name_gn in self.gradnorm_task_names:
-                         if name_gn in self.gradnorm_log_weights: # Check key exists
-                            current_training_effective_weights[name_gn] = torch.exp(self.gradnorm_log_weights[name_gn]).item()
-                else:
-                    for name_gn in self.gradnorm_task_names:
-                        current_training_effective_weights[name_gn] = self.gradnorm_original_static_weights.get(name_gn, 1.0)
+                # Re-use key_to_weight_param_map for final evaluation weights
+                final_eval_effective_weights = {}
+                # key_to_weight_param_map should be defined if fit() ran, but as a fallback:
+                current_key_to_weight_param_map = {
+                    'probe_weight': 'probe_weight',
+                    'categorical': 'categorical_weight',
+                    'gene_constraint': 'gene_constraint_weight',
+                    'p_std': 'pnorm_std_weight',
+                    'type_correlation_max': 'type_correlation_max_weight',
+                    'hierarchical_scatter': 'hierarchical_scatter_weight',
+                }
+                for task_name_from_list in self.loss_component_names: # self.loss_component_names should exist
+                    weight_param_key = current_key_to_weight_param_map.get(task_name_from_list)
+                    if weight_param_key:
+                        weight_value = self.user_parameters.get(weight_param_key, 0.0)
+                        final_eval_effective_weights[task_name_from_list] = weight_value
+                    else:
+                        final_eval_effective_weights[task_name_from_list] = 0.0
                 
-                final_eval_effective_weights = current_training_effective_weights
-
                 final_weighted_loss_value = 0.0
                 for task_name, raw_loss_comp in raw_final_losses_dict.items():
-                    if raw_loss_comp is not None and task_name in final_eval_effective_weights:
-                        loss_item = raw_loss_comp.item() if isinstance(raw_loss_comp, torch.Tensor) else raw_loss_comp
-                        final_weighted_loss_value += final_eval_effective_weights[task_name] * loss_item
+                    if task_name in self.loss_component_names: # Consider only relevant tasks
+                        current_weight = final_eval_effective_weights.get(task_name, 0.0)
+                        if raw_loss_comp is not None and current_weight > 0:
+                            loss_item = raw_loss_comp.item() if isinstance(raw_loss_comp, torch.Tensor) else raw_loss_comp
+                            final_weighted_loss_value += current_weight * loss_item
                 
                 self.learning_stats[final_iter_key].update(final_stats_dict)
                 self.learning_stats[final_iter_key]['total_loss_test_avg'] = final_weighted_loss_value
