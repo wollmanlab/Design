@@ -1178,7 +1178,7 @@ class EncodingDesigner(nn.Module):
         else:
             current_stats['hierarchical_scatter_loss' + suffix] = 0.0
         
-        # raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss # Commented out for testing
+        raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss # Add raw loss for fit() to use
         current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
         
         return raw_losses, current_stats
@@ -1298,6 +1298,15 @@ class EncodingDesigner(nn.Module):
                     if task_name in effective_weights: # Ensure key exists
                          self.learning_stats[iteration][f'weight_{task_name}'] = effective_weights[task_name].item()
 
+                # Add hierarchical scatter loss if its weight is non-zero and it's available
+                # This loss term is managed independently of GradNorm
+                hierarchical_scatter_raw_loss_component = raw_losses_batch.get('hierarchical_scatter')
+                # Retrieve the static weight defined in user_parameters for this specific loss
+                hierarchical_scatter_static_weight = self.user_parameters.get('hierarchical_scatter_weight', 0.0)
+
+                if hierarchical_scatter_raw_loss_component is not None and hierarchical_scatter_static_weight != 0:
+                    total_loss_weighted = total_loss_weighted + hierarchical_scatter_static_weight * hierarchical_scatter_raw_loss_component
+                    # The weighted contribution ('hierarchical_scatter_loss_train' or '_test') is already logged by calculate_loss.
 
                 # Update the logged total_loss_train stat (this is the primary loss for best model tracking)
                 self.learning_stats[iteration]['total_loss_train'] = total_loss_weighted.item()
