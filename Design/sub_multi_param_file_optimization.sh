@@ -57,12 +57,35 @@ cd - > /dev/null
 # Check if running as part of an array job (SGE_TASK_ID is set)
 if [[ -n "$SGE_TASK_ID" ]]; then
     # WORKER MODE - Process a specific file
-    # Get the list of files
-    mapfile -t FILES < <(ls "$TODO_JOBS_DIR")
+    LIST_FILE="${OPT_DIR}/.files_to_process_task_list.txt" # Path to the list file
+
+    # Get the list of files from the pre-generated list
+    if [[ ! -f "$LIST_FILE" ]]; then
+        echo "ERROR: File list $LIST_FILE not found. This file should have been created by the submitter."
+        exit 1
+    fi
+    mapfile -t FILES < "$LIST_FILE"
+    
+    # Check if SGE_TASK_ID is valid for the number of files in the list
+    if [[ $SGE_TASK_ID -gt ${#FILES[@]} ]] || [[ $SGE_TASK_ID -lt 1 ]]; then
+        echo "ERROR: SGE_TASK_ID $SGE_TASK_ID is out of range for the number of files listed (${#FILES[@]}) in $LIST_FILE."
+        exit 1
+    fi
     
     # Get the file for this task
     CURRENT_FILE="${FILES[$((SGE_TASK_ID-1))]}"
+
+    if [[ -z "$CURRENT_FILE" ]]; then
+        echo "ERROR: Failed to retrieve a filename for SGE_TASK_ID $SGE_TASK_ID from $LIST_FILE. The line might be empty or index out of bounds."
+        echo "Total files in list: ${#FILES[@]}. Task index attempted: $((SGE_TASK_ID-1))."
+        exit 1
+    fi
+    
     FILE_PATH="${TODO_JOBS_DIR}/${CURRENT_FILE}"
+    
+    # Create a symbolic link from the SGE output file to our desired name
+    # Use absolute paths for clarity and to avoid issues with CWD
+    ln -sf "${OPT_DIR}/job_logs/job_log.$JOB_ID.$TASK_ID" "${OPT_DIR}/job_logs/job_log.$JOB_ID.${CURRENT_FILE}"
     
     echo "===== RUNNING AS WORKER: Processing file: ${CURRENT_FILE} ====="
     echo "Task ID: $SGE_TASK_ID"
@@ -113,11 +136,20 @@ else
     
     # Create a list of all files to process
     echo "Finding files to process..."
-    mapfile -t FILES < <(ls "$TODO_JOBS_DIR")
+    # Define the persistent list file path
+    LIST_FILE="${OPT_DIR}/.files_to_process_task_list.txt"
+    
+    # Create the list of files by listing the directory contents
+    # This list will be used by all worker jobs
+    ls "$TODO_JOBS_DIR" > "$LIST_FILE"
+    
+    # Read the generated list into an array to count files
+    mapfile -t FILES < "$LIST_FILE"
     
     # Check if any files were found
     if [[ ${#FILES[@]} -eq 0 ]]; then
         echo "No files found in $TODO_JOBS_DIR. Exiting."
+        rm -f "$LIST_FILE" # Clean up the list file if no files were found
         exit 1
     fi
     
