@@ -299,7 +299,10 @@ class EncodingDesigner(nn.Module):
             'p_std', # Corresponds to pnorm_std_weight, aims to maximize min CV
             'type_correlation_max', # Assuming this is the primary correlation loss you want to balance
             # 'type_correlation_mean', # Add if you want to balance this separately
-            'hierarchical_scatter' # This component's weight is handled separately if active
+            'hierarchical_scatter', # This component's weight is handled separately if active
+            'intra_type_variance', # NEW: For intra-type projection variance
+            'bit_iqr_variance', # NEW: For bit IQR variance
+            'type_entropy', # NEW: For type projection entropy
         ]
 
         # --- Defaults ---
@@ -343,6 +346,10 @@ class EncodingDesigner(nn.Module):
             'r_label_converter_path': 'region_categorical_converter.csv', # Default filename
             'hierarchical_scatter_weight': 0.0,  # Weight for the new hierarchical scatter loss
             'y_hierarchy_file_path': 'child_parent_relationships.csv',      # Path to the file defining cell type hierarchy (e.g., 'cell_type_hierarchy.csv')
+            'intra_type_variance_weight': 0.0, # NEW: Weight for intra-type projection variance
+            'bit_iqr_variance_weight': 0.0, # NEW: Weight for bit IQR variance
+            'type_entropy_weight': 0.0, # NEW: Weight for type projection entropy
+            'tanh_slope_factor': 1.0, # NEW: Slope factor for tanh activation
         }
 
         # --- Logging Setup (Must happen before parameter loading/conversion uses the logger) ---
@@ -894,7 +901,8 @@ class EncodingDesigner(nn.Module):
         P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
         P_mean_sum = P_sum.mean().clamp(min=1e-8)
         P = P * (P_mean_sum / P_sum)
-        Pnormalized = ((P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])).tanh()
+        input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
+        Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() # Modified line
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
             dropout_mask_P = (torch.rand_like(Pnormalized) > self.user_parameters['projection_dropout_proportion']).float()
             Pnormalized_dropout = Pnormalized * dropout_mask_P
@@ -970,7 +978,10 @@ class EncodingDesigner(nn.Module):
         """
         # --- Shared Encoder Forward Pass ---
         E = self.get_encoding_weights()
-        P, Pnormalized, Pnormalized_dropout = self.project(X, E) # Pnormalized is the tanh output
+        P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) # Pnormalized is the tanh output
+
+        # --- Create P_rescaled for scale-sensitive loss terms ---
+        P_rescaled = P_original / torch.pow(10, self.user_parameters['target_brightness_log']) # Rescale using target_brightness_log
 
         # --- Decode using the single decoder (incorporates region embedding) ---
         y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, r_labels, y)
@@ -981,7 +992,7 @@ class EncodingDesigner(nn.Module):
 
         # --- Calculate Stats (on the full batch) ---
         current_stats['accuracy' + suffix] = accuracy.item()
-        current_stats['median brightness' + suffix] = P.median().item()
+        current_stats['median brightness' + suffix] = P_original.median().item()
 
         # -- Probe Weight Loss (Global) --
         probe_count = E.sum()
@@ -1038,9 +1049,9 @@ class EncodingDesigner(nn.Module):
         raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
         min_p_cv_val = np.nan 
 
-        if self.user_parameters['pnorm_std_weight'] != 0 and P.shape[0] > 1 and P.shape[1] > 0: 
-            mean_per_bit = P.mean(dim=0)
-            std_per_bit = P.std(dim=0) 
+        if self.user_parameters['pnorm_std_weight'] != 0 and P_rescaled.shape[0] > 1 and P_rescaled.shape[1] > 0: 
+            mean_per_bit = P_rescaled.mean(dim=0)
+            std_per_bit = P_rescaled.std(dim=0) 
             epsilon = 1e-8 # Avoid division by zero if mean is zero or very small
             cv_per_bit = std_per_bit / (mean_per_bit + epsilon)
             min_p_cv_tensor = cv_per_bit.min()
@@ -1054,19 +1065,33 @@ class EncodingDesigner(nn.Module):
         
 
         # -- Type Correlation Loss (using co-occurrence mask) --
-        P_type_batch = torch.zeros((self.n_categories, P.shape[1]), device=P.device)
+        # This loss uses original P_original to calculate P_type_batch for correlations
+        P_type_batch = torch.zeros((self.n_categories, P_original.shape[1]), device=P_original.device)
         unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True) 
-        valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P.device)
+        valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P_original.device)
 
         for i, type_idx in enumerate(unique_y_batch):
             if 0 <= type_idx.item() < self.n_categories:
                 mask = (y == type_idx)
-                P_type_batch[type_idx] = P[mask].mean(dim=0) 
+                P_type_batch[type_idx] = P_original[mask].mean(dim=0) # Use P_original here
                 valid_types_in_batch_mask[type_idx] = True
 
         P_corr = P_type_batch[valid_types_in_batch_mask] 
         batch_type_indices = torch.where(valid_types_in_batch_mask)[0] 
         n_types_batch = P_corr.shape[0]
+
+        # Create P_corr_rescaled for losses that need it
+        # P_corr is based on P_original, so we need to derive a rescaled version for relevant losses.
+        # This can be done by calculating means from P_rescaled for the valid types.
+        P_corr_rescaled = torch.zeros((n_types_batch, P_rescaled.shape[1]), device=P_rescaled.device)
+        if n_types_batch > 0:
+            temp_idx_map = {original_idx.item(): new_idx for new_idx, original_idx in enumerate(batch_type_indices)}
+            for i_orig_y, type_idx_tensor in enumerate(unique_y_batch): # Iterate through types present in batch y
+                type_idx_item = type_idx_tensor.item()
+                if type_idx_item in temp_idx_map: # If this type is part of P_corr
+                    mask = (y == type_idx_tensor) # Mask from original y to get correct cells
+                    new_idx_for_P_corr_rescaled = temp_idx_map[type_idx_item]
+                    P_corr_rescaled[new_idx_for_P_corr_rescaled] = P_rescaled[mask].mean(dim=0)
 
         raw_type_correlation_max_loss = torch.tensor(0.0, device=self.user_parameters['device'])
 
@@ -1113,9 +1138,9 @@ class EncodingDesigner(nn.Module):
 
         # --- Hierarchical Scatter Loss (Minimizing -Value, so maximizing Value) ---
         hierarchical_scatter_value_stat = 0.0 
-        raw_hierarchical_scatter_loss = torch.tensor(0.0, device=P.device) 
+        raw_hierarchical_scatter_loss = torch.tensor(0.0, device=P_original.device) 
 
-        P_for_scatter = P 
+        P_for_scatter = P_original 
         hierarchical_scatter_weight = self.user_parameters.get('hierarchical_scatter_weight', 0)
         if hierarchical_scatter_weight != 0 and \
            hasattr(self, 'y_parent_child_map') and self.y_parent_child_map and \
@@ -1151,6 +1176,61 @@ class EncodingDesigner(nn.Module):
         
         raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss # Add raw loss for fit() to use
         current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
+
+        # --- Intra-Type Variance Loss (Maximizing variance of each type's projection across bits) ---
+        # Uses P_corr_rescaled
+        raw_intra_type_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        if self.user_parameters['intra_type_variance_weight'] != 0:
+            if n_types_batch > 0 and P_corr_rescaled.shape[1] > 0: # Need at least 1 type and some bits
+                # P_corr_rescaled has shape [n_types_batch, n_bits]
+                variances_intra_type = torch.var(P_corr_rescaled, dim=1) # Variance across bits for each type
+                raw_intra_type_variance_loss = -torch.mean(variances_intra_type) # Negative mean to maximize
+                current_stats['intra_type_variance_loss' + suffix] = raw_intra_type_variance_loss.item() * self.user_parameters['intra_type_variance_weight']
+            else:
+                current_stats['intra_type_variance_loss' + suffix] = 0.0
+        else:
+            current_stats['intra_type_variance_loss' + suffix] = 0.0
+        raw_losses['intra_type_variance'] = raw_intra_type_variance_loss
+
+        # --- Bit IQR Variance Loss (Maximizing IQR of each bit's projection across types) ---
+        # Uses P_corr_rescaled
+        raw_bit_iqr_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        if self.user_parameters['bit_iqr_variance_weight'] != 0:
+            if n_types_batch > 1 and P_corr_rescaled.shape[1] > 0: # Need at least 2 types and some bits
+                # P_corr_rescaled has shape [n_types_batch, n_bits]
+                # Calculate 25th and 75th percentiles for each bit (column-wise)
+                q1 = torch.quantile(P_corr_rescaled, 0.25, dim=0)
+                q3 = torch.quantile(P_corr_rescaled, 0.75, dim=0)
+                iqr_per_bit = q3 - q1
+                raw_bit_iqr_variance_loss = -torch.mean(iqr_per_bit) # Negative mean to maximize IQR
+                current_stats['bit_iqr_variance_loss' + suffix] = raw_bit_iqr_variance_loss.item() * self.user_parameters['bit_iqr_variance_weight']
+            else:
+                current_stats['bit_iqr_variance_loss' + suffix] = 0.0
+        else:
+            current_stats['bit_iqr_variance_loss' + suffix] = 0.0
+        raw_losses['bit_iqr_variance'] = raw_bit_iqr_variance_loss
+        
+        # --- Type Normalized Entropy Loss (Minimizing entropy of each type's normalized projection) ---
+        # Uses original P_corr (derived from P_original)
+        raw_type_entropy_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        if self.user_parameters['type_entropy_weight'] != 0:
+            if n_types_batch > 0 and P_corr.shape[1] > 0: # Need types and bits
+                # P_corr is P_type_batch_valid, shape [n_types_batch, n_bits]
+                # Ensure positivity for log, P_corr should be positive from project() then mean(). Add epsilon for safety.
+                P_corr_positive = P_corr + 1e-12
+                # Normalize each type's projection across bits to sum to 1
+                P_type_norm_rows = P_corr_positive / (P_corr_positive.sum(dim=1, keepdim=True))
+                
+                # Calculate entropy for each row
+                # Add epsilon inside log for numerical stability
+                entropies_per_type = -torch.sum(P_type_norm_rows * torch.log(P_type_norm_rows + 1e-12), dim=1)
+                raw_type_entropy_loss = torch.mean(entropies_per_type) # Minimize mean entropy
+                current_stats['type_entropy_loss' + suffix] = raw_type_entropy_loss.item() * self.user_parameters['type_entropy_weight']
+            else:
+                current_stats['type_entropy_loss' + suffix] = 0.0
+        else:
+            current_stats['type_entropy_loss' + suffix] = 0.0
+        raw_losses['type_entropy'] = raw_type_entropy_loss
         
         return raw_losses, current_stats
 
@@ -1245,6 +1325,9 @@ class EncodingDesigner(nn.Module):
                     'p_std': 'pnorm_std_weight',
                     'type_correlation_max': 'type_correlation_max_weight',
                     'hierarchical_scatter': 'hierarchical_scatter_weight',
+                    'intra_type_variance': 'intra_type_variance_weight', # NEW
+                    'bit_iqr_variance': 'bit_iqr_variance_weight', # NEW
+                    'type_entropy': 'type_entropy_weight', # NEW
                 }
                 
                 effective_weights_for_logging_and_use = {}
@@ -1482,6 +1565,9 @@ class EncodingDesigner(nn.Module):
                     'p_std': 'pnorm_std_weight',
                     'type_correlation_max': 'type_correlation_max_weight',
                     'hierarchical_scatter': 'hierarchical_scatter_weight',
+                    'intra_type_variance': 'intra_type_variance_weight', # NEW
+                    'bit_iqr_variance': 'bit_iqr_variance_weight', # NEW
+                    'type_entropy': 'type_entropy_weight', # NEW
                 }
                 for task_name_from_list in self.loss_component_names: # self.loss_component_names should exist
                     weight_param_key = current_key_to_weight_param_map.get(task_name_from_list)
@@ -1706,7 +1792,9 @@ class EncodingDesigner(nn.Module):
                     P_sum_test = P_test_noisy.sum(dim=1, keepdim=True).clamp(min=1e-8)
                     P_mean_sum_test = P_sum_test.mean().clamp(min=1e-8)
                     P_norm_test = P_test_noisy * (P_mean_sum_test / P_sum_test)
-                    Pnorm_transformed_test = ((P_norm_test.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])).tanh()
+                    # Pnorm_transformed_test = ((P_norm_test.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])).tanh() # Old line
+                    input_to_tanh_test = (P_norm_test.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
+                    Pnorm_transformed_test = (self.user_parameters['tanh_slope_factor'] * input_to_tanh_test).tanh() # Modified line
 
                     # Decode using the single decoder, passing the test region labels
                     # r_test contains the appropriate labels (all 0s if not using regions)
