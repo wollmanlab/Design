@@ -981,7 +981,7 @@ class EncodingDesigner(nn.Module):
         P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) # Pnormalized is the tanh output
 
         # --- Create P_rescaled for scale-sensitive loss terms ---
-        P_rescaled = P_original / torch.pow(10, self.user_parameters['target_brightness_log']) # Rescale using target_brightness_log
+        P_rescaled = P_original / (10**self.user_parameters['target_brightness_log']) 
 
         # --- Decode using the single decoder (incorporates region embedding) ---
         y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, r_labels, y)
