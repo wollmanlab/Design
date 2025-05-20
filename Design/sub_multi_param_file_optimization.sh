@@ -4,7 +4,7 @@
 #$ -o job_logs/job_log.$JOB_ID.$TASK_ID
 #$ -j y
 ## Edit the line below as needed:
-#$ -l h_rt=4:00:00,h_data=16G
+#$ -l h_rt=2:00:00,h_data=16G
 ## Modify the parallel environment
 ## and the number of cores as needed:
 #$ -pe shared 1
