@@ -151,12 +151,32 @@ else
     
     echo "Found ${#FILES[@]} files to process"
     
+    # Get the first file to read n_cpu from it
+    FIRST_FILE_TO_PROCESS="${FILES[0]}"
+    FIRST_FILE_PATH="${TODO_JOBS_DIR}/${FIRST_FILE_TO_PROCESS}"
+    
+    N_CPU=1 # Default value if not found or invalid
+    if [[ -f "$FIRST_FILE_PATH" ]]; then
+        # Extract the value after "n_cpu,"
+        N_CPU_VALUE_FROM_FILE=$(grep '^n_cpu,' "$FIRST_FILE_PATH" | cut -d',' -f2)
+        # Check if the extracted value is a non-empty number
+        if [[ -n "$N_CPU_VALUE_FROM_FILE" ]] && [[ "$N_CPU_VALUE_FROM_FILE" =~ ^[0-9]+$ ]]; then
+            N_CPU=$N_CPU_VALUE_FROM_FILE
+            echo "Successfully read n_cpu=${N_CPU} from ${FIRST_FILE_PATH} for SGE job."
+        else
+            echo "Warning: Could not read a valid n_cpu value from ${FIRST_FILE_PATH} (found: '${N_CPU_VALUE_FROM_FILE}'). Using default n_cpu=${N_CPU}."
+        fi
+    else
+        echo "Warning: First parameter file ${FIRST_FILE_PATH} not found. Using default n_cpu=${N_CPU}."
+    fi
+    
     # Create the job array submission command
-    # Replace both the array size and the OPT_DIR path
+    # Replace the array size, the OPT_DIR path for logs, and the number of CPUs for -pe shared
     mkdir -p "${OPT_DIR}/job_logs"
     sed -e "s/-t 1-N/-t 1-${#FILES[@]}/" \
         -e "s|job_logs/job_log.\$JOB_ID.\$TASK_ID|${OPT_DIR}/job_logs/job_log.\$JOB_ID.\$TASK_ID|" \
-        "$0" > "${0}.tmp"    
+        -e "s/^#\$ -pe shared [0-9][0-9]*/#\$ -pe shared ${N_CPU}/" \
+        "$0" > "${0}.tmp"
     chmod +x "${0}.tmp"
     
     # Submit the job array
