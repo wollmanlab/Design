@@ -297,6 +297,7 @@ class EncodingDesigner(nn.Module):
             'decoder_hidden_layers': 0,
             'decoder_hidden_dim': 128,
             'decoder_dropout_rate': 0.3,
+            'gradient_clip_max_norm': 1.0, # Added for gradient clipping
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -1059,6 +1060,11 @@ class EncodingDesigner(nn.Module):
                         break
                 
                 if not nan_detected:
+                    # --- GRADIENT CLIPPING ---
+                    max_norm_value = self.user_parameters.get('gradient_clip_max_norm', 1.0) 
+                    if max_norm_value > 0:
+                        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
+                    # --- END GRADIENT CLIPPING ---
                     self.optimizer_gen.step()  
                     current_loss_item = total_loss_weighted.item()  
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
