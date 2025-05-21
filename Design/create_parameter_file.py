@@ -71,8 +71,9 @@ parameter_variants = {
     'bit_iqr_variance_weight': [0.0, 0.5, 1],
     'type_entropy_weight': [0.0, 0.5, 1.0],
     'target_brightness_log' : [5.5],
-    'tanh_slope_factor': [0.01, 0.05, 0.1, 0.25, 0.5, 1.0], # Values to test for slope factor
-    'categorical_weight' : [1, 2, 3, 5]
+    'tanh_slope_factor': [0.01, 0.05, 0.1, 0.25], # Values to test for slope factor
+    'categorical_weight' : [1, 2, 3, 5], 
+    'pnorm_std_weight' : [1, 2]
 }
 
 # Generate all parameter combinations
