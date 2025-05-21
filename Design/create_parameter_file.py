@@ -32,48 +32,46 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'device': 'cpu',
             'Verbose': 1,
-            'n_cpu': 1,
+            'n_cpu': 12,
             'n_bit': 36,
-            'n_iterations': 5000,
+            'n_iterations': 30000,
             'total_n_probes': 30e4,
             'probe_weight': 1.0, # Keep as float for consistency if GradNorm handles it
             'probe_under_weight_factor': 0.05,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
             'gene_constraint_weight': 1.0, # Keep as float
-            'target_brightness_log': 4.5,
+            'target_brightness_log': 5,
             'tanh_slope_factor': 1.0, # Default slope factor
             'learning_rate': 0.05,
             'learning_rate_start': 0.1,
             'learning_rate_end': 0.01,
             'report_freq': 500,
-            'type_correlation_mean_weight': 0.0, # Keep as float
-            'type_correlation_max_weight': 0.0, # Keep as float
+            'type_correlation_mean_weight': 0.0, 
+            'type_correlation_max_weight': 0.0, 
             'noise_level': 3,
-            'categorical_weight': 2.0, # Keep as float
+            'categorical_weight': 2.0, 
             'batch_size': 2500,
-            'use_region_info': 0, #region decoders (1=yes, 0=no)
-            'region_embedding_dim': 0,
             'correlation_thresh': 0.9,
-            'pnorm_std_weight': 1.0, # Keep as float
+            'pnorm_std_weight': 1.0, 
             'hierarchical_scatter_weight': 0,  # Weight for the new hierarchical scatter loss; Keep as float
             'y_hierarchy_file_path': 'child_parent_relationships.csv',  # Path to the file defining cell type hierarchy
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results', # Example, will be overridden per job
             'input':'/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/',
             'intra_type_variance_weight': 0.0,
-            'bit_iqr_variance_weight': 0.0,
+            'bit_iqr_variance_weight': 0.5,
             'type_entropy_weight': 0.0,
+            'decoder_hidden_layers': 3,
+            'decoder_hidden_dim': 64,
+            'decoder_dropout_rate': 0.3,
         }
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'intra_type_variance_weight': [0.0, 0.5, 1.0],
-    'bit_iqr_variance_weight': [0.0, 0.5, 1],
-    'type_entropy_weight': [0.0, 0.5, 1.0],
-    'target_brightness_log' : [5.5],
-    'tanh_slope_factor': [0.01, 0.05, 0.1, 0.25], # Values to test for slope factor
-    'categorical_weight' : [1, 2, 3, 5], 
-    'pnorm_std_weight' : [1, 2]
+    'decoder_hidden_layers': [0, 1, 2],
+    'learning_rate_start' : [0.0001, 0.003, 0.01, 0.03, 0.1],
+    'pnorm_std_weight' : [0], 
+    'bit_iqr_variance_weight' : [0],
 }
 
 # Generate all parameter combinations
@@ -94,6 +92,13 @@ for i, combination in enumerate(combinations):
         value_str = str(combination[j]).replace('.', 'p')
         param_desc_list.append(f"{param_name}_{value_str}")
     
+    # Check if learning_rate_end is greater than learning_rate_start
+    if current_params['learning_rate_end'] > current_params['learning_rate_start']:
+        # If end is greater than start, make end equal to start
+        current_params['learning_rate_end'] = current_params['learning_rate_start']
+        # Add this adjustment to the parameter description
+        param_desc_list.append(f"lr_end_adjusted")
+
     # Create a unique identifier for the run based on combination and perhaps a timestamp or run_dir
     # The 'output' directory will be specific to each run.
     # We can base it on the param_desc_list and the main run_dir.
