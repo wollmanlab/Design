@@ -350,6 +350,9 @@ class EncodingDesigner(nn.Module):
             'bit_iqr_variance_weight': 0.0, # NEW: Weight for bit IQR variance
             'type_entropy_weight': 0.0, # NEW: Weight for type projection entropy
             'tanh_slope_factor': 1.0, # NEW: Slope factor for tanh activation
+            'decoder_hidden_layers': 0,
+            'decoder_hidden_dim': 128,
+            'decoder_dropout_rate': 0.3,
         }
 
         # --- Logging Setup (Must happen before parameter loading/conversion uses the logger) ---
@@ -477,7 +480,8 @@ class EncodingDesigner(nn.Module):
         # This should happen *after* loading and float conversion,
         # to correctly handle integer values loaded as floats (e.g., "5000.0")
         params_to_int = ['n_bit', 'n_iterations', 'report_freq', 'batch_size', 'n_cpu',
-                         'use_region_info', 'region_embedding_dim'] # Added use_region_info, region_embedding_dim
+                         'use_region_info', 'region_embedding_dim',
+                         'decoder_hidden_layers', 'decoder_hidden_dim'] # Added decoder architecture parameters
         for param_key in params_to_int:
             self._convert_param_to_int(param_key) # This will raise error if conversion fails
 
@@ -573,12 +577,9 @@ class EncodingDesigner(nn.Module):
         self.genes = None
         self.constraints = None
         self.encoder = None
-        # *** REVERTED: Back to ModuleDict ***
-        self.decoders = None # This was from an older version, ensure it's decoder for single decoder logic
-        self.decoder = None  # Explicitly define for single decoder model
+
         self.region_embedder = None # Explicitly define for single decoder model
 
-        # *** REMOVED: self.decoder and self.region_embedder (they are defined above now) ***
         self.optimizer_gen = None
         self.learning_stats = {}
         self.saved_models = {}
@@ -726,13 +727,38 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
 
-            # --- Initialize Model Components (Encoder, Region Embedder, Decoder) ---
-            # *** RESTORED: Single decoder structure initialization ***
+            # --- Initialize Model Components Structurally (ONCE) ---
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
             self.region_embedder = nn.Embedding(self.n_regions, self.user_parameters['region_embedding_dim']).to(current_device)
-            self.decoder = nn.Linear(self.user_parameters['n_bit'] + self.user_parameters['region_embedding_dim'], self.n_categories).to(current_device)
-            self.log.info(f"Initialized encoder, region embedder (dim={self.user_parameters['region_embedding_dim']}), and single linear decoder.")
-            # *** END RESTORED ***
+
+            n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
+            hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
+            dropout_rate_decoder = self.user_parameters['decoder_dropout_rate']
+            input_dim_decoder = self.user_parameters['n_bit'] + self.user_parameters['region_embedding_dim']
+
+            decoder_modules = []
+            current_decoder_layer_input_dim = input_dim_decoder
+
+            if n_hidden_layers_decoder == 0:
+                # Original behavior: single linear layer
+                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
+                log_msg_decoder_structure = f"Initialized single linear decoder."
+            else:
+                # Multi-layer decoder
+                for i in range(n_hidden_layers_decoder):
+                    decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, hidden_dim_decoder))
+                    decoder_modules.append(nn.BatchNorm1d(hidden_dim_decoder)) # Batch Norm before activation
+                    decoder_modules.append(nn.ReLU())
+                    decoder_modules.append(nn.Dropout(p=dropout_rate_decoder)) # Dropout after activation
+                    current_decoder_layer_input_dim = hidden_dim_decoder # Update current_dim for the next layer
+
+                # Final output layer
+                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
+                log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, dropout={dropout_rate_decoder}) and output layer."
+            
+            self.decoder = nn.Sequential(*decoder_modules).to(current_device)
+            self.log.info(f"Initialized encoder, region embedder (dim={self.user_parameters['region_embedding_dim']}).")
+            self.log.info(log_msg_decoder_structure)
 
             # --- Pre-calculate Type Co-occurrence Mask ---
             self.log.info("Calculating type co-occurrence mask based on training data regions...")
@@ -842,27 +868,16 @@ class EncodingDesigner(nn.Module):
 
 
                 except Exception as e:
-                    self.log.error(f"Failed to load model state from {model_state_path}: {e}. Model will be trained from scratch.")
+                    self.log.error(f"Failed to load model state from {model_state_path}: {e}. Model will use fresh initial weights.")
                     self.is_initialized_from_file = False
                     # Reset potentially partially initialized model components
                     # *** Ensure correct components are reset ***
-                    self.encoder = None
-                    self.region_embedder = None
-                    self.decoder = None
-                    self.E = None
+                    self.E = None # E is derived, so reset if loading failed
             else:
-                self.log.info(f"No existing model state file found at {model_state_path}. Model will be trained from scratch.")
+                self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
                 self.is_initialized_from_file = False
                 # *** Ensure components are initialized if not loading ***
-                if self.encoder is None:
-                    self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-                if self.region_embedder is None:
-                    self.region_embedder = nn.Embedding(self.n_regions, self.user_parameters['region_embedding_dim']).to(current_device)
-                if self.decoder is None:
-                    self.decoder = nn.Linear(self.user_parameters['n_bit'] + self.user_parameters['region_embedding_dim'], self.n_categories).to(current_device)
-                self.log.info("Initialized new model components.")
-
-
+ 
             self.log.info("--- Initialization Complete ---")
             return True
 
