@@ -32,9 +32,9 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'device': 'cpu',
             'Verbose': 1,
-            'n_cpu': 12,
+            'n_cpu': 24,
             'n_bit': 36,
-            'n_iterations': 30000,
+            'n_iterations': 300000,
             'total_n_probes': 30e4,
             'probe_weight': 1.0, # Keep as float for consistency if GradNorm handles it
             'probe_under_weight_factor': 0.05,
@@ -68,8 +68,8 @@ user_parameters = {
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'decoder_hidden_layers': [0, 1, 2],
-    'learning_rate_start' : [0.0001, 0.003, 0.01, 0.03, 0.1],
+    'decoder_hidden_layers': [ 2],
+    'learning_rate_start' : [0.00001, 0.0001],
     'pnorm_std_weight' : [0], 
     'bit_iqr_variance_weight' : [0],
 }
