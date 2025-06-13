@@ -84,8 +84,8 @@ user_parameters = {
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'decoder_hidden_layers': [ 2],
-    'learning_rate_start' : [0.00001, 0.0001],
+    'decoder_hidden_layers': [2],
+    'learning_rate_start' : [0.1],
     'pnorm_std_weight' : [0], 
     'bit_iqr_variance_weight' : [0],
 }
