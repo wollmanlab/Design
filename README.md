@@ -28,10 +28,8 @@ Follow these steps to execute the designer:
 
 1.  **Format Data:**
     Open and run the Jupyter Notebook located at `/Design/Notebooks/data_format.ipynb`.
-
 2.  **Format Parameters:**
     Open and run the Jupyter Notebook located at `/Design/Notebooks/parameters_format.ipynb`.
-
 3.  **Run Executable:**
     Execute the main script using the following command in your terminal, replacing `"path/to/parameters/file"` with the actual path to your parameters file:
     ```bash
@@ -56,10 +54,6 @@ Follow these steps to execute the designer:
         conda activate designer_3.12
         python /Design/create_parameter_file.py
         ```
-    * `sub_data_format.sh` - Formats the data and runs the `data_format.py` script.
-        ```bash
-        /Design/sub_data_format.sh
-        ```
     * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
         1. Creates the jobs.
         2. Executes the jobs by running `EncodingDesigner.py`.
@@ -67,7 +61,6 @@ Follow these steps to execute the designer:
         ```bash
         /Design/sub_multi_param_file_optimization.sh
         ```
-    * `sub_python_script.sh` - (Unused)
 
 
 
