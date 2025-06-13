@@ -63,6 +63,7 @@ Follow these steps to execute the designer:
     * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
         1. Creates the jobs.
         2. Executes the jobs by running `EncodingDesigner.py`.
+        * **Parameters to change:** `OPT_DIR`, `CODE_DIR`
         ```bash
         /Design/sub_multi_param_file_optimization.sh
         ```
