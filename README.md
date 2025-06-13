@@ -49,8 +49,6 @@ Follow these steps to execute the designer:
         ```
     * `create_type_tree.py` - Creates the type tree for the reference.
 
----
-
 2. **Run Scripts:**
     * `create_parameter_file.py` - Creates parameter files for `multi_param_file_optimization.sh`.
         * **Parameters to change:** `base_dir`, `parameter_variants`
