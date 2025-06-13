@@ -4,9 +4,24 @@ import pandas as pd
 import os
 import itertools
 from datetime import datetime
+import getpass
 
-# Create output directory for parameter files and all other requires directories under base_dir
-base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/Runs/'
+# find user
+current_user = getpass.getuser()
+print(f"User identified as : {current_user}")
+if current_user=='rwollman':
+    base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/Runs/'
+    input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
+elif current_user=='zeh':
+    base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs'
+    input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
+else:
+    base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs'
+    input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
+
+print(f"base_dir: {base_dir}")
+print(f"input_dir: {input_dir}")
+
 # Check if a command line argument was provided for the run directory
 import sys
 if len(sys.argv) > 1:
@@ -57,7 +72,7 @@ user_parameters = {
             'hierarchical_scatter_weight': 0,  # Weight for the new hierarchical scatter loss; Keep as float
             'y_hierarchy_file_path': 'child_parent_relationships.csv',  # Path to the file defining cell type hierarchy
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results', # Example, will be overridden per job
-            'input':'/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/',
+            'input':input_dir,
             'intra_type_variance_weight': 0.0,
             'bit_iqr_variance_weight': 0.5,
             'type_entropy_weight': 0.0,
@@ -65,6 +80,7 @@ user_parameters = {
             'decoder_hidden_dim': 64,
             'decoder_dropout_rate': 0.3,
         }
+
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
