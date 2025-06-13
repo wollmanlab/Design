@@ -10,8 +10,26 @@
 #$ -pe shared 1
 #$ -t 1-N  # This will be replaced with actual number of files
 
-# Define paths first
-OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Runs"
+# Get the current username
+CURRENT_USER=$(whoami)
+echo "User identified as ${CURRENT_USER}"
+
+# User specific variables
+if [ "$CURRENT_USER" = "rwollman" ]; then
+    CODE_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Design/Design"
+    OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Runs"
+elif [ "$CURRENT_USER" = "zeh" ]; then
+    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design/"
+    OPT_DIR="/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs"
+else
+    echo "Unknown user using zeh defaults"
+    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design/"
+    OPT_DIR="/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs"
+fi
+
+echo "OPT_DIR : ${OPT_DIR}"
+echo "CODE_DIR: ${CODE_DIR}"
+
 # Check if a directory argument was provided
 if [ $# -ge 1 ]; then
     OPT_DIR="${OPT_DIR}/$1"
@@ -23,7 +41,6 @@ fi
 
 TODO_JOBS_DIR="${OPT_DIR}/params_files_to_scan"
 FINISHED_JOBS_DIR="${OPT_DIR}/params_files_scanned"
-CODE_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Design/Design"
 OUTPUT_DIR="${OPT_DIR}/design_results"
 
 # load the job environment:
