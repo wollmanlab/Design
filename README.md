@@ -49,17 +49,17 @@ Follow these steps to execute the designer:
 
 2. **Run Scripts:**
     * `create_parameter_file.py` - Creates parameter files for `multi_param_file_optimization.sh`.
-        * **Parameters to change:** `base_dir`, `parameter_variants`
+        * **Parameters to change:** `base_dir`, `parameter_variants`, replace Run0 
         ```bash
         conda activate designer_3.12
-        python /Design/create_parameter_file.py
+        python /Design/create_parameter_file.py Run0
         ```
     * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
         1. Creates the jobs.
         2. Executes the jobs by running `EncodingDesigner.py`.
-        * **Parameters to change:** `OPT_DIR`, `CODE_DIR`
+        * **Parameters to change:** `OPT_DIR`, `CODE_DIR`, replace Run0 
         ```bash
-        /Design/sub_multi_param_file_optimization.sh
+        /Design/sub_multi_param_file_optimization.sh Run0
         ```
 
 
