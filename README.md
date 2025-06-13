@@ -22,7 +22,7 @@ To set up the necessary environment, follow these steps:
     pip install ipykernel
     ```
 
-## To Run
+## To Run Single Jobs
 
 Follow these steps to execute the designer:
 
@@ -37,3 +37,40 @@ Follow these steps to execute the designer:
     ```bash
     python /Design/EncodingDesigner.py "path/to/parameters/file"
     ```
+
+## To Run Multiple Jobs
+
+1. **Format Reference Scripts:**
+    * `data_format.py` - Formats the data for the reference.
+        * **Parameters to change:** `data_path`, `output_path`, `csv_file`
+        ```bash
+        conda activate designer_3.12
+        python /Design/data_format.py
+        ```
+    * `create_type_tree.py` - Creates the type tree for the reference.
+
+---
+
+2. **Run Scripts:**
+    * `create_parameter_file.py` - Creates parameter files for `multi_param_file_optimization.sh`.
+        * **Parameters to change:** `base_dir`, `parameter_variants`
+        ```bash
+        conda activate designer_3.12
+        python /Design/create_parameter_file.py
+        ```
+    * `sub_data_format.sh` - Formats the data and runs the `data_format.py` script.
+        ```bash
+        /Design/sub_data_format.sh
+        ```
+    * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
+        1. Creates the jobs.
+        2. Executes the jobs by running `EncodingDesigner.py`.
+        ```bash
+        /Design/sub_multi_param_file_optimization.sh
+        ```
+    * `sub_python_script.sh` - (Unused)
+
+
+
+
+
