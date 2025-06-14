@@ -19,11 +19,11 @@ if [ "$CURRENT_USER" = "rwollman" ]; then
     CODE_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Design/Design"
     OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Runs"
 elif [ "$CURRENT_USER" = "zeh" ]; then
-    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design"
+    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design/Design"
     OPT_DIR="/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs"
 else
     echo "Unknown user using zeh defaults"
-    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design"
+    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design/Design"
     OPT_DIR="/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs"
 fi
 
