@@ -13,10 +13,10 @@ if current_user=='rwollman':
     base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/Runs/'
     input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
 elif current_user=='zeh':
-    base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs'
+    base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/'
     input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
 else:
-    base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs'
+    base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/'
     input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
 
 print(f"base_dir: {base_dir}")
