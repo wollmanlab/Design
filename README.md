@@ -21,6 +21,7 @@ To set up the necessary environment, follow these steps:
     pip install anndata
     pip install ipykernel
     pip install matplotlib
+    pip install seaborn
     ```
 
 ## To Run Single Jobs
