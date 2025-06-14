@@ -20,6 +20,7 @@ To set up the necessary environment, follow these steps:
     pip install scikit-learn
     pip install anndata
     pip install ipykernel
+    pip install matplotlib
     ```
 
 ## To Run Single Jobs
