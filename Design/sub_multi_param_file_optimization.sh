@@ -14,21 +14,34 @@
 CURRENT_USER=$(whoami)
 echo "User identified as ${CURRENT_USER}"
 
+# Get first letter of username for path
+USER_FIRST_LETTER=${CURRENT_USER:0:1}
+
 # User specific variables
 if [ "$CURRENT_USER" = "rwollman" ]; then
     CODE_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Design/Design"
     OPT_DIR="/u/home/r/rwollman/project-rwollman/atlas_design/Runs"
+    CONDA_PATH="/u/home/r/rwollman/miniconda3/etc/profile.d/conda.sh"
 elif [ "$CURRENT_USER" = "zeh" ]; then
     CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design/Design"
     OPT_DIR="/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs"
+    CONDA_PATH="/u/home/z/zeh/miniconda3/etc/profile.d/conda.sh"
 else
-    echo "Unknown user using zeh defaults"
-    CODE_DIR="/u/home/z/zeh/rwollman/zeh/Repos/Design/Design"
-    OPT_DIR="/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs"
+    echo "Using default paths for user ${CURRENT_USER}"
+    CODE_DIR="/u/home/${USER_FIRST_LETTER}/${CURRENT_USER}/rwollman/${CURRENT_USER}/Repos/Design/Design"
+    OPT_DIR="/u/home/${USER_FIRST_LETTER}/${CURRENT_USER}/rwollman/${CURRENT_USER}/Projects/Design/Runs"
+    CONDA_PATH="/u/home/${USER_FIRST_LETTER}/${CURRENT_USER}/miniconda3/etc/profile.d/conda.sh"
 fi
 
 echo "OPT_DIR : ${OPT_DIR}"
 echo "CODE_DIR: ${CODE_DIR}"
+echo "CONDA_PATH: ${CONDA_PATH}"
+
+# Check if conda.sh exists
+if [ ! -f "$CONDA_PATH" ]; then
+    echo "Error: Conda initialization script not found at ${CONDA_PATH}"
+    exit 1
+fi
 
 # Check if a directory argument was provided
 if [ $# -ge 1 ]; then
@@ -48,8 +61,12 @@ OUTPUT_DIR="${OPT_DIR}/design_results"
 module load conda
 
 # Initialize conda for bash shell
-eval "$(conda shell.bash hook)"
+source "${CONDA_PATH}"
 conda activate designer_3.12
+
+# Verify conda environment
+echo "Using conda environment: $(which python)"
+echo "Python version: $(python --version)"
 
 # Dual purpose script:
 # 1. When run directly: submits an array job to process multipe design files
