@@ -47,7 +47,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'device': 'cpu',
             'Verbose': 1,
-            'n_cpu': 24,
+            'n_cpu': 12,
             'n_bit': 36,
             'n_iterations': 300000,
             'total_n_probes': 30e4,
