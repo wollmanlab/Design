@@ -49,7 +49,7 @@ user_parameters = {
             'Verbose': 1,
             'n_cpu': 12,
             'n_bit': 36,
-            'n_iterations': 300000,
+            'n_iterations': 100000, # any more than  100k will take more than 6 hours
             'total_n_probes': 30e4,
             'probe_weight': 1.0, # Keep as float for consistency if GradNorm handles it
             'probe_under_weight_factor': 0.05,
