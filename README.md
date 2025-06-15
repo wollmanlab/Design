@@ -45,7 +45,7 @@ Follow these steps to execute the designer:
         * **Parameters to change:** `data_path`, `output_path`, `csv_file`
         ```bash
         conda activate designer_3.12
-        python /Design/data_format.py
+        python ./Design/data_format.py
         ```
     * `create_type_tree.py` - Creates the type tree for the reference.
 
@@ -54,14 +54,14 @@ Follow these steps to execute the designer:
         * **Parameters to change:** `base_dir`, `parameter_variants`, replace Run0 
         ```bash
         conda activate designer_3.12
-        python /Design/create_parameter_file.py Run0
+        python ./Design/create_parameter_file.py Run0
         ```
     * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
         1. Creates the jobs.
         2. Executes the jobs by running `EncodingDesigner.py`.
         * **Parameters to change:** `OPT_DIR`, `CODE_DIR`, replace Run0 
         ```bash
-        /Design/sub_multi_param_file_optimization.sh Run0
+        ./Design/sub_multi_param_file_optimization.sh Run0
         ```
 
 
