@@ -88,6 +88,7 @@ class EncodingDesigner(nn.Module):
             'decoder_hidden_dim': 128,
             'decoder_dropout_rate': 0.3,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
+            'convergence_threshold': float('inf'), # Added for early stopping when loss converges
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -766,6 +767,12 @@ class EncodingDesigner(nn.Module):
         self.E_scaling_constant = None 
         n_categories = self.n_categories 
 
+        # --- CONVERGENCE TRACKING VARIABLES ---
+        recent_losses = []  # Store recent loss values for sliding average
+        convergence_window = 10  # Number of iterations for each sliding average
+        convergence_threshold_pct = self.user_parameters['convergence_threshold']
+        # --- END CONVERGENCE TRACKING VARIABLES ---
+
         lr_start = self.user_parameters['learning_rate_start']
         lr_end = self.user_parameters['learning_rate_end']
 
@@ -836,6 +843,42 @@ class EncodingDesigner(nn.Module):
                     # --- END GRADIENT CLIPPING ---
                     self.optimizer_gen.step()  
                     current_loss_item = total_loss.item()  
+                    
+                    # --- SLIDING AVERAGE CONVERGENCE CHECK ---
+                    if not np.isnan(current_loss_item):
+                        recent_losses.append(current_loss_item)
+                        
+                        # Keep only the last 2*window + some buffer to avoid memory growth
+                        if len(recent_losses) > 2 * convergence_window + 5:
+                            recent_losses = recent_losses[-2*convergence_window-5:]
+                        
+                        # Only check convergence after we have enough data points
+                        if len(recent_losses) >= 2 * convergence_window:
+                            # Calculate sliding averages
+                            recent_avg = np.mean(recent_losses[-convergence_window:])  # Last 10 iterations
+                            older_avg = np.mean(recent_losses[-2*convergence_window:-convergence_window])  # 10th to 20th to last
+                            
+                            # Calculate relative difference
+                            if older_avg > 0:  # Avoid division by zero
+                                relative_diff = abs(recent_avg - older_avg) / older_avg
+                                
+                                # Optional debug logging every 100 iterations
+                                if iteration % 100 == 0 and self.user_parameters.get('Verbose', 0) == 1:
+                                    print(f"Iter {iteration}: Recent avg: {recent_avg:.6f}, Older avg: {older_avg:.6f}, Rel diff: {relative_diff*100:.4f}%")
+                                
+                                if relative_diff <= convergence_threshold_pct:
+                                    self.log.info(f"*** Training converged at iteration {iteration} ***")
+                                    self.log.info(f"Recent avg (last {convergence_window}): {recent_avg:.6f}")
+                                    self.log.info(f"Older avg (10-20th to last): {older_avg:.6f}")
+                                    self.log.info(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold_pct*100:.4f}%")
+                                    if self.user_parameters['Verbose'] == 1:
+                                        print(f"*** Training converged at iteration {iteration} ***")
+                                        print(f"Recent avg (last {convergence_window}): {recent_avg:.6f}")
+                                        print(f"Older avg (10-20th to last): {older_avg:.6f}")
+                                        print(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold_pct*100:.4f}%")
+                                    break
+                    # --- END SLIDING AVERAGE CONVERGENCE CHECK ---
+                    
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
                         self.best_loss = current_loss_item
                         self.best_model_state_dict = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
