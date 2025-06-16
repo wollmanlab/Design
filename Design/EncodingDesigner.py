@@ -546,7 +546,7 @@ class EncodingDesigner(nn.Module):
         # The model should not use more probes than self.user_parameters['total_n_probes'] and below that it can use as few as it wants
         probe_count = E.sum()
         current_stats['total_n_probes' + suffix] = probe_count.item()
-        current_stats['total_n_genes' + suffix] = (E.clamp(min=1).sum(1)>0).sum().item()
+        current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
         if self.user_parameters['probe_weight']!=0:
             fold = (probe_count/self.user_parameters['total_n_probes']) - 1
