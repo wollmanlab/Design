@@ -52,7 +52,7 @@ user_parameters = {
             'n_iterations': 10000, # any more than  100k will take more than 6 hours
             'total_n_probes': 30e4,
             'probe_weight': 1.0,
-            'probe_under_weight_factor': 0.01,
+            'probe_under_weight_factor': 0.1,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
             'gene_dropout_proportion':0.1,
