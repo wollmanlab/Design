@@ -82,7 +82,7 @@ user_parameters = {
             'decoder_hidden_layers': 0,
             'decoder_hidden_dim': 64,
             'decoder_dropout_rate': 0.3,
-            'convergence_threshold':0.01
+            'convergence_threshold':0.001
         }
 
 
