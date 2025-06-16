@@ -490,7 +490,7 @@ class EncodingDesigner(nn.Module):
             
         P = X.mm(E)
         if self.user_parameters['constant_noise'] != 0:
-            noise = (2 * torch.rand_like(P) - 1) * (10 ** self.user_parameters['constant_noise'])
+            noise = torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
             P = torch.clip(P + noise, min=1.0)
         # P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
         # P_mean_sum = P_sum.mean().clamp(min=1e-8)
