@@ -740,9 +740,7 @@ class EncodingDesigner(nn.Module):
         #     current_stats['type_entropy_loss' + suffix] = 0.0
         # raw_losses['type_entropy'] = raw_type_entropy_loss
 
-        total_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        for key,value in raw_losses.items():
-            total_loss = total_loss + value
+        total_loss = sum(raw_losses.values())
         
         return total_loss, current_stats
 
