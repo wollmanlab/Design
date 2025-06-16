@@ -486,9 +486,9 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['noise_level'] != 0:
             noise = (2 * torch.rand_like(P) - 1) * (10 ** self.user_parameters['noise_level'])
             P = torch.clip(P + noise, min=1.0)
-        P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        P_mean_sum = P_sum.mean().clamp(min=1e-8)
-        P = P * (P_mean_sum / P_sum) # ideally remove
+        # P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        # P_mean_sum = P_sum.mean().clamp(min=1e-8)
+        # P = P * (P_mean_sum / P_sum) # ideally remove
         input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
         Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() 
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
