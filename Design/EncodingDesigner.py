@@ -256,29 +256,21 @@ class EncodingDesigner(nn.Module):
         self.constraints = None
         self.encoder = None
         self.decoder = None  
-        # self.region_embedder = None # Removed
         self.optimizer_gen = None
         self.learning_stats = {}
         self.saved_models = {}
         self.saved_optimizer_states = {}
         self.is_initialized_from_file = False 
         self.type_cooccurrence_mask = None  
-
-        self.X_train, self.y_train = None, None # Removed r_train
-        self.X_test, self.y_test = None, None   # Removed r_test
+        self.X_train, self.y_train = None, None
+        self.X_test, self.y_test = None, None
         self.n_genes = None 
         self.n_categories = None
-        # self.n_regions = None # Removed
-        self.y_label_map = None 
-        # self.r_label_map = None # Removed
-        self.y_reverse_label_map = None 
-        # self.r_reverse_label_map = None # Removed
-        self.y_unique_labels = None 
-        # self.r_unique_labels = None # Removed
-        # self.mapped_region_indices = None # Removed
+        self.y_label_map = None
+        self.y_reverse_label_map = None
+        self.y_unique_labels = None
         self.y_parent_child_map = None 
         self.y_child_to_parent_map = None 
-
 
     def _convert_param_to_int(self, param_key):
         try:
@@ -336,12 +328,12 @@ class EncodingDesigner(nn.Module):
             
             y_converter_path = self.user_parameters['y_label_converter_path']
             self.log.info(f"Loading y label converter from: {y_converter_path}")
-            y_converter_df = pd.read_csv(y_converter_path, index_col=0) # Renamed to avoid conflict
-            y_converter_dict = dict(zip(y_converter_df.index,y_converter_df['label'])) # Renamed
+            y_converter_df = pd.read_csv(y_converter_path, index_col=0) 
+            y_converter_dict = dict(zip(y_converter_df.index,y_converter_df['label'])) 
             self.y_label_map = {k:self.updated_y_label_map[j] for k,j in y_converter_dict.items()}
             self.y_reverse_label_map = {j:k for k,j in self.y_label_map.items()}
             
-            all_y_labels_for_n_categories = torch.cat((self.y_train, self.y_test)) # Use remapped labels
+            all_y_labels_for_n_categories = torch.cat((self.y_train, self.y_test)) 
             unique_y_labels_tensor = torch.unique(all_y_labels_for_n_categories)
             self.n_categories = len(unique_y_labels_tensor)
             self.mapped_category_indices = list(range(self.n_categories)) 
@@ -350,25 +342,22 @@ class EncodingDesigner(nn.Module):
                 raise ValueError(f"X_train gene dimension mismatch")
             if self.X_test.shape[1] != self.n_genes:
                 raise ValueError(f"X_test gene dimension mismatch")
-            if not (self.X_train.shape[0] == self.y_train.shape[0]): # Removed r_train
+            if not (self.X_train.shape[0] == self.y_train.shape[0]):
                 raise ValueError(f"Training data shape mismatch (X_train, y_train)")
-            if not (self.X_test.shape[0] == self.y_test.shape[0]):   # Removed r_test
+            if not (self.X_test.shape[0] == self.y_test.shape[0]): 
                 raise ValueError(f"Testing data shape mismatch (X_test, y_test)")
             self.log.info("Data loaded and shapes validated.")
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
             # --- Initialize Model Components Structurally (ONCE) ---
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-            # self.region_embedder removed
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
             hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
             dropout_rate_decoder = self.user_parameters['decoder_dropout_rate']
             
-            decoder_input_dim = self.user_parameters['n_bit'] # Adjusted: no region_embedding_dim
-            
             decoder_modules = []
-            current_decoder_layer_input_dim = decoder_input_dim
+            current_decoder_layer_input_dim = self.user_parameters['n_bit']
 
             if n_hidden_layers_decoder == 0:
                 decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
@@ -384,12 +373,12 @@ class EncodingDesigner(nn.Module):
                 log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, dropout={dropout_rate_decoder}) and output layer."
             
             self.decoder = nn.Sequential(*decoder_modules).to(current_device)
-            self.log.info(f"Initialized encoder.") # Removed region_embedder from log
+            self.log.info(f"Initialized encoder.") 
             self.log.info(log_msg_decoder_structure)
 
             self.log.info("Calculating type co-occurrence mask...")
             self.type_cooccurrence_mask = ~torch.eye(self.n_categories, dtype=torch.bool, device=current_device)
-            self.log.info("All type pairs (excluding self-correlation) considered co-occurring for correlation loss (regions not used).")
+            self.log.info("All type pairs (excluding self-correlation) considered co-occurring for correlation loss.")
             
             hierarchy_file_path = self.user_parameters.get('y_hierarchy_file_path', None)
             if isinstance(hierarchy_file_path, str) and os.path.exists(hierarchy_file_path) and \
@@ -499,7 +488,7 @@ class EncodingDesigner(nn.Module):
             P = torch.clip(P + noise, min=1.0)
         P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
         P_mean_sum = P_sum.mean().clamp(min=1e-8)
-        P = P * (P_mean_sum / P_sum)
+        P = P * (P_mean_sum / P_sum) # ideally remove
         input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
         Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() 
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
@@ -509,12 +498,12 @@ class EncodingDesigner(nn.Module):
             Pnormalized_dropout = Pnormalized
         return P, Pnormalized, Pnormalized_dropout
 
-    def decode(self, Pnormalized_dropout, y): # Removed r_labels
-        if self.decoder is None : # Removed region_embedder check
+    def decode(self, Pnormalized_dropout, y):
+        if self.decoder is None :
             raise RuntimeError("Decoder not initialized.")
         if not isinstance(self.decoder, nn.Module):
             raise ValueError("Invalid decoder module.")
-        # Region embedding logic removed
+
         decoder_input = Pnormalized_dropout 
         R = self.decoder(decoder_input) 
 
@@ -532,12 +521,11 @@ class EncodingDesigner(nn.Module):
             categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
         return y_predict, accuracy, categorical_loss
 
-    def calculate_loss(self, X, y, iteration, suffix=''): # Removed r_labels
+    def calculate_loss(self, X, y, iteration, suffix=''):
         E = self.get_encoding_weights()
         P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) 
         P_rescaled = P_original / (10**self.user_parameters['target_brightness_log'])  
-        y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, y) # Removed r_labels
-
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, y)
         raw_losses = {}
         current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
@@ -733,7 +721,7 @@ class EncodingDesigner(nn.Module):
         return raw_losses, current_stats
 
     def fit(self):
-        if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : # Removed r_train and region_embedder
+        if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
             self.log.error("Model is not initialized. Call initialize() before fit().")
             raise RuntimeError("Model is not initialized. Call initialize() before fit().")
 
@@ -771,7 +759,6 @@ class EncodingDesigner(nn.Module):
 
                     optimizer_gen = torch.optim.Adam([
                         {'params': self.encoder.parameters(), 'lr': lr_start},
-                        # {'params': self.region_embedder.parameters(), 'lr': lr_start}, # Removed
                         {'params': self.decoder.parameters(), 'lr': lr_start}
                     ])
                     self.optimizer_gen = optimizer_gen
@@ -788,18 +775,16 @@ class EncodingDesigner(nn.Module):
                     idxs = np.random.choice(n_train_samples, batch_size, replace=False)
                     X_batch = self.X_train[idxs]
                     y_batch = self.y_train[idxs]
-                    # r_batch removed
                 else:  
                     X_batch = self.X_train
                     y_batch = self.y_train
-                    # r_batch removed
                     if batch_size > 0:  
                         self.log.debug(f"Batch size {batch_size} >= dataset size {n_train_samples}. Using full dataset for iteration {iteration}.")
 
                 self.optimizer_gen.zero_grad() 
                 
                 raw_losses_batch, batch_stats = self.calculate_loss(
-                    X_batch, y_batch, iteration, suffix='_train' # Removed r_batch
+                    X_batch, y_batch, iteration, suffix='_train'
                 )
                 self.learning_stats[iteration].update(batch_stats) 
 
@@ -872,7 +857,6 @@ class EncodingDesigner(nn.Module):
                             self.to(current_device)
                             optimizer_gen = torch.optim.Adam([ # Re-init optimizer for the reverted state
                                 {'params': self.encoder.parameters(), 'lr': lr_start},
-                                # {'params': self.region_embedder.parameters(), 'lr': lr_start}, # Removed
                                 {'params': self.decoder.parameters(), 'lr': lr_start}
                             ])
                             optimizer_gen.load_state_dict(self.saved_optimizer_states[revert_iter])
@@ -885,7 +869,6 @@ class EncodingDesigner(nn.Module):
                             self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
                             self.optimizer_gen = torch.optim.Adam([
                                 {'params': self.encoder.parameters(), 'lr': lr_start},
-                                # {'params': self.region_embedder.parameters(), 'lr': lr_start}, # Removed
                                 {'params': self.decoder.parameters(), 'lr': lr_start}
                             ])
                         self.learning_stats[iteration] = {} 
@@ -900,7 +883,7 @@ class EncodingDesigner(nn.Module):
                     total_test_loss_items = []
                     with torch.no_grad():
                         raw_test_losses, test_stats_from_calc = self.calculate_loss(
-                            self.X_test, self.y_test, iteration, suffix='_test' # Removed r_test
+                            self.X_test, self.y_test, iteration, suffix='_test'
                         )
                         eval_effective_weights = {}
                         for task_name_from_list in self.loss_component_names:
@@ -993,7 +976,7 @@ class EncodingDesigner(nn.Module):
             self.learning_stats[final_iter_key] = {}
             with torch.no_grad():
                 raw_final_losses_dict, final_stats_dict = self.calculate_loss(
-                    self.X_test, self.y_test, iteration="Final", suffix='_test' # Removed r_test, iteration set to "Final"
+                    self.X_test, self.y_test, iteration="Final", suffix='_test'
                 )
                 final_eval_effective_weights = {}
                 current_key_to_weight_param_map = {
@@ -1114,19 +1097,17 @@ class EncodingDesigner(nn.Module):
     def evaluate(self):
         if self.E is None or self.decoder is None or \
            self.X_train is None or self.X_test is None or self.y_train is None or \
-           self.y_test is None : # Removed region_embedder and r_test
+           self.y_test is None : 
             self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
             return
 
         self.results = {}
         current_device = self.user_parameters['device']
-        # use_region_info removed
 
         final_E_cpu = self.E.cpu().detach()
         self.results['Number of Probes (Constrained)'] = final_E_cpu.sum().item()
 
-        all_P_type = [] 
-        # Logic simplified to global calculation
+        all_P_type = []
         X_global_train = self.X_train 
         y_global_train = self.y_train
 
@@ -1141,7 +1122,7 @@ class EncodingDesigner(nn.Module):
                     type_mask = (y_global_train == type_idx_tensor)
                     if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
                         P_type_global[type_idx] = P_global_cpu[type_mask].mean(dim=0)
-                all_P_type.append(P_type_global) # Will contain one item: the global P_type
+                all_P_type.append(P_type_global)
 
         if all_P_type:
             avg_P_type = torch.stack(all_P_type).mean(dim=0) 
@@ -1171,7 +1152,7 @@ class EncodingDesigner(nn.Module):
         }
         self.eval()
         for level_name, params in noise_levels.items():
-            self.log.info(f"Calculating {level_name} Accuracy (Global)") # Removed region averaging note
+            self.log.info(f"Calculating {level_name} Accuracy (Global)")
             try:
                 P_test_noisy, _ = self.simulate_noise(
                     poisson_noise_scale=params['poisson'],
@@ -1185,7 +1166,7 @@ class EncodingDesigner(nn.Module):
                     P_norm_test = P_test_noisy * (P_mean_sum_test / P_sum_test)
                     input_to_tanh_test = (P_norm_test.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
                     Pnorm_transformed_test = (self.user_parameters['tanh_slope_factor'] * input_to_tanh_test).tanh() 
-                    y_pred_test, accuracy_test, _ = self.decode(Pnorm_transformed_test, self.y_test) # Removed r_test
+                    y_pred_test, accuracy_test, _ = self.decode(Pnorm_transformed_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
@@ -1208,14 +1189,13 @@ class EncodingDesigner(nn.Module):
         self.log.info("Starting visualization generation...")
         if self.E is None or self.decoder is None or \
            self.X_train is None or self.y_train is None or \
-           self.y_reverse_label_map is None : # Removed region_embedder and r_reverse_label_map
+           self.y_reverse_label_map is None : 
             self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
             return
 
         current_device = self.user_parameters['device']
         output_dir = self.user_parameters['output']
-        saved_plot_paths = [] 
-        # use_region_info removed
+        saved_plot_paths = []
 
         final_E_device = self.E.to(current_device)
         self.eval() 
@@ -1344,14 +1324,13 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Generating confusion matrix for test data (Global)...")
             X_test_global = self.X_test
             y_test_global = self.y_test # True internal labels
-            # r_test_global removed
 
             if X_test_global.shape[0] > 0:
                 fig_cm = None 
                 try:
                     with torch.no_grad():
                         P_test_tensor, Pnorm_test_tensor, Pnorm_dropout_test_tensor = self.project(X_test_global, final_E_device)
-                        y_pred_test, _, _ = self.decode(Pnorm_dropout_test_tensor, y_test_global) # Removed r_test_global
+                        y_pred_test, _, _ = self.decode(Pnorm_dropout_test_tensor, y_test_global)
 
                     y_true_np = y_test_global.cpu().numpy()
                     y_pred_np = y_pred_test.cpu().numpy()
@@ -1619,7 +1598,7 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
     finally:
         plt.close(fig)
 
-        
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("user_parameters_path", type=str, help="Path to csv containing parameters for model")
