@@ -57,6 +57,7 @@ user_parameters = {
             'projection_dropout_proportion': 0.1,
             'gene_constraint_weight': 1.0,
             'target_brightness_log': 4.5,
+            'target_brightness_weight':1.0,
             'tanh_slope_factor': 1.0, # Default slope factor
             'learning_rate': 0.05,
             'learning_rate_start': 0.1,
@@ -64,7 +65,7 @@ user_parameters = {
             'report_freq': 1000,
             'type_correlation_mean_weight': 0.0, 
             'type_correlation_max_weight': 0.0, 
-            'constant_noise': 3,
+            'constant_noise': 3.0,
             'gene_fold_noise': 0.5,
             'categorical_weight': 2.0, 
             'batch_size': 2500,

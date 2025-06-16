@@ -56,6 +56,7 @@ class EncodingDesigner(nn.Module):
             'projection_dropout_proportion': 0.1,
             'gene_constraint_weight': 1,
             'target_brightness_log': 4.5,
+            'target_brightness_weight':1.0,
             'learning_rate': 0.05, 
             'learning_rate_start': 0.05, 
             'learning_rate_end': 0.005, 
@@ -495,8 +496,9 @@ class EncodingDesigner(nn.Module):
         # P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
         # P_mean_sum = P_sum.mean().clamp(min=1e-8)
         # P = P * (P_mean_sum / P_sum) # ideally remove
-        input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
-        Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() 
+        Pnormalized = P.clamp(min=1)#.log10()
+        # input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
+        # Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() 
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
             dropout_mask_P = (torch.rand_like(Pnormalized) > self.user_parameters['projection_dropout_proportion']).float()
             Pnormalized_dropout = Pnormalized * dropout_mask_P
@@ -526,7 +528,7 @@ class EncodingDesigner(nn.Module):
     def calculate_loss(self, X, y, iteration, suffix=''):
         E = self.get_encoding_weights()
         P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) 
-        P_rescaled = P_original / (10**self.user_parameters['target_brightness_log'])  
+        # P_rescaled = P_original / (10**self.user_parameters['target_brightness_log'])  
         y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, y)
         raw_losses = {}
         current_stats = {}
@@ -539,10 +541,8 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['probe_weight']!=0:
             difference = probe_count-self.user_parameters['total_n_probes']
             probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(difference)
-        else:
-            probe_weight_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        raw_losses['probe_weight'] = probe_weight_loss
-        current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
+            raw_losses['probe_weight'] = probe_weight_loss
+            current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
         # probe_count = E.sum()
         # current_stats['total_n_probes' + suffix] = probe_count.item()
@@ -569,22 +569,23 @@ class EncodingDesigner(nn.Module):
         # The model should accurately decode cell type labels
         if self.user_parameters['categorical_weight'] != 0:
             categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component
-        else:
-            categorical_loss_component =  torch.tensor(0.0, device=self.user_parameters['device'])
-        raw_losses['categorical'] = categorical_loss_component
-        current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
+            raw_losses['categorical'] = categorical_loss_component
+            current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
 
         # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
             constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
             gene_constraint_loss = self.user_parameters['gene_constraint_weight']*torch.sqrt(constraint_violation.mean().clamp(min=0))
-        else:
-            gene_constraint_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        raw_losses['gene_constraint'] = gene_constraint_loss
-        current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
+            raw_losses['gene_constraint_loss'] = gene_constraint_loss
+            current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
         # Future add a brightness loss term
-        
+        if self.user_parameters['target_brightness_weight'] != 0:
+            difference = self.user_parameters['target_brightness_log'] - P_original.mean(0).min().clamp(min=1).log10()
+            brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(difference)
+            raw_losses['brightness_loss'] = brightness_loss
+            current_stats['brightness_loss' + suffix] = brightness_loss.item()
+
 
         # raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
         # min_p_cv_val = np.nan  
@@ -733,8 +734,12 @@ class EncodingDesigner(nn.Module):
         # else:
         #     current_stats['type_entropy_loss' + suffix] = 0.0
         # raw_losses['type_entropy'] = raw_type_entropy_loss
+
+        total_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        for key,value in raw_losses.items():
+            total_loss = total_loss + value
         
-        return raw_losses, current_stats
+        return total_loss, current_stats
 
     def fit(self):
         if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
@@ -799,45 +804,12 @@ class EncodingDesigner(nn.Module):
 
                 self.optimizer_gen.zero_grad() 
                 
-                raw_losses_batch, batch_stats = self.calculate_loss(
+                total_loss, batch_stats = self.calculate_loss(
                     X_batch, y_batch, iteration, suffix='_train'
                 )
-                self.learning_stats[iteration].update(batch_stats) 
-
-                key_to_weight_param_map = {
-                    'probe_weight': 'probe_weight',
-                    'categorical': 'categorical_weight',
-                    'gene_constraint': 'gene_constraint_weight',
-                    'p_std': 'pnorm_std_weight',
-                    'type_correlation_max': 'type_correlation_max_weight',
-                    'hierarchical_scatter': 'hierarchical_scatter_weight',
-                    'intra_type_variance': 'intra_type_variance_weight', 
-                    'bit_iqr_variance': 'bit_iqr_variance_weight', 
-                    'type_entropy': 'type_entropy_weight', 
-                }
-                
-                effective_weights_for_logging_and_use = {}
-                for task_name_from_list in self.loss_component_names:
-                    weight_param_key = key_to_weight_param_map.get(task_name_from_list)
-                    if weight_param_key:
-                        weight_value = self.user_parameters.get(weight_param_key, 0.0) 
-                        effective_weights_for_logging_and_use[task_name_from_list] = weight_value
-                        self.learning_stats[iteration][f'weight_{task_name_from_list}'] = weight_value
-                    else:
-                        self.log.warning(f"Task '{task_name_from_list}' from loss_component_names not found in key_to_weight_param_map. Weight will be 0.")
-                        effective_weights_for_logging_and_use[task_name_from_list] = 0.0
-                        self.learning_stats[iteration][f'weight_{task_name_from_list}'] = 0.0
-
-                total_loss_weighted = torch.tensor(0.0, device=current_device)
-        
-                for task_name, raw_loss_component in raw_losses_batch.items():
-                    if task_name in self.loss_component_names: 
-                        current_weight = effective_weights_for_logging_and_use.get(task_name, 0.0)
-                        if raw_loss_component is not None and current_weight > 0:
-                            total_loss_weighted = total_loss_weighted + current_weight * raw_loss_component
-                
-                self.learning_stats[iteration]['total_loss_train'] = total_loss_weighted.item()
-                total_loss_weighted.backward() 
+                self.learning_stats[iteration].update(batch_stats)
+                self.learning_stats[iteration]['total_loss_train'] = total_loss.item()
+                total_loss.backward() 
 
                 nan_detected = False
                 for name, param in self.named_parameters():
@@ -854,7 +826,7 @@ class EncodingDesigner(nn.Module):
                         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
                     # --- END GRADIENT CLIPPING ---
                     self.optimizer_gen.step()  
-                    current_loss_item = total_loss_weighted.item()  
+                    current_loss_item = total_loss.item()  
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
                         self.best_loss = current_loss_item
                         self.best_model_state_dict = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
@@ -898,26 +870,12 @@ class EncodingDesigner(nn.Module):
                     all_test_stats_list = [] 
                     total_test_loss_items = []
                     with torch.no_grad():
-                        raw_test_losses, test_stats_from_calc = self.calculate_loss(
+                        total_test_loss, test_stats_from_calc = self.calculate_loss(
                             self.X_test, self.y_test, iteration, suffix='_test'
                         )
-                        eval_effective_weights = {}
-                        for task_name_from_list in self.loss_component_names:
-                            weight_param_key = key_to_weight_param_map.get(task_name_from_list)
-                            if weight_param_key:
-                                weight_value = self.user_parameters.get(weight_param_key, 0.0)
-                                eval_effective_weights[task_name_from_list] = weight_value
-                            else:
-                                eval_effective_weights[task_name_from_list] = 0.0
-                        weighted_test_loss_val = 0.0
-                        for task_name_test, raw_loss_test_comp in raw_test_losses.items():
-                            if task_name_test in self.loss_component_names: 
-                                current_weight = eval_effective_weights.get(task_name_test, 0.0)
-                                if raw_loss_test_comp is not None and current_weight > 0:
-                                    weighted_test_loss_val += current_weight * raw_loss_test_comp.item()
-                        test_stats_from_calc['total_loss_test'] = weighted_test_loss_val 
+                        test_stats_from_calc['total_loss_test'] = total_test_loss.item()
                         all_test_stats_list.append(test_stats_from_calc)
-                        total_test_loss_items.append(weighted_test_loss_val)
+                        total_test_loss_items.append(total_test_loss.item())
                     avg_test_stats = {}
                     if all_test_stats_list:
                         stat_keys = all_test_stats_list[0].keys()
@@ -991,37 +949,11 @@ class EncodingDesigner(nn.Module):
             final_iter_key = 'Final'
             self.learning_stats[final_iter_key] = {}
             with torch.no_grad():
-                raw_final_losses_dict, final_stats_dict = self.calculate_loss(
+                total_final_loss, final_stats_dict = self.calculate_loss(
                     self.X_test, self.y_test, iteration="Final", suffix='_test'
                 )
-                final_eval_effective_weights = {}
-                current_key_to_weight_param_map = {
-                    'probe_weight': 'probe_weight',
-                    'categorical': 'categorical_weight',
-                    'gene_constraint': 'gene_constraint_weight',
-                    'p_std': 'pnorm_std_weight',
-                    'type_correlation_max': 'type_correlation_max_weight',
-                    'hierarchical_scatter': 'hierarchical_scatter_weight',
-                    'intra_type_variance': 'intra_type_variance_weight', 
-                    'bit_iqr_variance': 'bit_iqr_variance_weight', 
-                    'type_entropy': 'type_entropy_weight', 
-                }
-                for task_name_from_list in self.loss_component_names: 
-                    weight_param_key = current_key_to_weight_param_map.get(task_name_from_list)
-                    if weight_param_key:
-                        weight_value = self.user_parameters.get(weight_param_key, 0.0)
-                        final_eval_effective_weights[task_name_from_list] = weight_value
-                    else:
-                        final_eval_effective_weights[task_name_from_list] = 0.0
-                final_weighted_loss_value = 0.0
-                for task_name, raw_loss_comp in raw_final_losses_dict.items():
-                    if task_name in self.loss_component_names: 
-                        current_weight = final_eval_effective_weights.get(task_name, 0.0)
-                        if raw_loss_comp is not None and current_weight > 0:
-                            loss_item = raw_loss_comp.item() if isinstance(raw_loss_comp, torch.Tensor) else raw_loss_comp
-                            final_weighted_loss_value += current_weight * loss_item
                 self.learning_stats[final_iter_key].update(final_stats_dict)
-                self.learning_stats[final_iter_key]['total_loss_test_avg'] = final_weighted_loss_value
+                self.learning_stats[final_iter_key]['total_loss_test_avg'] = total_final_loss.item()
 
             now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             red_start = "\033[91m"; reset_color = "\033[0m"
