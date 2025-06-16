@@ -54,6 +54,7 @@ class EncodingDesigner(nn.Module):
             'probe_under_weight_factor': 0.05, 
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
+            'gene_dropout_proportion':0.1,
             'gene_constraint_weight': 1,
             'target_brightness_log': 4.5,
             'target_brightness_weight':1.0,
@@ -488,6 +489,10 @@ class EncodingDesigner(nn.Module):
             fold = self.user_parameters['gene_fold_noise']
             gene_noise = torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
             X = X * gene_noise
+
+        if self.user_parameters['gene_dropout_proportion'] != 0:
+            dropout_mask_X = (torch.rand_like(X) > self.user_parameters['gene_dropout_proportion']).float()
+            X = X * dropout_mask_X
             
         P = X.mm(E)
         if self.user_parameters['constant_noise'] != 0:
@@ -496,7 +501,7 @@ class EncodingDesigner(nn.Module):
         # P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
         # P_mean_sum = P_sum.mean().clamp(min=1e-8)
         # P = P * (P_mean_sum / P_sum) # ideally remove
-        Pnormalized = P.clamp(min=1)#.log10()
+        Pnormalized = P.clamp(min=1).log10() - self.user_parameters['target_brightness_log']
         # input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
         # Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() 
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:

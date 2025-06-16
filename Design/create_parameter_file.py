@@ -55,6 +55,7 @@ user_parameters = {
             'probe_under_weight_factor': 0.05,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
+            'gene_dropout_proportion':0.1,
             'gene_constraint_weight': 1.0,
             'target_brightness_log': 4.5,
             'target_brightness_weight':1.0,
