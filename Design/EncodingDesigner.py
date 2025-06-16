@@ -549,8 +549,9 @@ class EncodingDesigner(nn.Module):
         current_stats['total_n_genes' + suffix] = (E.clamp(min=1).sum(1)>0).sum().item()
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
         if self.user_parameters['probe_weight']!=0:
-            difference = probe_count-self.user_parameters['total_n_probes']
-            probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(difference)
+            fold = (probe_count/self.user_parameters['total_n_probes']) - 1
+            # Use leaky ReLU with a small negative slope for values below threshold
+            probe_weight_loss = self.user_parameters['probe_weight'] * (F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
             raw_losses['probe_weight'] = probe_weight_loss
             current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
