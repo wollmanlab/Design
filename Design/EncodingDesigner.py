@@ -919,11 +919,9 @@ class EncodingDesigner(nn.Module):
                         self.log.info(log_msg)
                         if self.user_parameters['Verbose'] == 1: print(log_msg)
                     for name, item in avg_test_stats.items():
-                        if 'loss' in name or 'accuracy' in name or 'correlation_' in name or \
-                           'total_n_probes' in name or 'pnorm_std' in name or 'median brightness' in name: 
-                            log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
-                            self.log.info(log_msg)
-                            if self.user_parameters['Verbose'] == 1: print(log_msg)
+                        log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
+                        self.log.info(log_msg)
+                        if self.user_parameters['Verbose'] == 1: print(log_msg)
                     self.log.info('------------------')
 
                 if iteration > 20:
@@ -970,11 +968,9 @@ class EncodingDesigner(nn.Module):
             self.log.info(log_prefix)
             if self.user_parameters['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
             for name, item in self.learning_stats[final_iter_key].items():
-                if 'loss' in name or 'accuracy' in name or 'correlation_' in name or \
-                   'total_n_probes' in name or 'pnorm_std' in name or 'median brightness' in name: 
-                    log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
-                    self.log.info(log_msg)
-                    if self.user_parameters['Verbose'] == 1: print(log_msg)
+                log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
+                self.log.info(log_msg)
+                if self.user_parameters['Verbose'] == 1: print(log_msg)
             self.log.info('------------------')
 
             self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
