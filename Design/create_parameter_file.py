@@ -56,7 +56,7 @@ user_parameters = {
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
             'gene_constraint_weight': 1.0,
-            'target_brightness_log': 5,
+            'target_brightness_log': 4.5,
             'tanh_slope_factor': 1.0, # Default slope factor
             'learning_rate': 0.05,
             'learning_rate_start': 0.1,
