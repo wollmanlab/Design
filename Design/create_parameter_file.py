@@ -49,22 +49,23 @@ user_parameters = {
             'Verbose': 1,
             'n_cpu': 12,
             'n_bit': 24,
-            'n_iterations': 100000, # any more than  100k will take more than 6 hours
+            'n_iterations': 50000, # any more than  100k will take more than 6 hours
             'total_n_probes': 30e4,
             'probe_weight': 1.0,
             'probe_under_weight_factor': 0.05,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
-            'gene_constraint_weight': 1.0, # Keep as float
+            'gene_constraint_weight': 1.0,
             'target_brightness_log': 5,
             'tanh_slope_factor': 1.0, # Default slope factor
             'learning_rate': 0.05,
             'learning_rate_start': 0.1,
             'learning_rate_end': 0.01,
-            'report_freq': 500,
+            'report_freq': 1000,
             'type_correlation_mean_weight': 0.0, 
             'type_correlation_max_weight': 0.0, 
-            'noise_level': 3,
+            'constant_noise': 3,
+            'gene_fold_noise': 0.5,
             'categorical_weight': 2.0, 
             'batch_size': 2500,
             'correlation_thresh': 0.9,
@@ -84,10 +85,7 @@ user_parameters = {
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'decoder_hidden_layers': [0],
     'learning_rate_start' : [0.1],
-    'pnorm_std_weight' : [0], 
-    'bit_iqr_variance_weight' : [0],
 }
 
 # Generate all parameter combinations

@@ -62,7 +62,8 @@ class EncodingDesigner(nn.Module):
             'report_freq': 250,
             'type_correlation_mean_weight': 0,
             'type_correlation_max_weight': 1,
-            'noise_level': 3,
+            'constant_noise': 3.0,
+            'gene_fold_noise':0.0,
             'categorical_weight': 1,
             'batch_size': 1000,
             'pnorm_std_weight': 0.1, 
@@ -482,9 +483,14 @@ class EncodingDesigner(nn.Module):
         return E
 
     def project(self, X, E):
+        if self.user_parameters['gene_fold_noise'] != 0:
+            fold = self.user_parameters['gene_fold_noise']
+            gene_noise = torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
+            X = X * gene_noise
+            
         P = X.mm(E)
-        if self.user_parameters['noise_level'] != 0:
-            noise = (2 * torch.rand_like(P) - 1) * (10 ** self.user_parameters['noise_level'])
+        if self.user_parameters['constant_noise'] != 0:
+            noise = (2 * torch.rand_like(P) - 1) * (10 ** self.user_parameters['constant_noise'])
             P = torch.clip(P + noise, min=1.0)
         # P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
         # P_mean_sum = P_sum.mean().clamp(min=1e-8)
