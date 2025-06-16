@@ -48,10 +48,10 @@ user_parameters = {
             'device': 'cpu',
             'Verbose': 1,
             'n_cpu': 12,
-            'n_bit': 36,
+            'n_bit': 24,
             'n_iterations': 100000, # any more than  100k will take more than 6 hours
             'total_n_probes': 30e4,
-            'probe_weight': 1.0, # Keep as float for consistency if GradNorm handles it
+            'probe_weight': 1.0,
             'probe_under_weight_factor': 0.05,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
@@ -68,15 +68,15 @@ user_parameters = {
             'categorical_weight': 2.0, 
             'batch_size': 2500,
             'correlation_thresh': 0.9,
-            'pnorm_std_weight': 1.0, 
-            'hierarchical_scatter_weight': 0,  # Weight for the new hierarchical scatter loss; Keep as float
+            'pnorm_std_weight': 0, 
+            'hierarchical_scatter_weight': 0.0,
             'y_hierarchy_file_path': 'child_parent_relationships.csv',  # Path to the file defining cell type hierarchy
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results', # Example, will be overridden per job
             'input':input_dir,
             'intra_type_variance_weight': 0.0,
-            'bit_iqr_variance_weight': 0.5,
+            'bit_iqr_variance_weight': 0,
             'type_entropy_weight': 0.0,
-            'decoder_hidden_layers': 3,
+            'decoder_hidden_layers': 0,
             'decoder_hidden_dim': 64,
             'decoder_dropout_rate': 0.3,
         }
