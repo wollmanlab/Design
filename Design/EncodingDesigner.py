@@ -512,11 +512,7 @@ class EncodingDesigner(nn.Module):
 
         if self.user_parameters['categorical_weight'] != 0:
             loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
-            if y.min() < 0 or y.max() >= self.n_categories:
-                self.log.error(f"Target labels y out of bounds ({y.min()}-{y.max()}) for CrossEntropyLoss (expected 0-{self.n_categories-1}).")
-                categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True) 
-            else:
-                categorical_loss = loss_fn(R, y)
+            categorical_loss = loss_fn(R, y)
         else:
             categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
         return y_predict, accuracy, categorical_loss
@@ -531,192 +527,206 @@ class EncodingDesigner(nn.Module):
         current_stats['accuracy' + suffix] = accuracy.item()
         current_stats['median brightness' + suffix] = P_original.median().item()
 
+        # The model should not use more probes than self.user_parameters['total_n_probes'] and below that it can use as few as it wants
         probe_count = E.sum()
         current_stats['total_n_probes' + suffix] = probe_count.item()
-        raw_probe_weight_loss = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-        probe_weight_for_over = self.user_parameters['probe_weight']
-        push_down_weight_for_under = self.user_parameters['probe_under_weight_factor']
-        if probe_weight_for_over != 0.0 or push_down_weight_for_under != 0.0:
-            total_n_probes_target = float(self.user_parameters['total_n_probes'])
-            penalty_over = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-            if probe_weight_for_over != 0.0:
-                diff_over = probe_count - total_n_probes_target
-                penalty_over = probe_weight_for_over * (F.relu(diff_over) + 1).log10()
-            penalty_push_down = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-            if push_down_weight_for_under != 0.0:
-                if probe_count < total_n_probes_target:
-                    safe_total_n_probes_target = max(total_n_probes_target, 1e-8)
-                    normalized_under_log_argument = (probe_count / safe_total_n_probes_target) + 1
-                    penalty_push_down = push_down_weight_for_under * normalized_under_log_argument.log10()
-            raw_probe_weight_loss = penalty_over + penalty_push_down
-        raw_losses['probe_weight'] = raw_probe_weight_loss
-        static_probe_weight_for_logging = self.user_parameters['probe_weight']
-        current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() * static_probe_weight_for_logging
-
-        if self.user_parameters['categorical_weight'] != 0: 
-            raw_losses['categorical'] = raw_categorical_loss_component
-            current_stats['categorical_loss' + suffix] = raw_categorical_loss_component.item() * self.user_parameters['categorical_weight']
+        if self.user_parameters['probe_weight']!=0:
+            difference = probe_count-self.user_parameters['total_n_probes']
+            probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(difference)
         else:
-            raw_losses['categorical'] = torch.tensor(0.0, device=self.user_parameters['device'])
-            current_stats['categorical_loss' + suffix] = 0.0
+            probe_weight_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        raw_losses['probe_weight'] = probe_weight_loss
+        current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
-        raw_gene_constraint_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        # probe_count = E.sum()
+        # current_stats['total_n_probes' + suffix] = probe_count.item()
+        # raw_probe_weight_loss = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+        # probe_weight_for_over = self.user_parameters['probe_weight']
+        # push_down_weight_for_under = self.user_parameters['probe_under_weight_factor']
+        # if probe_weight_for_over != 0.0 or push_down_weight_for_under != 0.0:
+        #     total_n_probes_target = float(self.user_parameters['total_n_probes'])
+        #     penalty_over = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+        #     if probe_weight_for_over != 0.0:
+        #         diff_over = probe_count - total_n_probes_target
+        #         penalty_over = probe_weight_for_over * (F.relu(diff_over) + 1).log10()
+        #     penalty_push_down = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
+        #     if push_down_weight_for_under != 0.0:
+        #         if probe_count < total_n_probes_target:
+        #             safe_total_n_probes_target = max(total_n_probes_target, 1e-8)
+        #             normalized_under_log_argument = (probe_count / safe_total_n_probes_target) + 1
+        #             penalty_push_down = push_down_weight_for_under * normalized_under_log_argument.log10()
+        #     raw_probe_weight_loss = penalty_over + penalty_push_down
+        # raw_losses['probe_weight'] = raw_probe_weight_loss
+        # static_probe_weight_for_logging = self.user_parameters['probe_weight']
+        # current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() * static_probe_weight_for_logging
+
+        # The model should accurately decode cell type labels
+        if self.user_parameters['categorical_weight'] != 0:
+            categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component
+        else:
+            categorical_loss_component =  torch.tensor(0.0, device=self.user_parameters['device'])
+        raw_losses['categorical'] = categorical_loss_component
+        current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
+
+        # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
-            if self.constraints is None: raise RuntimeError("Constraints not loaded. Run initialize() first.")
             constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
-            raw_gene_constraint_loss = torch.sqrt(constraint_violation.mean().clamp(min=1e-8))
-            current_stats['gene_constraint_loss' + suffix] = raw_gene_constraint_loss.item() * self.user_parameters['gene_constraint_weight']
+            gene_constraint_loss = self.user_parameters['gene_constraint_weight']*torch.sqrt(constraint_violation.mean().clamp(min=0))
         else:
-            current_stats['gene_constraint_loss' + suffix] = 0.0
-        raw_losses['gene_constraint'] = raw_gene_constraint_loss
-        
-        raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        min_p_cv_val = np.nan  
-        if self.user_parameters['pnorm_std_weight'] != 0 and P_rescaled.shape[0] > 1 and P_rescaled.shape[1] > 0: 
-            mean_per_bit = P_rescaled.mean(dim=0)
-            std_per_bit = P_rescaled.std(dim=0)  
-            epsilon = 1e-8 
-            cv_per_bit = std_per_bit / (mean_per_bit + epsilon)
-            min_p_cv_tensor = cv_per_bit.min()
-            min_p_cv_val = min_p_cv_tensor.item()
-            raw_p_std_loss = -min_p_cv_tensor 
-            current_stats['p_std_loss' + suffix] = raw_p_std_loss.item() * self.user_parameters['pnorm_std_weight']
-        else:
-            current_stats['p_std_loss' + suffix] = 0.0
-        raw_losses['p_std'] = raw_p_std_loss
-        current_stats['p_std_min' + suffix] = min_p_cv_val 
-        
-        P_type_batch = torch.zeros((self.n_categories, P_original.shape[1]), device=P_original.device)
-        unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True)  
-        valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P_original.device)
-        for i, type_idx in enumerate(unique_y_batch):
-            if 0 <= type_idx.item() < self.n_categories:
-                mask = (y == type_idx)
-                P_type_batch[type_idx] = P_original[mask].mean(dim=0) 
-                valid_types_in_batch_mask[type_idx] = True
-        P_corr = P_type_batch[valid_types_in_batch_mask]  
-        batch_type_indices = torch.where(valid_types_in_batch_mask)[0]  
-        n_types_batch = P_corr.shape[0]
-        P_corr_rescaled = torch.zeros((n_types_batch, P_rescaled.shape[1]), device=P_rescaled.device)
-        if n_types_batch > 0:
-            temp_idx_map = {original_idx.item(): new_idx for new_idx, original_idx in enumerate(batch_type_indices)}
-            for i_orig_y, type_idx_tensor in enumerate(unique_y_batch): 
-                type_idx_item = type_idx_tensor.item()
-                if type_idx_item in temp_idx_map: 
-                    mask = (y == type_idx_tensor) 
-                    new_idx_for_P_corr_rescaled = temp_idx_map[type_idx_item]
-                    P_corr_rescaled[new_idx_for_P_corr_rescaled] = P_rescaled[mask].mean(dim=0)
-        raw_type_correlation_max_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        if (n_types_batch > 1) and (self.user_parameters['type_correlation_max_weight'] != 0): 
-            n_bits = P_corr.shape[1]
-            P_type_centered_types = P_corr - P_corr.mean(dim=1, keepdim=True)
-            P_type_std_types = P_type_centered_types.std(dim=1, keepdim=True).clamp(min=1e-6)
-            P_type_norm_types = P_type_centered_types / P_type_std_types  
-            correlation_matrix_types = P_type_norm_types @ P_type_norm_types.T / n_bits  
-            batch_off_diag_mask = torch.eye(n_types_batch, device=P_corr.device) == 0
-            batch_cooccurrence_mask = self.type_cooccurrence_mask[batch_type_indices][:, batch_type_indices]
-            final_corr_mask = batch_off_diag_mask & batch_cooccurrence_mask
-            relevant_corrs = correlation_matrix_types[final_corr_mask]
-            if relevant_corrs.numel() > 0:
-                current_stats['type_correlation_max' + suffix] = relevant_corrs.abs().max().item()
-                current_stats['type_correlation_min' + suffix] = relevant_corrs.min().item()
-                current_stats['type_correlation_mean' + suffix] = relevant_corrs.mean().item()
-                correlation_thresh = self.user_parameters['correlation_thresh']
-                off_diag_corr_types_loss = F.relu((relevant_corrs.abs() - correlation_thresh) / (correlation_thresh + 1e-8))
-                raw_type_correlation_max_loss = off_diag_corr_types_loss.max()
-                current_stats['type_correlation_max_loss' + suffix] = raw_type_correlation_max_loss.item() * self.user_parameters['type_correlation_max_weight']
-                if self.user_parameters['type_correlation_mean_weight'] != 0:  
-                    type_correlation_mean_loss_val = self.user_parameters['type_correlation_mean_weight'] * off_diag_corr_types_loss.mean()
-                    current_stats['type_correlation_mean_loss' + suffix] = type_correlation_mean_loss_val.item()
-                else:
-                    current_stats['type_correlation_mean_loss' + suffix] = 0.0
-            else:  
-                current_stats['type_correlation_max' + suffix] = np.nan
-                current_stats['type_correlation_min' + suffix] = np.nan
-                current_stats['type_correlation_mean' + suffix] = np.nan
-                current_stats['type_correlation_max_loss' + suffix] = 0.0
-                current_stats['type_correlation_mean_loss' + suffix] = 0.0
-        else:  
-            current_stats['type_correlation_max' + suffix] = np.nan
-            current_stats['type_correlation_min' + suffix] = np.nan
-            current_stats['type_correlation_mean' + suffix] = np.nan
-            current_stats['type_correlation_max_loss' + suffix] = 0.0
-            current_stats['type_correlation_mean_loss' + suffix] = 0.0
-        raw_losses['type_correlation_max'] = raw_type_correlation_max_loss
+            gene_constraint_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        raw_losses['gene_constraint'] = gene_constraint_loss
+        current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
-        hierarchical_scatter_value_stat = 0.0  
-        raw_hierarchical_scatter_loss = torch.tensor(0.0, device=P_original.device)  
-        P_for_scatter = P_original  
-        hierarchical_scatter_weight = self.user_parameters.get('hierarchical_scatter_weight', 0)
-        if hierarchical_scatter_weight != 0 and \
-           hasattr(self, 'y_parent_child_map') and self.y_parent_child_map and \
-           P_for_scatter.shape[0] > 1:  
-            unique_y_in_batch, y_counts_in_batch = torch.unique(y, return_counts=True)
-            map_batch_labels_to_counts = {label.item(): count.item() for label, count in zip(unique_y_in_batch, y_counts_in_batch)}
-            accumulated_weighted_squared_distances = []
-            for parent_idx, child_idx_list in self.y_parent_child_map.items():
-                if parent_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[parent_idx] >= 1:  
-                    parent_mask = (y == parent_idx)
-                    parent_centroid = P_for_scatter[parent_mask].mean(dim=0)
-                    for child_idx in child_idx_list:
-                        if child_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[child_idx] >= 1:  
-                            child_mask = (y == child_idx)
-                            child_centroid = P_for_scatter[child_mask].mean(dim=0)
-                            n_child_in_batch = map_batch_labels_to_counts[child_idx]
-                            squared_distance = ((child_centroid - parent_centroid)**2).sum()
-                            weighted_squared_distance = n_child_in_batch * squared_distance
-                            accumulated_weighted_squared_distances.append(weighted_squared_distance)
-            if accumulated_weighted_squared_distances:
-                hierarchical_scatter_value = torch.stack(accumulated_weighted_squared_distances).sum()
-                raw_hierarchical_scatter_loss = -hierarchical_scatter_value 
-                hierarchical_scatter_value_stat = hierarchical_scatter_value.item()
-                current_stats['hierarchical_scatter_loss' + suffix] = raw_hierarchical_scatter_loss.item() * hierarchical_scatter_weight
-            else:
-                current_stats['hierarchical_scatter_loss' + suffix] = 0.0
-        else:
-            current_stats['hierarchical_scatter_loss' + suffix] = 0.0
-        raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss 
-        current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
-
-        raw_intra_type_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        if self.user_parameters['intra_type_variance_weight'] != 0:
-            if n_types_batch > 0 and P_corr_rescaled.shape[1] > 0: 
-                variances_intra_type = torch.var(P_corr_rescaled, dim=1) 
-                raw_intra_type_variance_loss = -torch.mean(variances_intra_type) 
-                current_stats['intra_type_variance_loss' + suffix] = raw_intra_type_variance_loss.item() * self.user_parameters['intra_type_variance_weight']
-            else:
-                current_stats['intra_type_variance_loss' + suffix] = 0.0
-        else:
-            current_stats['intra_type_variance_loss' + suffix] = 0.0
-        raw_losses['intra_type_variance'] = raw_intra_type_variance_loss
-
-        raw_bit_iqr_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        if self.user_parameters['bit_iqr_variance_weight'] != 0:
-            if n_types_batch > 1 and P_corr_rescaled.shape[1] > 0: 
-                q1 = torch.quantile(P_corr_rescaled, 0.25, dim=0)
-                q3 = torch.quantile(P_corr_rescaled, 0.75, dim=0)
-                iqr_per_bit = q3 - q1
-                raw_bit_iqr_variance_loss = -torch.mean(iqr_per_bit) 
-                current_stats['bit_iqr_variance_loss' + suffix] = raw_bit_iqr_variance_loss.item() * self.user_parameters['bit_iqr_variance_weight']
-            else:
-                current_stats['bit_iqr_variance_loss' + suffix] = 0.0
-        else:
-            current_stats['bit_iqr_variance_loss' + suffix] = 0.0
-        raw_losses['bit_iqr_variance'] = raw_bit_iqr_variance_loss
+        # Future add a brightness loss term
         
-        raw_type_entropy_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        if self.user_parameters['type_entropy_weight'] != 0:
-            if n_types_batch > 0 and P_corr.shape[1] > 0: 
-                P_corr_positive = P_corr + 1e-12
-                P_type_norm_rows = P_corr_positive / (P_corr_positive.sum(dim=1, keepdim=True))
-                entropies_per_type = -torch.sum(P_type_norm_rows * torch.log(P_type_norm_rows + 1e-12), dim=1)
-                raw_type_entropy_loss = torch.mean(entropies_per_type) 
-                current_stats['type_entropy_loss' + suffix] = raw_type_entropy_loss.item() * self.user_parameters['type_entropy_weight']
-            else:
-                current_stats['type_entropy_loss' + suffix] = 0.0
-        else:
-            current_stats['type_entropy_loss' + suffix] = 0.0
-        raw_losses['type_entropy'] = raw_type_entropy_loss
+
+        # raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        # min_p_cv_val = np.nan  
+        # if self.user_parameters['pnorm_std_weight'] != 0 and P_rescaled.shape[0] > 1 and P_rescaled.shape[1] > 0: 
+        #     mean_per_bit = P_rescaled.mean(dim=0)
+        #     std_per_bit = P_rescaled.std(dim=0)  
+        #     epsilon = 1e-8 
+        #     cv_per_bit = std_per_bit / (mean_per_bit + epsilon)
+        #     min_p_cv_tensor = cv_per_bit.min()
+        #     min_p_cv_val = min_p_cv_tensor.item()
+        #     raw_p_std_loss = -min_p_cv_tensor 
+        #     current_stats['p_std_loss' + suffix] = raw_p_std_loss.item() * self.user_parameters['pnorm_std_weight']
+        # else:
+        #     current_stats['p_std_loss' + suffix] = 0.0
+        # raw_losses['p_std'] = raw_p_std_loss
+        # current_stats['p_std_min' + suffix] = min_p_cv_val 
+        
+        # P_type_batch = torch.zeros((self.n_categories, P_original.shape[1]), device=P_original.device)
+        # unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True)  
+        # valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P_original.device)
+        # for i, type_idx in enumerate(unique_y_batch):
+        #     if 0 <= type_idx.item() < self.n_categories:
+        #         mask = (y == type_idx)
+        #         P_type_batch[type_idx] = P_original[mask].mean(dim=0) 
+        #         valid_types_in_batch_mask[type_idx] = True
+        # P_corr = P_type_batch[valid_types_in_batch_mask]  
+        # batch_type_indices = torch.where(valid_types_in_batch_mask)[0]  
+        # n_types_batch = P_corr.shape[0]
+        # P_corr_rescaled = torch.zeros((n_types_batch, P_rescaled.shape[1]), device=P_rescaled.device)
+        # if n_types_batch > 0:
+        #     temp_idx_map = {original_idx.item(): new_idx for new_idx, original_idx in enumerate(batch_type_indices)}
+        #     for i_orig_y, type_idx_tensor in enumerate(unique_y_batch): 
+        #         type_idx_item = type_idx_tensor.item()
+        #         if type_idx_item in temp_idx_map: 
+        #             mask = (y == type_idx_tensor) 
+        #             new_idx_for_P_corr_rescaled = temp_idx_map[type_idx_item]
+        #             P_corr_rescaled[new_idx_for_P_corr_rescaled] = P_rescaled[mask].mean(dim=0)
+        # raw_type_correlation_max_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        # if (n_types_batch > 1) and (self.user_parameters['type_correlation_max_weight'] != 0): 
+        #     n_bits = P_corr.shape[1]
+        #     P_type_centered_types = P_corr - P_corr.mean(dim=1, keepdim=True)
+        #     P_type_std_types = P_type_centered_types.std(dim=1, keepdim=True).clamp(min=1e-6)
+        #     P_type_norm_types = P_type_centered_types / P_type_std_types  
+        #     correlation_matrix_types = P_type_norm_types @ P_type_norm_types.T / n_bits  
+        #     batch_off_diag_mask = torch.eye(n_types_batch, device=P_corr.device) == 0
+        #     batch_cooccurrence_mask = self.type_cooccurrence_mask[batch_type_indices][:, batch_type_indices]
+        #     final_corr_mask = batch_off_diag_mask & batch_cooccurrence_mask
+        #     relevant_corrs = correlation_matrix_types[final_corr_mask]
+        #     if relevant_corrs.numel() > 0:
+        #         current_stats['type_correlation_max' + suffix] = relevant_corrs.abs().max().item()
+        #         current_stats['type_correlation_min' + suffix] = relevant_corrs.min().item()
+        #         current_stats['type_correlation_mean' + suffix] = relevant_corrs.mean().item()
+        #         correlation_thresh = self.user_parameters['correlation_thresh']
+        #         off_diag_corr_types_loss = F.relu((relevant_corrs.abs() - correlation_thresh) / (correlation_thresh + 1e-8))
+        #         raw_type_correlation_max_loss = off_diag_corr_types_loss.max()
+        #         current_stats['type_correlation_max_loss' + suffix] = raw_type_correlation_max_loss.item() * self.user_parameters['type_correlation_max_weight']
+        #         if self.user_parameters['type_correlation_mean_weight'] != 0:  
+        #             type_correlation_mean_loss_val = self.user_parameters['type_correlation_mean_weight'] * off_diag_corr_types_loss.mean()
+        #             current_stats['type_correlation_mean_loss' + suffix] = type_correlation_mean_loss_val.item()
+        #         else:
+        #             current_stats['type_correlation_mean_loss' + suffix] = 0.0
+        #     else:  
+        #         current_stats['type_correlation_max' + suffix] = np.nan
+        #         current_stats['type_correlation_min' + suffix] = np.nan
+        #         current_stats['type_correlation_mean' + suffix] = np.nan
+        #         current_stats['type_correlation_max_loss' + suffix] = 0.0
+        #         current_stats['type_correlation_mean_loss' + suffix] = 0.0
+        # else:  
+        #     current_stats['type_correlation_max' + suffix] = np.nan
+        #     current_stats['type_correlation_min' + suffix] = np.nan
+        #     current_stats['type_correlation_mean' + suffix] = np.nan
+        #     current_stats['type_correlation_max_loss' + suffix] = 0.0
+        #     current_stats['type_correlation_mean_loss' + suffix] = 0.0
+        # raw_losses['type_correlation_max'] = raw_type_correlation_max_loss
+
+        # hierarchical_scatter_value_stat = 0.0  
+        # raw_hierarchical_scatter_loss = torch.tensor(0.0, device=P_original.device)  
+        # P_for_scatter = P_original  
+        # hierarchical_scatter_weight = self.user_parameters.get('hierarchical_scatter_weight', 0)
+        # if hierarchical_scatter_weight != 0 and \
+        #    hasattr(self, 'y_parent_child_map') and self.y_parent_child_map and \
+        #    P_for_scatter.shape[0] > 1:  
+        #     unique_y_in_batch, y_counts_in_batch = torch.unique(y, return_counts=True)
+        #     map_batch_labels_to_counts = {label.item(): count.item() for label, count in zip(unique_y_in_batch, y_counts_in_batch)}
+        #     accumulated_weighted_squared_distances = []
+        #     for parent_idx, child_idx_list in self.y_parent_child_map.items():
+        #         if parent_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[parent_idx] >= 1:  
+        #             parent_mask = (y == parent_idx)
+        #             parent_centroid = P_for_scatter[parent_mask].mean(dim=0)
+        #             for child_idx in child_idx_list:
+        #                 if child_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[child_idx] >= 1:  
+        #                     child_mask = (y == child_idx)
+        #                     child_centroid = P_for_scatter[child_mask].mean(dim=0)
+        #                     n_child_in_batch = map_batch_labels_to_counts[child_idx]
+        #                     squared_distance = ((child_centroid - parent_centroid)**2).sum()
+        #                     weighted_squared_distance = n_child_in_batch * squared_distance
+        #                     accumulated_weighted_squared_distances.append(weighted_squared_distance)
+        #     if accumulated_weighted_squared_distances:
+        #         hierarchical_scatter_value = torch.stack(accumulated_weighted_squared_distances).sum()
+        #         raw_hierarchical_scatter_loss = -hierarchical_scatter_value 
+        #         hierarchical_scatter_value_stat = hierarchical_scatter_value.item()
+        #         current_stats['hierarchical_scatter_loss' + suffix] = raw_hierarchical_scatter_loss.item() * hierarchical_scatter_weight
+        #     else:
+        #         current_stats['hierarchical_scatter_loss' + suffix] = 0.0
+        # else:
+        #     current_stats['hierarchical_scatter_loss' + suffix] = 0.0
+        # raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss 
+        # current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
+
+        # raw_intra_type_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        # if self.user_parameters['intra_type_variance_weight'] != 0:
+        #     if n_types_batch > 0 and P_corr_rescaled.shape[1] > 0: 
+        #         variances_intra_type = torch.var(P_corr_rescaled, dim=1) 
+        #         raw_intra_type_variance_loss = -torch.mean(variances_intra_type) 
+        #         current_stats['intra_type_variance_loss' + suffix] = raw_intra_type_variance_loss.item() * self.user_parameters['intra_type_variance_weight']
+        #     else:
+        #         current_stats['intra_type_variance_loss' + suffix] = 0.0
+        # else:
+        #     current_stats['intra_type_variance_loss' + suffix] = 0.0
+        # raw_losses['intra_type_variance'] = raw_intra_type_variance_loss
+
+        # raw_bit_iqr_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        # if self.user_parameters['bit_iqr_variance_weight'] != 0:
+        #     if n_types_batch > 1 and P_corr_rescaled.shape[1] > 0: 
+        #         q1 = torch.quantile(P_corr_rescaled, 0.25, dim=0)
+        #         q3 = torch.quantile(P_corr_rescaled, 0.75, dim=0)
+        #         iqr_per_bit = q3 - q1
+        #         raw_bit_iqr_variance_loss = -torch.mean(iqr_per_bit) 
+        #         current_stats['bit_iqr_variance_loss' + suffix] = raw_bit_iqr_variance_loss.item() * self.user_parameters['bit_iqr_variance_weight']
+        #     else:
+        #         current_stats['bit_iqr_variance_loss' + suffix] = 0.0
+        # else:
+        #     current_stats['bit_iqr_variance_loss' + suffix] = 0.0
+        # raw_losses['bit_iqr_variance'] = raw_bit_iqr_variance_loss
+        
+        # raw_type_entropy_loss = torch.tensor(0.0, device=self.user_parameters['device'])
+        # if self.user_parameters['type_entropy_weight'] != 0:
+        #     if n_types_batch > 0 and P_corr.shape[1] > 0: 
+        #         P_corr_positive = P_corr + 1e-12
+        #         P_type_norm_rows = P_corr_positive / (P_corr_positive.sum(dim=1, keepdim=True))
+        #         entropies_per_type = -torch.sum(P_type_norm_rows * torch.log(P_type_norm_rows + 1e-12), dim=1)
+        #         raw_type_entropy_loss = torch.mean(entropies_per_type) 
+        #         current_stats['type_entropy_loss' + suffix] = raw_type_entropy_loss.item() * self.user_parameters['type_entropy_weight']
+        #     else:
+        #         current_stats['type_entropy_loss' + suffix] = 0.0
+        # else:
+        #     current_stats['type_entropy_loss' + suffix] = 0.0
+        # raw_losses['type_entropy'] = raw_type_entropy_loss
         
         return raw_losses, current_stats
 
