@@ -1260,7 +1260,7 @@ class EncodingDesigner(nn.Module):
                         X_data_vis.cpu().numpy() @ self.E.cpu().numpy(), 
                         y_vis_str_labels, 
                         plot_path,
-                        sum_norm=True, 
+                        sum_norm=False, 
                         log=True
                         )
                     saved_plot_paths.append(plot_path) 
