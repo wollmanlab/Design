@@ -63,7 +63,7 @@ user_parameters = {
             'learning_rate': 0.05,
             'learning_rate_start': 0.1,
             'learning_rate_end': 0.01,
-            'report_freq': 1000,
+            'report_freq': 500,
             'type_correlation_mean_weight': 0.0, 
             'type_correlation_max_weight': 0.0, 
             'constant_noise': 3.0,
