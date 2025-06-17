@@ -563,13 +563,13 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['probe_weight']!=0:
             fold = (probe_count/self.user_parameters['total_n_probes']) - 1
             probe_weight_loss = self.user_parameters['probe_weight'] * (F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
-            raw_losses['probe_weight'] = probe_weight_loss
+            raw_losses['probe_weight_loss'] = probe_weight_loss
             current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
         # The model should accurately decode cell type labels
         if self.user_parameters['categorical_weight'] != 0:
             categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component
-            raw_losses['categorical'] = categorical_loss_component
+            raw_losses['categorical_loss'] = categorical_loss_component
             current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
 
         # The model should not use more probes than a gene can supply
@@ -593,7 +593,7 @@ class EncodingDesigner(nn.Module):
             target_sparsity = self.user_parameters['sparsity_target']
             difference = F.relu(target_sparsity - sparsity_ratio)
             sparsity_loss = self.user_parameters['sparsity_weight'] * difference
-            raw_losses['sparsity'] = sparsity_loss
+            raw_losses['sparsity_loss'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
 
