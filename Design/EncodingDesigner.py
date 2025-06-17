@@ -654,8 +654,7 @@ class EncodingDesigner(nn.Module):
                     self.eval()
                     with torch.no_grad():
                         total_test_loss, test_stats = self.calculate_loss(
-                            self.X_test, self.y_test, iteration, suffix='_test'
-                        )
+                            self.X_test, self.y_test, iteration, suffix='_test')
                         test_stats['total_loss_test'] = total_test_loss.item()
                         self.learning_stats[iteration].update(test_stats)
 
