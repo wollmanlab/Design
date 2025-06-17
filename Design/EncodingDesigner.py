@@ -652,27 +652,12 @@ class EncodingDesigner(nn.Module):
 
                 if is_report_iter:
                     self.eval()
-                    all_test_stats_list = [] 
-                    total_test_loss_items = []
                     with torch.no_grad():
-                        total_test_loss, test_stats_from_calc = self.calculate_loss(
+                        total_test_loss, test_stats = self.calculate_loss(
                             self.X_test, self.y_test, iteration, suffix='_test'
                         )
-                        test_stats_from_calc['total_loss_test'] = total_test_loss.item()
-                        all_test_stats_list.append(test_stats_from_calc)
-                        total_test_loss_items.append(total_test_loss.item())
-                    avg_test_stats = {}
-                    if all_test_stats_list:
-                        stat_keys = all_test_stats_list[0].keys()
-                        for key in stat_keys:
-                            values = [stats.get(key, np.nan) for stats in all_test_stats_list]
-                            valid_values = [v for v in values if not np.isnan(v)]
-                            avg_test_stats[key] = np.mean(valid_values) if valid_values else np.nan
-                    else:
-                        avg_test_stats = {}
-                    self.learning_stats[iteration].update(avg_test_stats)
-                    avg_test_loss_item = np.mean(total_test_loss_items) if total_test_loss_items else np.nan
-                    self.learning_stats[iteration]['total_loss_test_avg'] = avg_test_loss_item 
+                        test_stats['total_loss_test'] = total_test_loss.item()
+                        self.learning_stats[iteration].update(test_stats)
 
                     current_time = time.time()
                     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -694,8 +679,8 @@ class EncodingDesigner(nn.Module):
                         log_msg = f'{train_loss_key}: {round(self.learning_stats[iteration][train_loss_key], 4)}'
                         self.log.info(log_msg)
                         if self.user_parameters['Verbose'] == 1: print(log_msg)
-                    for name, item in avg_test_stats.items():
-                        log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
+                    for name, item in test_stats.items():
+                        log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int, np.number)) and not np.isnan(item) else item}'
                         self.log.info(log_msg)
                         if self.user_parameters['Verbose'] == 1: print(log_msg)
                     self.log.info('------------------')
@@ -744,7 +729,7 @@ class EncodingDesigner(nn.Module):
             self.log.info(log_prefix)
             if self.user_parameters['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
             for name, item in self.learning_stats[final_iter_key].items():
-                log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int)) and not np.isnan(item) else item}'
+                log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int, np.number)) and not np.isnan(item) else item}'
                 self.log.info(log_msg)
                 if self.user_parameters['Verbose'] == 1: print(log_msg)
             self.log.info('------------------')
@@ -908,7 +893,7 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['Verbose'] == 1:
             print("--- Evaluation Summary ---")
             for key, val in self.results.items():
-                print(f" {key}: {round(val, 4) if isinstance(val, (float, int)) and not np.isnan(val) else val}")
+                print(f" {key}: {round(val, 4) if isinstance(val, (float, int, np.number)) and not np.isnan(val) else val}")
             print("-------------------------------------------------")
 
     def visualize(self, show_plots=False): 
