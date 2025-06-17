@@ -545,6 +545,7 @@ class EncodingDesigner(nn.Module):
             bit_percentiles.append((p10.item(), p50.item(), p90.item()))
             bit_medians.append(p50.item())
         current_stats['lowest bit median brightness' + suffix] = f"{np.log10(min(bit_medians)):.2f}"
+        current_stats['highest bit median brightness' + suffix] = f"{np.log10(max(bit_medians)):.2f}"
         min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
         min_p10, min_p50, min_p90 = bit_percentiles[min_range_idx]
@@ -561,7 +562,6 @@ class EncodingDesigner(nn.Module):
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
         if self.user_parameters['probe_weight']!=0:
             fold = (probe_count/self.user_parameters['total_n_probes']) - 1
-            # Use leaky ReLU with a small negative slope for values below threshold
             probe_weight_loss = self.user_parameters['probe_weight'] * (F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
             raw_losses['probe_weight'] = probe_weight_loss
             current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
@@ -576,15 +576,13 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['gene_constraint_weight'] != 0:
             fold = (E.sum(dim=1) / self.constraints) - 1
             gene_constraint_loss = self.user_parameters['gene_constraint_weight']*F.relu(fold).mean()
-            # constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
-            # gene_constraint_loss = self.user_parameters['gene_constraint_weight']*torch.sqrt(constraint_violation.mean().clamp(min=0))
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
-        # Future add a brightness loss term
+        # The model should have a median brightness atleast to the target brightness
         if self.user_parameters['target_brightness_weight'] != 0:
-            difference = self.user_parameters['target_brightness_log'] - P_original.mean(0).min().clamp(min=1).log10()
-            brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(difference)
+            fold = P_original.mean(0).min().clamp(min=1).log10() / self.user_parameters['target_brightness_log']
+            brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
 
@@ -595,7 +593,6 @@ class EncodingDesigner(nn.Module):
             target_sparsity = self.user_parameters['sparsity_target']
             difference = F.relu(target_sparsity - sparsity_ratio)
             sparsity_loss = self.user_parameters['sparsity_weight'] * difference
-     
             raw_losses['sparsity'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
