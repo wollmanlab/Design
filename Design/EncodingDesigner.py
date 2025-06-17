@@ -231,7 +231,6 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"Symlinking complete. Created: {linked_count}, Skipped: {skipped_count}, Errors: {error_count}")
         self.E = None
         self.P = None
-        self.Pnormalized = None
         self.genes = None
         self.constraints = None
         self.encoder = None
@@ -406,13 +405,11 @@ class EncodingDesigner(nn.Module):
             return False
 
     def get_encoding_weights(self):
-        if self.encoder is None:
-            raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
+        if self.encoder is None: raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
         fractions = torch.sigmoid(self.encoder.weight)
         E = fractions * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
-            dropout_mask_E = (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
-            E = E * dropout_mask_E
+            E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
 
     def perturb_weights(self):
@@ -433,30 +430,23 @@ class EncodingDesigner(nn.Module):
     def project(self, X, E):
         if self.user_parameters['gene_fold_noise'] != 0:
             fold = self.user_parameters['gene_fold_noise']
-            gene_noise = torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
-            X = X * gene_noise
+            X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
         if self.user_parameters['gene_dropout_proportion'] != 0:
-            dropout_mask_X = (torch.rand_like(X) > self.user_parameters['gene_dropout_proportion']).float()
-            X = X * dropout_mask_X
+            X = X * (torch.rand_like(X) > self.user_parameters['gene_dropout_proportion']).float()
         P = X.mm(E)
         if self.user_parameters['constant_noise'] != 0:
-            noise = torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
-            P = torch.clip(P + noise, min=1.0)
-        Pnormalized = P.clamp(min=1).log10() - self.user_parameters['target_brightness_log']
+            P = P + torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
-            dropout_mask_P = (torch.rand_like(Pnormalized) > self.user_parameters['projection_dropout_proportion']).float()
-            Pnormalized_dropout = Pnormalized * dropout_mask_P
-        else:
-            Pnormalized_dropout = Pnormalized
-        return P, Pnormalized, Pnormalized_dropout
+            P = P * (torch.rand_like(P) > self.user_parameters['projection_dropout_proportion']).float()
+        Pnormalized = P.clamp(min=1).log10() - self.user_parameters['target_brightness_log']
+        return P, Pnormalized
 
-    def decode(self, Pnormalized_dropout, y):
+    def decode(self, Pnormalized, y):
         if self.decoder is None :
             raise RuntimeError("Decoder not initialized.")
         if not isinstance(self.decoder, nn.Module):
             raise ValueError("Invalid decoder module.")
-        decoder_input = Pnormalized_dropout 
-        R = self.decoder(decoder_input) 
+        R = self.decoder(Pnormalized) 
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
         if self.user_parameters['categorical_weight'] != 0:
@@ -468,8 +458,8 @@ class EncodingDesigner(nn.Module):
 
     def calculate_loss(self, X, y, iteration, suffix=''):
         E = self.get_encoding_weights()
-        P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) 
-        y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, y)
+        P_original, Pnormalized = self.project(X, E) 
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized, y)
         raw_losses = {}
         current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
@@ -816,7 +806,7 @@ class EncodingDesigner(nn.Module):
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
                 # Use the E_weights we already calculated above
-                P_global, _, _ = self.project(X_global_train, E_weights) 
+                P_global, _ = self.project(X_global_train, E_weights) 
                 P_global_cpu = P_global.cpu()
                 P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
                 unique_y_global = torch.unique(y_global_train)
@@ -862,21 +852,21 @@ class EncodingDesigner(nn.Module):
                 'constant_noise': 2.0,
                 'gene_fold_noise': 0.1,
                 'gene_dropout_proportion': 0.02,
-                'projection_dropout_proportion': 0.02,
+                'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.02
             },
             "Medium Noise": {
                 'constant_noise': 2.5,
                 'gene_fold_noise': 0.5,
                 'gene_dropout_proportion': 0.05,
-                'projection_dropout_proportion': 0.05,
+                'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.05
             },
             "High Noise": {
                 'constant_noise': 3.0,
                 'gene_fold_noise': 1.0,
                 'gene_dropout_proportion': 0.1,
-                'projection_dropout_proportion': 0.1,
+                'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.1
             }
         }
@@ -896,8 +886,8 @@ class EncodingDesigner(nn.Module):
                 with torch.no_grad():
                     # Use the existing pipeline: get_encoding_weights -> project -> decode
                     E_weights = self.get_encoding_weights()
-                    P_test, Pnormalized_test, Pnormalized_dropout_test = self.project(self.X_test, E_weights)
-                    y_pred_test, accuracy_test, _ = self.decode(Pnormalized_dropout_test, self.y_test)
+                    P_test, Pnormalized_test = self.project(self.X_test, E_weights)
+                    y_pred_test, accuracy_test, _ = self.decode(Pnormalized_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
@@ -951,7 +941,7 @@ class EncodingDesigner(nn.Module):
             return
 
         with torch.no_grad():
-            P_tensor_vis, _, _ = self.project(X_data_vis, final_E_device)
+            P_tensor_vis, _ = self.project(X_data_vis, final_E_device)
             P_np_vis = P_tensor_vis.cpu().numpy() 
 
             n_bits = P_tensor_vis.shape[1]
@@ -1069,8 +1059,8 @@ class EncodingDesigner(nn.Module):
                 fig_cm = None 
                 try:
                     with torch.no_grad():
-                        P_test_tensor, Pnorm_test_tensor, Pnorm_dropout_test_tensor = self.project(X_test_global, final_E_device)
-                        y_pred_test, _, _ = self.decode(Pnorm_dropout_test_tensor, y_test_global)
+                        P_test_tensor, Pnorm_test_tensor = self.project(X_test_global, final_E_device)
+                        y_pred_test, _, _ = self.decode(Pnorm_test_tensor, y_test_global)
 
                     y_true_np = y_test_global.cpu().numpy()
                     y_pred_np = y_pred_test.cpu().numpy()
