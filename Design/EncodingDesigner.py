@@ -640,7 +640,7 @@ class EncodingDesigner(nn.Module):
         # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
             fold = (E.sum(dim=1) / self.constraints) - 1
-            gene_constraint_loss = self.user_parameters['gene_constraint_weight']*F.relu(fold)
+            gene_constraint_loss = self.user_parameters['gene_constraint_weight']*F.relu(fold).mean()
             # constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
             # gene_constraint_loss = self.user_parameters['gene_constraint_weight']*torch.sqrt(constraint_violation.mean().clamp(min=0))
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
