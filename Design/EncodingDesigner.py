@@ -91,7 +91,7 @@ class EncodingDesigner(nn.Module):
             'convergence_threshold': float('inf'), # Added for early stopping when loss converges
             'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
             'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
-            'sparsity_weight': 0.1, # Weight for sparsity loss
+            'sparsity_weight': 1.0, # Weight for sparsity loss (increased from 0.1)
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -610,13 +610,22 @@ class EncodingDesigner(nn.Module):
 
         # Target sparsity loss to encourage specific percentage of zeros
         if self.user_parameters['sparsity_weight'] != 0:
-            # Calculate current sparsity ratio (weights < 0.1 considered "zero")
-            sparsity_ratio = (E < 0.1).float().mean()
+            # Use a much lower threshold for considering weights "zero" (0.01 instead of 0.1)
+            sparsity_threshold = 0.01
+            sparsity_ratio = (E < sparsity_threshold).float().mean()
             target_sparsity = self.user_parameters['sparsity_target']
-            sparsity_loss = self.user_parameters['sparsity_weight'] * F.mse_loss(sparsity_ratio, torch.tensor(target_sparsity, device=E.device))
+            
+            # Use a stronger loss function: L1 distance instead of MSE for better gradients
+            sparsity_loss = self.user_parameters['sparsity_weight'] * torch.abs(sparsity_ratio - target_sparsity)
+            
+            # Add additional penalty for weights that are not zero but are small (encourage true zeros)
+            small_weights_penalty = torch.mean(F.relu(sparsity_threshold - E) / sparsity_threshold)
+            sparsity_loss += self.user_parameters['sparsity_weight'] * 0.5 * small_weights_penalty
+            
             raw_losses['sparsity'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
+            current_stats['sparsity_threshold' + suffix] = sparsity_threshold
 
         # raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
         # min_p_cv_val = np.nan  

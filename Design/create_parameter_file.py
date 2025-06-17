@@ -86,7 +86,7 @@ user_parameters = {
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
             'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
-            'sparsity_weight': 0.1, # Weight for sparsity loss
+            'sparsity_weight': 1.0, # Weight for sparsity loss (increased from 0.1)
         }
 
 
@@ -95,7 +95,7 @@ parameter_variants = {
     'gene_fold_noise' : [0.0, 0.5],
     'l1_regularization_weight' : [0.001, 0],
     'sparsity_target' : [0.8, 0.9, 0.95],
-    'sparsity_weight' : [0.1, 0],
+    'sparsity_weight' : [1.0, 0],
 }
 
 # Generate all parameter combinations
