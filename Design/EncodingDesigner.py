@@ -555,7 +555,7 @@ class EncodingDesigner(nn.Module):
         current_stats['lowest_dynamic_range_bit' + suffix] = f"p10:{np.log10(min_p10):.2f}, p50:{np.log10(min_p50):.2f}, p90:{np.log10(min_p90):.2f}, fold:{min_fold_change:.2f}"
         current_stats['highest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max_p10):.2f}, p50:{np.log10(max_p50):.2f}, p90:{np.log10(max_p90):.2f}, fold:{max_fold_change:.2f}"
 
-        # The model should not use more probes than self.user_parameters['total_n_probes'] and below that it can use as few as it wants
+        # The model should not use more probes than self.user_parameters['total_n_probes']
         probe_count = E.sum()
         current_stats['total_n_probes' + suffix] = probe_count.item()
         current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
@@ -581,7 +581,7 @@ class EncodingDesigner(nn.Module):
 
         # The model should have a median brightness atleast to the target brightness
         if self.user_parameters['target_brightness_weight'] != 0:
-            fold = P_original.mean(0).min().clamp(min=1).log10() / self.user_parameters['target_brightness_log']
+            fold = self.user_parameters['target_brightness_log']/P_original.mean(0).min().clamp(min=1).log10()
             brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
