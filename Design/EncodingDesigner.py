@@ -89,7 +89,7 @@ class EncodingDesigner(nn.Module):
             'decoder_dropout_rate': 0.3,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'convergence_threshold': float('inf'), # Added for early stopping when loss converges
-            'l1_regularization_weight': 0.01, # L1 regularization to encourage sparsity
+            'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
             'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 0.1, # Weight for sparsity loss
         }
@@ -603,7 +603,8 @@ class EncodingDesigner(nn.Module):
 
         # L1 regularization to encourage sparsity
         if self.user_parameters['l1_regularization_weight'] != 0:
-            l1_loss = self.user_parameters['l1_regularization_weight'] * torch.norm(E, p=1)
+            # Normalize L1 loss by the number of elements to make it scale-invariant
+            l1_loss = self.user_parameters['l1_regularization_weight'] * torch.norm(E, p=1) / E.numel()
             raw_losses['l1_regularization'] = l1_loss
             current_stats['l1_regularization_loss' + suffix] = l1_loss.item()
 

@@ -82,9 +82,9 @@ user_parameters = {
             'decoder_hidden_layers': 0,
             'decoder_hidden_dim': 64,
             'decoder_dropout_rate': 0.3,
-            'convergence_threshold':0.0001,
+            'convergence_threshold':0,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
-            'l1_regularization_weight': 0.01, # L1 regularization to encourage sparsity
+            'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
             'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 0.1, # Weight for sparsity loss
         }
@@ -93,10 +93,9 @@ user_parameters = {
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
     'gene_fold_noise' : [0.0, 0.5],
-    'l1_regularization_weight' : [0.01, 0],
+    'l1_regularization_weight' : [0.001, 0],
     'sparsity_target' : [0.8, 0.9, 0.95],
     'sparsity_weight' : [0.1, 0],
-    'convergence_threshold' : [0,0.0001],
 }
 
 # Generate all parameter combinations
