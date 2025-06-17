@@ -158,9 +158,9 @@ class EncodingDesigner(nn.Module):
                 self.log.warning(f"Parameter '{key}' from file is not a default parameter. Adding it.")
                 self.user_parameters[key] = val 
 
-        if 'learning_rate_start' not in loaded_user_parameters:
-            self.user_parameters['learning_rate_start'] = self.user_parameters['learning_rate']
-            self.log.info(f"Using default learning_rate ({self.user_parameters['learning_rate']}) as learning_rate_start.")
+        for key, val in self.user_parameters.items():
+            if '_start' in key:
+                self.user_parameters[key.replace('_start', '')] = val
 
         input_dir = self.user_parameters['input']
         file_params_to_prefix = [
@@ -354,7 +354,7 @@ class EncodingDesigner(nn.Module):
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
             hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
             dropout_rate_decoder = self.user_parameters['decoder_dropout_rate']
-            
+
             decoder_modules = []
             current_decoder_layer_input_dim = self.user_parameters['n_bit']
 
