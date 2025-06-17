@@ -157,15 +157,13 @@ class EncodingDesigner(nn.Module):
             else:
                 self.log.warning(f"Parameter '{key}' from file is not a default parameter. Adding it.")
                 self.user_parameters[key] = val 
-
-        # Handle _start parameters by creating non-suffixed versions
-        # Create a copy of keys to avoid modifying during iteration
-        start_params = {key: val for key, val in self.user_parameters.items() if '_start' in key}
-        for key, val in start_params.items():
-            base_key = key.replace('_start', '')
-            if base_key not in self.user_parameters:
-                self.user_parameters[base_key] = val
-                self.log.info(f"Created parameter '{base_key}' from '{key}' with value {val}")
+            if '_start' in key:
+                new_key = key.replace('_start', '')
+                if new_key not in self.user_parameters:
+                    self.user_parameters[new_key] = val
+                    self.log.info(f"Created parameter '{new_key}' from '{key}' with value {val}")
+                else:
+                    self.log.info(f"Parameter '{new_key}' already exists. Skipping creation.")
 
         input_dir = self.user_parameters['input']
         file_params_to_prefix = [
@@ -652,31 +650,9 @@ class EncodingDesigner(nn.Module):
                 progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
                 
                 # Update user_parameters with current iteration's values
-                self.user_parameters['weight_dropout_proportion'] = (
-                    self.user_parameters['weight_dropout_proportion_start'] + 
-                    (self.user_parameters['weight_dropout_proportion_end'] - self.user_parameters['weight_dropout_proportion_start']) * progress
-                )
-                self.user_parameters['projection_dropout_proportion'] = (
-                    self.user_parameters['projection_dropout_proportion_start'] + 
-                    (self.user_parameters['projection_dropout_proportion_end'] - self.user_parameters['projection_dropout_proportion_start']) * progress
-                )
-                self.user_parameters['gene_dropout_proportion'] = (
-                    self.user_parameters['gene_dropout_proportion_start'] + 
-                    (self.user_parameters['gene_dropout_proportion_end'] - self.user_parameters['gene_dropout_proportion_start']) * progress
-                )
-                self.user_parameters['constant_noise'] = (
-                    self.user_parameters['constant_noise_start'] + 
-                    (self.user_parameters['constant_noise_end'] - self.user_parameters['constant_noise_start']) * progress
-                )
-                self.user_parameters['gene_fold_noise'] = (
-                    self.user_parameters['gene_fold_noise_start'] + 
-                    (self.user_parameters['gene_fold_noise_end'] - self.user_parameters['gene_fold_noise_start']) * progress
-                )
-                self.user_parameters['decoder_dropout_rate'] = (
-                    self.user_parameters['decoder_dropout_rate_start'] + 
-                    (self.user_parameters['decoder_dropout_rate_end'] - self.user_parameters['decoder_dropout_rate_start']) * progress
-                )
-                
+                parameters_to_update = [i.replace('_start', '') for i in self.user_parameters if '_start' in i]
+                for param in parameters_to_update:
+                    self.user_parameters[param] = (self.user_parameters[f'{param}_start'] + (self.user_parameters[f'{param}_end'] - self.user_parameters[f'{param}_start']) * progress)
                 self.learning_stats[iteration] = {}
 
                 if iteration == 0:
