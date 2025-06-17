@@ -118,6 +118,8 @@ class EncodingDesigner(nn.Module):
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
+        delayed_perturbation_iter = None  # Track if we need to do a delayed perturbation
+        start_time = time.time()
 
         loaded_user_parameters = {}
         if user_parameters_path is not None:
@@ -543,6 +545,7 @@ class EncodingDesigner(nn.Module):
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
+        delayed_perturbation_iter = None  # Track if we need to do a delayed perturbation
         start_time = time.time()
         current_device = self.user_parameters['device']
         last_report_time = start_time
@@ -609,7 +612,14 @@ class EncodingDesigner(nn.Module):
                     # --- WEIGHT PERTURBATION ---
                     if self.user_parameters['perturbation_frequency'] > 0:
                         if iteration % self.user_parameters['perturbation_frequency'] == 0:
-                            self.perturb_weights()
+                            # Check if we're within 50 iterations of the next test
+                            next_test_iter = ((iteration // report_freq) + 1) * report_freq
+                            if next_test_iter - iteration <= 50:
+                                # Delay perturbation until after the test
+                                self.log.info(f"Delaying weight perturbation from iteration {iteration} to after test at iteration {next_test_iter}")
+                                delayed_perturbation_iter = next_test_iter
+                            else:
+                                self.perturb_weights()
                     current_loss_item = total_loss.item()
                     
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
@@ -683,6 +693,12 @@ class EncodingDesigner(nn.Module):
                         self.log.info(log_msg)
                         if self.user_parameters['Verbose'] == 1: print(log_msg)
                     self.log.info('------------------')
+
+                # Perform delayed perturbation if needed
+                if delayed_perturbation_iter == iteration:
+                    self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
+                    self.perturb_weights()
+                    delayed_perturbation_iter = None
 
                 if iteration > 20:
                     keys_to_delete = sorted([k for k in self.saved_models if k < iteration - 20 and k != 0 and k != self.best_iteration])

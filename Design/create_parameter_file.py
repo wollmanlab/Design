@@ -57,7 +57,7 @@ user_parameters = {
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'learning_rate_start': 0.05, 
             'learning_rate_end': 0.005, 
-            'report_freq': 250,
+            'report_freq': 100,
             'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 0.0, # Weight for sparsity loss (increased from 0.1)
             'categorical_weight': 1.0,
@@ -92,7 +92,7 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0,500]
+    'perturbation_frequency':[0,1000]
 }
 
 # Generate all parameter combinations
