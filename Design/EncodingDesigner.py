@@ -89,6 +89,9 @@ class EncodingDesigner(nn.Module):
             'decoder_dropout_rate': 0.3,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'convergence_threshold': float('inf'), # Added for early stopping when loss converges
+            'l1_regularization_weight': 0.01, # L1 regularization to encourage sparsity
+            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
+            'sparsity_weight': 0.1, # Weight for sparsity loss
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -598,6 +601,21 @@ class EncodingDesigner(nn.Module):
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
 
+        # L1 regularization to encourage sparsity
+        if self.user_parameters['l1_regularization_weight'] != 0:
+            l1_loss = self.user_parameters['l1_regularization_weight'] * torch.norm(E, p=1)
+            raw_losses['l1_regularization'] = l1_loss
+            current_stats['l1_regularization_loss' + suffix] = l1_loss.item()
+
+        # Target sparsity loss to encourage specific percentage of zeros
+        if self.user_parameters['sparsity_weight'] != 0:
+            # Calculate current sparsity ratio (weights < 0.1 considered "zero")
+            sparsity_ratio = (E < 0.1).float().mean()
+            target_sparsity = self.user_parameters['sparsity_target']
+            sparsity_loss = self.user_parameters['sparsity_weight'] * F.mse_loss(sparsity_ratio, torch.tensor(target_sparsity, device=E.device))
+            raw_losses['sparsity'] = sparsity_loss
+            current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
+            current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
 
         # raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
         # min_p_cv_val = np.nan  
@@ -770,7 +788,7 @@ class EncodingDesigner(nn.Module):
         # --- CONVERGENCE TRACKING VARIABLES ---
         recent_losses = []  # Store recent loss values for sliding average
         convergence_window = 10  # Number of iterations for each sliding average
-        convergence_threshold_pct = self.user_parameters['convergence_threshold']
+        convergence_threshold = self.user_parameters['convergence_threshold']
         # --- END CONVERGENCE TRACKING VARIABLES ---
 
         lr_start = self.user_parameters['learning_rate_start']
@@ -853,7 +871,7 @@ class EncodingDesigner(nn.Module):
                             recent_losses = recent_losses[-2*convergence_window-5:]
                         
                         # Only check convergence after we have enough data points
-                        if len(recent_losses) >= 2 * convergence_window:
+                        if (len(recent_losses) >= 2 * convergence_window) & convergence_threshold>0:
                             # Calculate sliding averages
                             recent_avg = np.mean(recent_losses[-convergence_window:])  # Last 10 iterations
                             older_avg = np.mean(recent_losses[-2*convergence_window:-convergence_window])  # 10th to 20th to last
@@ -866,16 +884,16 @@ class EncodingDesigner(nn.Module):
                                 if iteration % 100 == 0 and self.user_parameters.get('Verbose', 0) == 1:
                                     print(f"Iter {iteration}: Recent avg: {recent_avg:.6f}, Older avg: {older_avg:.6f}, Rel diff: {relative_diff*100:.4f}%")
                                 
-                                if relative_diff <= convergence_threshold_pct:
+                                if relative_diff <= convergence_threshold:
                                     self.log.info(f"*** Training converged at iteration {iteration} ***")
                                     self.log.info(f"Recent avg (last {convergence_window}): {recent_avg:.6f}")
                                     self.log.info(f"Older avg (10-20th to last): {older_avg:.6f}")
-                                    self.log.info(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold_pct*100:.4f}%")
+                                    self.log.info(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold*100:.4f}%")
                                     if self.user_parameters['Verbose'] == 1:
                                         print(f"*** Training converged at iteration {iteration} ***")
                                         print(f"Recent avg (last {convergence_window}): {recent_avg:.6f}")
                                         print(f"Older avg (10-20th to last): {older_avg:.6f}")
-                                        print(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold_pct*100:.4f}%")
+                                        print(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold*100:.4f}%")
                                     break
                     # --- END SLIDING AVERAGE CONVERGENCE CHECK ---
                     

@@ -51,7 +51,7 @@ user_parameters = {
             'n_bit': 24,
             'n_iterations': 10000, # any more than  100k will take more than 6 hours
             'total_n_probes': 30e4,
-            'probe_weight': 1.0,
+            'probe_weight': 10.0,
             'probe_under_weight_factor': 0.1,
             'weight_dropout_proportion': 0.1,
             'projection_dropout_proportion': 0.1,
@@ -63,7 +63,7 @@ user_parameters = {
             'learning_rate': 0.05,
             'learning_rate_start': 0.1,
             'learning_rate_end': 0.01,
-            'report_freq': 500,
+            'report_freq': 100,
             'type_correlation_mean_weight': 0.0, 
             'type_correlation_max_weight': 0.0, 
             'constant_noise': 3.0,
@@ -82,13 +82,21 @@ user_parameters = {
             'decoder_hidden_layers': 0,
             'decoder_hidden_dim': 64,
             'decoder_dropout_rate': 0.3,
-            'convergence_threshold':0.001
+            'convergence_threshold':0.0001,
+            'gradient_clip_max_norm': 1.0, # Added for gradient clipping
+            'l1_regularization_weight': 0.01, # L1 regularization to encourage sparsity
+            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
+            'sparsity_weight': 0.1, # Weight for sparsity loss
         }
 
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'learning_rate_start' : [0.1],
+    'gene_fold_noise' : [0.0, 0.5],
+    'probe_weight' : [1.0, 5.0, 10.0],
+    'l1_regularization_weight' : [0.01, 0],
+    'sparsity_target' : [0.8, 0.9, 0],
+    'convergence_threshold' : [0,0.0001],
 }
 
 # Generate all parameter combinations
