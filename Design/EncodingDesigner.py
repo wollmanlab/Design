@@ -92,6 +92,8 @@ class EncodingDesigner(nn.Module):
             'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
             'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 1.0, # Weight for sparsity loss (increased from 0.1)
+            'perturbation_frequency': 1000, # How often to perturb weights (every N iterations)
+            'perturbation_percentage': 0.05, # Percentage of weights to perturb (0.0-1.0)
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -255,7 +257,6 @@ class EncodingDesigner(nn.Module):
                 error_count += 1
         self.log.info(f"Symlinking complete. Created: {linked_count}, Skipped: {skipped_count}, Errors: {error_count}")
 
-        self.E_scaling_constant = None
         self.E = None
         self.P = None
         self.Pnormalized = None
@@ -277,7 +278,7 @@ class EncodingDesigner(nn.Module):
         self.y_reverse_label_map = None
         self.y_unique_labels = None
         self.y_parent_child_map = None 
-        self.y_child_to_parent_map = None 
+        self.y_child_to_parent_map = None
 
     def _convert_param_to_int(self, param_key):
         try:
@@ -357,7 +358,18 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
             # --- Initialize Model Components Structurally (ONCE) ---
+            # Initialize encoder with proper scaling
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
+            
+            # Initialize encoder weights for sigmoid-based fractions
+            with torch.no_grad():
+                # Initialize to larger random values for sigmoid
+                # This gives sigmoid values roughly in [0.1, 0.9] range
+                self.encoder.weight.data = torch.randn_like(self.encoder.weight.data) * 2.0
+                
+                self.log.info(f"Initialized encoder weights for sigmoid-based fractions")
+                self.log.info(f"Initial sigmoid range: {torch.sigmoid(self.encoder.weight).min().item():.3f} to {torch.sigmoid(self.encoder.weight).max().item():.3f}")
+
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
             hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
@@ -479,15 +491,52 @@ class EncodingDesigner(nn.Module):
     def get_encoding_weights(self):
         if self.encoder is None:
             raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
-        # E = F.softplus(self.encoder.weight) # never lets things get to 0
-        E = F.relu(self.encoder.weight)
-        if self.E_scaling_constant is None:
-            self.E_scaling_constant = (self.user_parameters['total_n_probes'] / E.sum().clamp(min=1e-8)).detach()
-        E = E * self.E_scaling_constant
+        
+        # Get fractions (0 to 1) using sigmoid
+        fractions = torch.sigmoid(self.encoder.weight)
+        
+        # Convert to actual probe counts using gene constraints
+        E = fractions * self.constraints.unsqueeze(1)
+        
+        # Apply dropout if training - set percentage of E values to 0
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             dropout_mask_E = (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
             E = E * dropout_mask_E
+        
         return E
+
+    def perturb_weights(self):
+        """
+        Randomly perturb encoder weights to random fractions (0 to 1).
+        """
+        with torch.no_grad():
+            # Get current weights
+            current_weights = self.encoder.weight.data.clone()
+            
+            # Calculate number of weights to perturb
+            total_weights = current_weights.numel()
+            num_to_perturb = int(total_weights * self.user_parameters['perturbation_percentage'])
+            
+            # Randomly select weights to perturb
+            flat_indices = torch.randperm(total_weights)[:num_to_perturb]
+            row_indices = flat_indices // current_weights.shape[1]
+            col_indices = flat_indices % current_weights.shape[1]
+            
+            # Generate random fractions (0 to 1) and convert to sigmoid input values
+            random_fractions = torch.rand(num_to_perturb)
+            # Use inverse sigmoid (logit) to get the raw weight values
+            perturbation_values = torch.logit(random_fractions.clamp(min=1e-7, max=1-1e-7))
+            
+            # Apply the perturbation
+            current_weights[row_indices, col_indices] = perturbation_values
+            self.encoder.weight.data = current_weights
+            
+            if self.user_parameters.get('Verbose', 0) == 1:
+                print(f"Perturbed {num_to_perturb} weights ({self.user_parameters['perturbation_percentage']*100:.1f}%) "
+                      f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
+            
+            self.log.info(f"Perturbed {num_to_perturb} weights ({self.user_parameters['perturbation_percentage']*100:.1f}%) "
+                         f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
 
     def project(self, X, E):
         if self.user_parameters['gene_fold_noise'] != 0:
@@ -590,8 +639,10 @@ class EncodingDesigner(nn.Module):
 
         # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
-            constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
-            gene_constraint_loss = self.user_parameters['gene_constraint_weight']*torch.sqrt(constraint_violation.mean().clamp(min=0))
+            fold = (E.sum(dim=1) / self.constraints) - 1
+            gene_constraint_loss = self.user_parameters['gene_constraint_weight']*F.relu(fold)
+            # constraint_violation = F.relu(E.sum(dim=1) - self.constraints)
+            # gene_constraint_loss = self.user_parameters['gene_constraint_weight']*torch.sqrt(constraint_violation.mean().clamp(min=0))
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
@@ -779,8 +830,7 @@ class EncodingDesigner(nn.Module):
         self.best_iteration = -1
         start_time = time.time()
         current_device = self.user_parameters['device']
-        self.E_scaling_constant = None 
-        n_categories = self.n_categories 
+        n_categories = self.n_categories
 
         # --- CONVERGENCE TRACKING VARIABLES ---
         recent_losses = []  # Store recent loss values for sliding average
@@ -857,7 +907,14 @@ class EncodingDesigner(nn.Module):
                         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
                     # --- END GRADIENT CLIPPING ---
                     self.optimizer_gen.step()  
-                    current_loss_item = total_loss.item()  
+                    
+                    # --- WEIGHT PERTURBATION ---
+                    if self.user_parameters['perturbation_frequency'] > 0:
+                        if iteration % self.user_parameters['perturbation_frequency'] == 0:
+                            self.perturb_weights()
+                    # --- END WEIGHT PERTURBATION ---
+                    
+                    current_loss_item = total_loss.item()
                     
                     # --- SLIDING AVERAGE CONVERGENCE CHECK ---
                     if not np.isnan(current_loss_item):
