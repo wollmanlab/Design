@@ -158,9 +158,14 @@ class EncodingDesigner(nn.Module):
                 self.log.warning(f"Parameter '{key}' from file is not a default parameter. Adding it.")
                 self.user_parameters[key] = val 
 
-        for key, val in self.user_parameters.items():
-            if '_start' in key:
-                self.user_parameters[key.replace('_start', '')] = val
+        # Handle _start parameters by creating non-suffixed versions
+        # Create a copy of keys to avoid modifying during iteration
+        start_params = {key: val for key, val in self.user_parameters.items() if '_start' in key}
+        for key, val in start_params.items():
+            base_key = key.replace('_start', '')
+            if base_key not in self.user_parameters:
+                self.user_parameters[base_key] = val
+                self.log.info(f"Created parameter '{base_key}' from '{key}' with value {val}")
 
         input_dir = self.user_parameters['input']
         file_params_to_prefix = [
