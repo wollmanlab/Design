@@ -871,7 +871,7 @@ class EncodingDesigner(nn.Module):
                             recent_losses = recent_losses[-2*convergence_window-5:]
                         
                         # Only check convergence after we have enough data points
-                        if (len(recent_losses) >= 2 * convergence_window) & convergence_threshold>0:
+                        if (len(recent_losses) >= 2 * convergence_window) and (convergence_threshold > 0):
                             # Calculate sliding averages
                             recent_avg = np.mean(recent_losses[-convergence_window:])  # Last 10 iterations
                             older_avg = np.mean(recent_losses[-2*convergence_window:-convergence_window])  # 10th to 20th to last
