@@ -479,7 +479,8 @@ class EncodingDesigner(nn.Module):
     def get_encoding_weights(self):
         if self.encoder is None:
             raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
-        E = F.softplus(self.encoder.weight)
+        # E = F.softplus(self.encoder.weight) # never lets things get to 0
+        E = F.relu(self.encoder.weight)
         if self.E_scaling_constant is None:
             self.E_scaling_constant = (self.user_parameters['total_n_probes'] / E.sum().clamp(min=1e-8)).detach()
         E = E * self.E_scaling_constant
@@ -601,31 +602,17 @@ class EncodingDesigner(nn.Module):
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
 
-        # L1 regularization to encourage sparsity
-        if self.user_parameters['l1_regularization_weight'] != 0:
-            # Normalize L1 loss by the number of elements to make it scale-invariant
-            l1_loss = self.user_parameters['l1_regularization_weight'] * torch.norm(E, p=1) / E.numel()
-            raw_losses['l1_regularization'] = l1_loss
-            current_stats['l1_regularization_loss' + suffix] = l1_loss.item()
-
         # Target sparsity loss to encourage specific percentage of zeros
         if self.user_parameters['sparsity_weight'] != 0:
-            # Use a much lower threshold for considering weights "zero" (0.01 instead of 0.1)
             sparsity_threshold = 0.01
             sparsity_ratio = (E < sparsity_threshold).float().mean()
             target_sparsity = self.user_parameters['sparsity_target']
-            
-            # Use a stronger loss function: L1 distance instead of MSE for better gradients
-            sparsity_loss = self.user_parameters['sparsity_weight'] * torch.abs(sparsity_ratio - target_sparsity)
-            
-            # Add additional penalty for weights that are not zero but are small (encourage true zeros)
-            small_weights_penalty = torch.mean(F.relu(sparsity_threshold - E) / sparsity_threshold)
-            sparsity_loss += self.user_parameters['sparsity_weight'] * 0.5 * small_weights_penalty
-            
+            difference = F.relu(target_sparsity - sparsity_ratio)
+            sparsity_loss = self.user_parameters['sparsity_weight'] * difference
+     
             raw_losses['sparsity'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
-            current_stats['sparsity_threshold' + suffix] = sparsity_threshold
 
         # raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
         # min_p_cv_val = np.nan  

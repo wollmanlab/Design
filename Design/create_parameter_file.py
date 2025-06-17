@@ -67,7 +67,7 @@ user_parameters = {
             'type_correlation_mean_weight': 0.0, 
             'type_correlation_max_weight': 0.0, 
             'constant_noise': 3.0,
-            'gene_fold_noise': 0.5,
+            'gene_fold_noise': 0,
             'categorical_weight': 2.0, 
             'batch_size': 2500,
             'correlation_thresh': 0.9,
@@ -84,18 +84,14 @@ user_parameters = {
             'decoder_dropout_rate': 0.3,
             'convergence_threshold':0,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
-            'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
-            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
+            'sparsity_target': 0.95, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 1.0, # Weight for sparsity loss (increased from 0.1)
         }
 
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'gene_fold_noise' : [0.0, 0.5],
-    'l1_regularization_weight' : [0.001, 0],
-    'sparsity_target' : [0.8, 0.9, 0.95],
-    'sparsity_weight' : [1.0, 0],
+    'sparsity_weight' : [10.0, 0],
 }
 
 # Generate all parameter combinations
