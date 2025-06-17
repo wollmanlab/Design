@@ -43,66 +43,53 @@ os.makedirs(os.path.join(base_dir, 'params_files_scanned'), exist_ok=True)
 os.makedirs(os.path.join(base_dir, 'design_results'), exist_ok=True)
 os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 
-# Default parameter values
 user_parameters = {
-            'device': 'cpu',
-            'Verbose': 1,
             'n_cpu': 12,
             'n_bit': 24,
-            'n_iterations': 10000, # any more than  100k will take more than 6 hours
+            'n_iterations': 10000,
+            'batch_size': 1000,
+            'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
             'probe_weight': 1.0,
             'probe_under_weight_factor': 0.1,
-            'weight_dropout_proportion': 0.1,
-            'weight_dropout_proportion_start': 0.1,
-            'weight_dropout_proportion_end': 0.0,
-            'projection_dropout_proportion': 0.1,
-            'projection_dropout_proportion_start': 0.1,
-            'projection_dropout_proportion_end': 0.0,
-            'gene_dropout_proportion':0.1,
-            'gene_dropout_proportion_start': 0.1,
-            'gene_dropout_proportion_end': 0.0,
             'gene_constraint_weight': 1.0,
-            'target_brightness_log': 4.5,
             'target_brightness_weight':1.0,
-            'tanh_slope_factor': 1.0, # Default slope factor
-            'learning_rate': 0.05,
-            'learning_rate_start': 0.1,
-            'learning_rate_end': 0.01,
-            'report_freq': 100,
-            'type_correlation_mean_weight': 0.0, 
-            'type_correlation_max_weight': 0.0, 
-            'constant_noise': 3.0,
-            'constant_noise_start': 3.0,
-            'constant_noise_end': 1.0,
-            'gene_fold_noise': 0,
-            'gene_fold_noise_start': 0,
-            'gene_fold_noise_end': 0,
-            'categorical_weight': 2.0, 
-            'batch_size': 2500,
-            'correlation_thresh': 0.9,
-            'pnorm_std_weight': 0, 
-            'hierarchical_scatter_weight': 0.0,
-            'y_hierarchy_file_path': 'child_parent_relationships.csv',  # Path to the file defining cell type hierarchy
-            'output': '/u/project/rwollman/rwollman/atlas_design/design_results', # Example, will be overridden per job
-            'input':input_dir,
-            'intra_type_variance_weight': 0.0,
-            'bit_iqr_variance_weight': 0,
-            'type_entropy_weight': 0.0,
-            'decoder_hidden_layers': 0,
-            'decoder_hidden_dim': 64,
-            'decoder_dropout_rate': 0.3,
-            'decoder_dropout_rate_start': 0.3,
-            'decoder_dropout_rate_end': 0.1,
-            'convergence_threshold':0,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
-            'sparsity_target': 0.95, # Target sparsity ratio (80% zeros)
-            'sparsity_weight': 0, # Weight for sparsity loss (increased from 0.1)
-            'perturbation_frequency': 1000, # How often to perturb weights (every N iterations)
-            'perturbation_percentage': 0.05, # Percentage of weights to perturb (0.0-1.0)
+            'learning_rate_start': 0.05, 
+            'learning_rate_end': 0.005, 
+            'report_freq': 250,
+            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
+            'sparsity_weight': 0.0, # Weight for sparsity loss (increased from 0.1)
+            'categorical_weight': 1.0,
+            'weight_dropout_proportion_start': 0.0,
+            'weight_dropout_proportion_end': 0.1,
+            'projection_dropout_proportion_start': 0.0,
+            'projection_dropout_proportion_end': 0.1,
+            'gene_dropout_proportion_start': 0.0,
+            'gene_dropout_proportion_end': 0.1,
+            'decoder_dropout_rate_start': 0.1,
+            'decoder_dropout_rate_end': 0.0,
+            'constant_noise_start': 1.0,
+            'constant_noise_end': 3.0,
+            'gene_fold_noise_start': 0.0,
+            'gene_fold_noise_end': 0.5,
+            'perturbation_frequency': 500, # How often to perturb weights (every N iterations)
+            'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
+            'device': 'cpu',
+            'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
+            'input': './', 
+            'Verbose': 1,
+            'decoder_hidden_layers': 0,
+            'decoder_hidden_dim': 128,
+            'constraints': 'constraints.csv', 
+            'X_test': 'X_test.pt',            
+            'y_test': 'y_test.pt',            
+            'X_train': 'X_train.pt',          
+            'y_train': 'y_train.pt',          
+            'y_label_converter_path': 'categorical_converter.csv', 
         }
 
-
+user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
     'perturbation_frequency':[0,500]
