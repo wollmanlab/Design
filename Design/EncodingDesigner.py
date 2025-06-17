@@ -31,81 +31,51 @@ except ImportError:
 class EncodingDesigner(nn.Module):
     def __init__(self, user_parameters_path=None):
         super().__init__() 
-        self.loss_component_names = [
-            'probe_weight',
-            'categorical',
-            'gene_constraint',
-            'p_std', 
-            'type_correlation_max', 
-            'hierarchical_scatter', 
-            'intra_type_variance', 
-            'bit_iqr_variance', 
-            'type_entropy', 
-        ]
 
         self.user_parameters = {
-            'device': 'cpu',
-            'Verbose': 1,
-            'n_cpu': 30,
-            'n_bit': 25,
-            'n_iterations': 5000,
-            'total_n_probes': 30e4,
-            'probe_weight': 1,
-            'probe_under_weight_factor': 0.05, 
-            'weight_dropout_proportion': 0.1,
-            'weight_dropout_proportion_start': 0.1,
-            'weight_dropout_proportion_end': 0.0,
-            'projection_dropout_proportion': 0.1,
-            'projection_dropout_proportion_start': 0.1,
-            'projection_dropout_proportion_end': 0.0,
-            'gene_dropout_proportion':0.1,
-            'gene_dropout_proportion_start': 0.1,
-            'gene_dropout_proportion_end': 0.0,
-            'gene_constraint_weight': 1,
+            'n_cpu': 12,
+            'n_bit': 24,
+            'n_iterations': 10000,
+            'batch_size': 1000,
             'target_brightness_log': 4.5,
+            'total_n_probes': 30e4,
+            'probe_weight': 1.0,
+            'probe_under_weight_factor': 0.1,
+            'gene_constraint_weight': 1.0,
             'target_brightness_weight':1.0,
-            'learning_rate': 0.05, 
+            'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'learning_rate_start': 0.05, 
             'learning_rate_end': 0.005, 
             'report_freq': 250,
-            'type_correlation_mean_weight': 0,
-            'type_correlation_max_weight': 1,
-            'constant_noise': 3.0,
-            'constant_noise_start': 3.0,
-            'constant_noise_end': 1.0,
-            'gene_fold_noise':0.0,
+            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
+            'sparsity_weight': 0.0, # Weight for sparsity loss (increased from 0.1)
+            'categorical_weight': 1.0,
+            'weight_dropout_proportion_start': 0.0,
+            'weight_dropout_proportion_end': 0.1,
+            'projection_dropout_proportion_start': 0.0,
+            'projection_dropout_proportion_end': 0.1,
+            'gene_dropout_proportion_start': 0.0,
+            'gene_dropout_proportion_end': 0.1,
+            'decoder_dropout_rate_start': 0.1,
+            'decoder_dropout_rate_end': 0.0,
+            'constant_noise_start': 1.0,
+            'constant_noise_end': 3.0,
             'gene_fold_noise_start': 0.0,
-            'gene_fold_noise_end': 0.0,
-            'categorical_weight': 1,
-            'batch_size': 1000,
-            'pnorm_std_weight': 0.1, 
-            'correlation_thresh': 0.75,
-            'output': './',
+            'gene_fold_noise_end': 0.5,
+            'perturbation_frequency': 500, # How often to perturb weights (every N iterations)
+            'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
+            'device': 'cpu',
+            'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
             'input': './', 
+            'Verbose': 1,
+            'decoder_hidden_layers': 0,
+            'decoder_hidden_dim': 128,
             'constraints': 'constraints.csv', 
             'X_test': 'X_test.pt',            
             'y_test': 'y_test.pt',            
             'X_train': 'X_train.pt',          
             'y_train': 'y_train.pt',          
             'y_label_converter_path': 'categorical_converter.csv', 
-            'hierarchical_scatter_weight': 0.0,  
-            'y_hierarchy_file_path': 'child_parent_relationships.csv',     
-            'intra_type_variance_weight': 0.0, 
-            'bit_iqr_variance_weight': 0.0, 
-            'type_entropy_weight': 0.0, 
-            'tanh_slope_factor': 1.0, 
-            'decoder_hidden_layers': 0,
-            'decoder_hidden_dim': 128,
-            'decoder_dropout_rate': 0.3,
-            'decoder_dropout_rate_start': 0.3,
-            'decoder_dropout_rate_end': 0.1,
-            'gradient_clip_max_norm': 1.0, # Added for gradient clipping
-            'convergence_threshold': float('inf'), # Added for early stopping when loss converges
-            'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
-            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
-            'sparsity_weight': 1.0, # Weight for sparsity loss (increased from 0.1)
-            'perturbation_frequency': 1000, # How often to perturb weights (every N iterations)
-            'perturbation_percentage': 0.05, # Percentage of weights to perturb (0.0-1.0)
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -289,8 +259,6 @@ class EncodingDesigner(nn.Module):
         self.y_label_map = None
         self.y_reverse_label_map = None
         self.y_unique_labels = None
-        self.y_parent_child_map = None 
-        self.y_child_to_parent_map = None
 
     def _convert_param_to_int(self, param_key):
         try:
@@ -411,44 +379,6 @@ class EncodingDesigner(nn.Module):
             self.type_cooccurrence_mask = ~torch.eye(self.n_categories, dtype=torch.bool, device=current_device)
             self.log.info("All type pairs (excluding self-correlation) considered co-occurring for correlation loss.")
             
-            hierarchy_file_path = self.user_parameters.get('y_hierarchy_file_path', None)
-            if isinstance(hierarchy_file_path, str) and os.path.exists(hierarchy_file_path) and \
-               self.user_parameters.get('hierarchical_scatter_weight', 0) != 0:
-                self.log.info(f"Loading cell type hierarchy from: {hierarchy_file_path}")
-                try:
-                    hierarchy_df = pd.read_csv(hierarchy_file_path)
-                    if 'child_label' not in hierarchy_df.columns or 'parent_label' not in hierarchy_df.columns:
-                        self.log.error("Hierarchy file must contain 'child_label' and 'parent_label' columns. Hierarchical loss disabled.")
-                        self.y_parent_child_map = None
-                    else:
-                        self.y_parent_child_map = {}
-                        self.y_child_to_parent_map = {} 
-                        for _, row in hierarchy_df.iterrows():
-                            child_str = str(row['child_label'])
-                            parent_str = str(row['parent_label'])
-                            if child_str in self.y_label_map and parent_str in self.y_label_map:
-                                child_idx = self.y_label_map[child_str]
-                                parent_idx = self.y_label_map[parent_str]
-                                if parent_idx not in self.y_parent_child_map:
-                                    self.y_parent_child_map[parent_idx] = []
-                                if child_idx not in self.y_parent_child_map[parent_idx]: 
-                                    self.y_parent_child_map[parent_idx].append(child_idx)
-                                if child_idx in self.y_child_to_parent_map and self.y_child_to_parent_map[child_idx] != parent_idx:
-                                    self.log.warning(f"Child type '{child_str}' (idx {child_idx}) mapped to multiple parents. Using last one: '{parent_str}' (idx {parent_idx}).")
-                                self.y_child_to_parent_map[child_idx] = parent_idx
-                            else:
-                                self.log.warning(f"Skipping hierarchy entry: child '{child_str}' or parent '{parent_str}'. Label(s) not found in y_label_map.")
-                        if self.y_parent_child_map:
-                            self.log.info(f"Successfully processed hierarchy: {len(self.y_parent_child_map)} parent groups mapped.")
-                        else:
-                            self.log.warning("Hierarchy map is empty after processing the file. Hierarchical loss might not be effective.")
-                except Exception as e:
-                    self.log.error(f"Failed to load or process hierarchy file {hierarchy_file_path}: {e}. Hierarchical loss disabled.")
-                    self.y_parent_child_map = None
-            elif self.user_parameters.get('hierarchical_scatter_weight', 0) != 0:
-                self.log.warning("hierarchical_scatter_weight > 0 but 'y_hierarchy_file_path' is not provided, file not found, or path is not a string. Hierarchical loss will not be active.")
-                self.y_parent_child_map = None
-
             if os.path.exists(model_state_path):
                 self.log.info(f"Found existing model state file: {model_state_path}. Attempting to load.")
                 try:
@@ -564,12 +494,7 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['constant_noise'] != 0:
             noise = torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
             P = torch.clip(P + noise, min=1.0)
-        # P_sum = P.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        # P_mean_sum = P_sum.mean().clamp(min=1e-8)
-        # P = P * (P_mean_sum / P_sum) # ideally remove
         Pnormalized = P.clamp(min=1).log10() - self.user_parameters['target_brightness_log']
-        # input_to_tanh = (P.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
-        # Pnormalized = (self.user_parameters['tanh_slope_factor'] * input_to_tanh).tanh() 
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
             dropout_mask_P = (torch.rand_like(Pnormalized) > self.user_parameters['projection_dropout_proportion']).float()
             Pnormalized_dropout = Pnormalized * dropout_mask_P
@@ -652,28 +577,6 @@ class EncodingDesigner(nn.Module):
             raw_losses['probe_weight'] = probe_weight_loss
             current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
-        # probe_count = E.sum()
-        # current_stats['total_n_probes' + suffix] = probe_count.item()
-        # raw_probe_weight_loss = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-        # probe_weight_for_over = self.user_parameters['probe_weight']
-        # push_down_weight_for_under = self.user_parameters['probe_under_weight_factor']
-        # if probe_weight_for_over != 0.0 or push_down_weight_for_under != 0.0:
-        #     total_n_probes_target = float(self.user_parameters['total_n_probes'])
-        #     penalty_over = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-        #     if probe_weight_for_over != 0.0:
-        #         diff_over = probe_count - total_n_probes_target
-        #         penalty_over = probe_weight_for_over * (F.relu(diff_over) + 1).log10()
-        #     penalty_push_down = torch.tensor(0.0, device=probe_count.device, dtype=probe_count.dtype)
-        #     if push_down_weight_for_under != 0.0:
-        #         if probe_count < total_n_probes_target:
-        #             safe_total_n_probes_target = max(total_n_probes_target, 1e-8)
-        #             normalized_under_log_argument = (probe_count / safe_total_n_probes_target) + 1
-        #             penalty_push_down = push_down_weight_for_under * normalized_under_log_argument.log10()
-        #     raw_probe_weight_loss = penalty_over + penalty_push_down
-        # raw_losses['probe_weight'] = raw_probe_weight_loss
-        # static_probe_weight_for_logging = self.user_parameters['probe_weight']
-        # current_stats['probe_weight_loss' + suffix] = raw_probe_weight_loss.item() * static_probe_weight_for_logging
-
         # The model should accurately decode cell type labels
         if self.user_parameters['categorical_weight'] != 0:
             categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component
@@ -708,154 +611,6 @@ class EncodingDesigner(nn.Module):
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
 
-        # raw_p_std_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        # min_p_cv_val = np.nan  
-        # if self.user_parameters['pnorm_std_weight'] != 0 and P_rescaled.shape[0] > 1 and P_rescaled.shape[1] > 0: 
-        #     mean_per_bit = P_rescaled.mean(dim=0)
-        #     std_per_bit = P_rescaled.std(dim=0)  
-        #     epsilon = 1e-8 
-        #     cv_per_bit = std_per_bit / (mean_per_bit + epsilon)
-        #     min_p_cv_tensor = cv_per_bit.min()
-        #     min_p_cv_val = min_p_cv_tensor.item()
-        #     raw_p_std_loss = -min_p_cv_tensor 
-        #     current_stats['p_std_loss' + suffix] = raw_p_std_loss.item() * self.user_parameters['pnorm_std_weight']
-        # else:
-        #     current_stats['p_std_loss' + suffix] = 0.0
-        # raw_losses['p_std'] = raw_p_std_loss
-        # current_stats['p_std_min' + suffix] = min_p_cv_val 
-        
-        # P_type_batch = torch.zeros((self.n_categories, P_original.shape[1]), device=P_original.device)
-        # unique_y_batch, y_batch_indices = torch.unique(y, return_inverse=True)  
-        # valid_types_in_batch_mask = torch.zeros(self.n_categories, dtype=torch.bool, device=P_original.device)
-        # for i, type_idx in enumerate(unique_y_batch):
-        #     if 0 <= type_idx.item() < self.n_categories:
-        #         mask = (y == type_idx)
-        #         P_type_batch[type_idx] = P_original[mask].mean(dim=0) 
-        #         valid_types_in_batch_mask[type_idx] = True
-        # P_corr = P_type_batch[valid_types_in_batch_mask]  
-        # batch_type_indices = torch.where(valid_types_in_batch_mask)[0]  
-        # n_types_batch = P_corr.shape[0]
-        # P_corr_rescaled = torch.zeros((n_types_batch, P_rescaled.shape[1]), device=P_rescaled.device)
-        # if n_types_batch > 0:
-        #     temp_idx_map = {original_idx.item(): new_idx for new_idx, original_idx in enumerate(batch_type_indices)}
-        #     for i_orig_y, type_idx_tensor in enumerate(unique_y_batch): 
-        #         type_idx_item = type_idx_tensor.item()
-        #         if type_idx_item in temp_idx_map: 
-        #             mask = (y == type_idx_tensor) 
-        #             new_idx_for_P_corr_rescaled = temp_idx_map[type_idx_item]
-        #             P_corr_rescaled[new_idx_for_P_corr_rescaled] = P_rescaled[mask].mean(dim=0)
-        # raw_type_correlation_max_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        # if (n_types_batch > 1) and (self.user_parameters['type_correlation_max_weight'] != 0): 
-        #     n_bits = P_corr.shape[1]
-        #     P_type_centered_types = P_corr - P_corr.mean(dim=1, keepdim=True)
-        #     P_type_std_types = P_type_centered_types.std(dim=1, keepdim=True).clamp(min=1e-6)
-        #     P_type_norm_types = P_type_centered_types / P_type_std_types  
-        #     correlation_matrix_types = P_type_norm_types @ P_type_norm_types.T / n_bits  
-        #     batch_off_diag_mask = torch.eye(n_types_batch, device=P_corr.device) == 0
-        #     batch_cooccurrence_mask = self.type_cooccurrence_mask[batch_type_indices][:, batch_type_indices]
-        #     final_corr_mask = batch_off_diag_mask & batch_cooccurrence_mask
-        #     relevant_corrs = correlation_matrix_types[final_corr_mask]
-        #     if relevant_corrs.numel() > 0:
-        #         current_stats['type_correlation_max' + suffix] = relevant_corrs.abs().max().item()
-        #         current_stats['type_correlation_min' + suffix] = relevant_corrs.min().item()
-        #         current_stats['type_correlation_mean' + suffix] = relevant_corrs.mean().item()
-        #         correlation_thresh = self.user_parameters['correlation_thresh']
-        #         off_diag_corr_types_loss = F.relu((relevant_corrs.abs() - correlation_thresh) / (correlation_thresh + 1e-8))
-        #         raw_type_correlation_max_loss = off_diag_corr_types_loss.max()
-        #         current_stats['type_correlation_max_loss' + suffix] = raw_type_correlation_max_loss.item() * self.user_parameters['type_correlation_max_weight']
-        #         if self.user_parameters['type_correlation_mean_weight'] != 0:  
-        #             type_correlation_mean_loss_val = self.user_parameters['type_correlation_mean_weight'] * off_diag_corr_types_loss.mean()
-        #             current_stats['type_correlation_mean_loss' + suffix] = type_correlation_mean_loss_val.item()
-        #         else:
-        #             current_stats['type_correlation_mean_loss' + suffix] = 0.0
-        #     else:  
-        #         current_stats['type_correlation_max' + suffix] = np.nan
-        #         current_stats['type_correlation_min' + suffix] = np.nan
-        #         current_stats['type_correlation_mean' + suffix] = np.nan
-        #         current_stats['type_correlation_max_loss' + suffix] = 0.0
-        #         current_stats['type_correlation_mean_loss' + suffix] = 0.0
-        # else:  
-        #     current_stats['type_correlation_max' + suffix] = np.nan
-        #     current_stats['type_correlation_min' + suffix] = np.nan
-        #     current_stats['type_correlation_mean' + suffix] = np.nan
-        #     current_stats['type_correlation_max_loss' + suffix] = 0.0
-        #     current_stats['type_correlation_mean_loss' + suffix] = 0.0
-        # raw_losses['type_correlation_max'] = raw_type_correlation_max_loss
-
-        # hierarchical_scatter_value_stat = 0.0  
-        # raw_hierarchical_scatter_loss = torch.tensor(0.0, device=P_original.device)  
-        # P_for_scatter = P_original  
-        # hierarchical_scatter_weight = self.user_parameters.get('hierarchical_scatter_weight', 0)
-        # if hierarchical_scatter_weight != 0 and \
-        #    hasattr(self, 'y_parent_child_map') and self.y_parent_child_map and \
-        #    P_for_scatter.shape[0] > 1:  
-        #     unique_y_in_batch, y_counts_in_batch = torch.unique(y, return_counts=True)
-        #     map_batch_labels_to_counts = {label.item(): count.item() for label, count in zip(unique_y_in_batch, y_counts_in_batch)}
-        #     accumulated_weighted_squared_distances = []
-        #     for parent_idx, child_idx_list in self.y_parent_child_map.items():
-        #         if parent_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[parent_idx] >= 1:  
-        #             parent_mask = (y == parent_idx)
-        #             parent_centroid = P_for_scatter[parent_mask].mean(dim=0)
-        #             for child_idx in child_idx_list:
-        #                 if child_idx in map_batch_labels_to_counts and map_batch_labels_to_counts[child_idx] >= 1:  
-        #                     child_mask = (y == child_idx)
-        #                     child_centroid = P_for_scatter[child_mask].mean(dim=0)
-        #                     n_child_in_batch = map_batch_labels_to_counts[child_idx]
-        #                     squared_distance = ((child_centroid - parent_centroid)**2).sum()
-        #                     weighted_squared_distance = n_child_in_batch * squared_distance
-        #                     accumulated_weighted_squared_distances.append(weighted_squared_distance)
-        #     if accumulated_weighted_squared_distances:
-        #         hierarchical_scatter_value = torch.stack(accumulated_weighted_squared_distances).sum()
-        #         raw_hierarchical_scatter_loss = -hierarchical_scatter_value 
-        #         hierarchical_scatter_value_stat = hierarchical_scatter_value.item()
-        #         current_stats['hierarchical_scatter_loss' + suffix] = raw_hierarchical_scatter_loss.item() * hierarchical_scatter_weight
-        #     else:
-        #         current_stats['hierarchical_scatter_loss' + suffix] = 0.0
-        # else:
-        #     current_stats['hierarchical_scatter_loss' + suffix] = 0.0
-        # raw_losses['hierarchical_scatter'] = raw_hierarchical_scatter_loss 
-        # current_stats['hierarchical_scatter_value' + suffix] = hierarchical_scatter_value_stat
-
-        # raw_intra_type_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        # if self.user_parameters['intra_type_variance_weight'] != 0:
-        #     if n_types_batch > 0 and P_corr_rescaled.shape[1] > 0: 
-        #         variances_intra_type = torch.var(P_corr_rescaled, dim=1) 
-        #         raw_intra_type_variance_loss = -torch.mean(variances_intra_type) 
-        #         current_stats['intra_type_variance_loss' + suffix] = raw_intra_type_variance_loss.item() * self.user_parameters['intra_type_variance_weight']
-        #     else:
-        #         current_stats['intra_type_variance_loss' + suffix] = 0.0
-        # else:
-        #     current_stats['intra_type_variance_loss' + suffix] = 0.0
-        # raw_losses['intra_type_variance'] = raw_intra_type_variance_loss
-
-        # raw_bit_iqr_variance_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        # if self.user_parameters['bit_iqr_variance_weight'] != 0:
-        #     if n_types_batch > 1 and P_corr_rescaled.shape[1] > 0: 
-        #         q1 = torch.quantile(P_corr_rescaled, 0.25, dim=0)
-        #         q3 = torch.quantile(P_corr_rescaled, 0.75, dim=0)
-        #         iqr_per_bit = q3 - q1
-        #         raw_bit_iqr_variance_loss = -torch.mean(iqr_per_bit) 
-        #         current_stats['bit_iqr_variance_loss' + suffix] = raw_bit_iqr_variance_loss.item() * self.user_parameters['bit_iqr_variance_weight']
-        #     else:
-        #         current_stats['bit_iqr_variance_loss' + suffix] = 0.0
-        # else:
-        #     current_stats['bit_iqr_variance_loss' + suffix] = 0.0
-        # raw_losses['bit_iqr_variance'] = raw_bit_iqr_variance_loss
-        
-        # raw_type_entropy_loss = torch.tensor(0.0, device=self.user_parameters['device'])
-        # if self.user_parameters['type_entropy_weight'] != 0:
-        #     if n_types_batch > 0 and P_corr.shape[1] > 0: 
-        #         P_corr_positive = P_corr + 1e-12
-        #         P_type_norm_rows = P_corr_positive / (P_corr_positive.sum(dim=1, keepdim=True))
-        #         entropies_per_type = -torch.sum(P_type_norm_rows * torch.log(P_type_norm_rows + 1e-12), dim=1)
-        #         raw_type_entropy_loss = torch.mean(entropies_per_type) 
-        #         current_stats['type_entropy_loss' + suffix] = raw_type_entropy_loss.item() * self.user_parameters['type_entropy_weight']
-        #     else:
-        #         current_stats['type_entropy_loss' + suffix] = 0.0
-        # else:
-        #     current_stats['type_entropy_loss' + suffix] = 0.0
-        # raw_losses['type_entropy'] = raw_type_entropy_loss
-
         total_loss = sum(raw_losses.values())
         
         return total_loss, current_stats
@@ -875,11 +630,6 @@ class EncodingDesigner(nn.Module):
         current_device = self.user_parameters['device']
         n_categories = self.n_categories
 
-        # --- CONVERGENCE TRACKING VARIABLES ---
-        recent_losses = []  # Store recent loss values for sliding average
-        convergence_window = 10  # Number of iterations for each sliding average
-        convergence_threshold = self.user_parameters['convergence_threshold']
-        # --- END CONVERGENCE TRACKING VARIABLES ---
 
         lr_start = self.user_parameters['learning_rate_start']
         lr_end = self.user_parameters['learning_rate_end']
@@ -987,41 +737,6 @@ class EncodingDesigner(nn.Module):
                     # --- END WEIGHT PERTURBATION ---
                     
                     current_loss_item = total_loss.item()
-                    
-                    # --- SLIDING AVERAGE CONVERGENCE CHECK ---
-                    if not np.isnan(current_loss_item):
-                        recent_losses.append(current_loss_item)
-                        
-                        # Keep only the last 2*window + some buffer to avoid memory growth
-                        if len(recent_losses) > 2 * convergence_window + 5:
-                            recent_losses = recent_losses[-2*convergence_window-5:]
-                        
-                        # Only check convergence after we have enough data points
-                        if (len(recent_losses) >= 2 * convergence_window) and (convergence_threshold > 0):
-                            # Calculate sliding averages
-                            recent_avg = np.mean(recent_losses[-convergence_window:])  # Last 10 iterations
-                            older_avg = np.mean(recent_losses[-2*convergence_window:-convergence_window])  # 10th to 20th to last
-                            
-                            # Calculate relative difference
-                            if older_avg > 0:  # Avoid division by zero
-                                relative_diff = abs(recent_avg - older_avg) / older_avg
-                                
-                                # Optional debug logging every 100 iterations
-                                if iteration % 100 == 0 and self.user_parameters.get('Verbose', 0) == 1:
-                                    print(f"Iter {iteration}: Recent avg: {recent_avg:.6f}, Older avg: {older_avg:.6f}, Rel diff: {relative_diff*100:.4f}%")
-                                
-                                if relative_diff <= convergence_threshold:
-                                    self.log.info(f"*** Training converged at iteration {iteration} ***")
-                                    self.log.info(f"Recent avg (last {convergence_window}): {recent_avg:.6f}")
-                                    self.log.info(f"Older avg (10-20th to last): {older_avg:.6f}")
-                                    self.log.info(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold*100:.4f}%")
-                                    if self.user_parameters['Verbose'] == 1:
-                                        print(f"*** Training converged at iteration {iteration} ***")
-                                        print(f"Recent avg (last {convergence_window}): {recent_avg:.6f}")
-                                        print(f"Older avg (10-20th to last): {older_avg:.6f}")
-                                        print(f"Relative difference: {relative_diff:.6f} ({relative_diff*100:.4f}%) <= {convergence_threshold*100:.4f}%")
-                                    break
-                    # --- END SLIDING AVERAGE CONVERGENCE CHECK ---
                     
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
                         self.best_loss = current_loss_item
@@ -1195,47 +910,8 @@ class EncodingDesigner(nn.Module):
             except Exception as e:
                 self.log.error(f"Failed to save learning curve: {e}")
 
-    def simulate_noise(self, poisson_noise_scale=0, max_cell_type_gene_shifts=0, max_background_scale=0):
-        if self.X_train is None or self.X_test is None or self.y_test is None or self.E is None: # y_test is used for noise sim
-            self.log.error("Model not initialized. Run initialize() first.")
-            raise RuntimeError("Model not initialized. Run initialize() first.")
-
-        X_train = self.X_train.detach()
-        X_test = self.X_test.detach()
-        y_test = self.y_test.detach() # y_test is needed for cell_type_gene_shifts
-
-        X_test_noisy = X_test.clone()
-        if poisson_noise_scale > 0:
-            X_test_noisy = torch.poisson((X_test_noisy * poisson_noise_scale).clamp(min=0)) / poisson_noise_scale
-        if max_cell_type_gene_shifts > 0:
-            X_test_shifts = torch.zeros_like(X_test_noisy)
-            unique_test_labels = torch.unique(y_test)
-            for cell_type_idx in unique_test_labels:
-                m = (y_test == cell_type_idx)
-                if m.sum() > 0:
-                    shift = (1 - 2 * torch.rand_like(X_test_shifts[0, :])) * max_cell_type_gene_shifts
-                    X_test_shifts[m, :] = X_test_noisy[m, :] * shift # Original logic was X_test_noisy[m,:] * shift
-            X_test_noisy = (X_test_noisy + X_test_shifts).clamp(min=0)
-
-        final_E_device = self.E.to(self.user_parameters['device'])
-        P_train = X_train.mm(final_E_device)
-        P_test = X_test_noisy.mm(final_E_device)
-
-        P_sum_train = P_train.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        P_mean_sum_train = P_sum_train.mean().clamp(min=1e-8)
-        P_train = P_train * (P_mean_sum_train / P_sum_train)
-
-        P_sum_test = P_test.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        P_mean_sum_test = P_sum_test.mean().clamp(min=1e-8)
-        P_test = P_test * (P_mean_sum_test / P_sum_test)
-
-        if max_background_scale > 0:
-            background = (torch.rand_like(P_test)) * (10 ** max_background_scale)
-            P_test = (P_test + background).clamp(min=0)
-        return P_test, P_train
-
     def evaluate(self):
-        if self.E is None or self.decoder is None or \
+        if self.encoder is None or self.decoder is None or \
            self.X_train is None or self.X_test is None or self.y_train is None or \
            self.y_test is None : 
             self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
@@ -1244,7 +920,9 @@ class EncodingDesigner(nn.Module):
         self.results = {}
         current_device = self.user_parameters['device']
 
-        final_E_cpu = self.E.cpu().detach()
+        # Use get_encoding_weights() to get proper encoding weights with sigmoid and constraints
+        E_weights = self.get_encoding_weights()
+        final_E_cpu = E_weights.cpu().detach()
         self.results['Number of Probes (Constrained)'] = final_E_cpu.sum().item()
 
         all_P_type = []
@@ -1253,7 +931,8 @@ class EncodingDesigner(nn.Module):
 
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
-                P_global, _, _ = self.project(X_global_train, self.E) 
+                # Use the E_weights we already calculated above
+                P_global, _, _ = self.project(X_global_train, E_weights) 
                 P_global_cpu = P_global.cpu()
                 P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
                 unique_y_global = torch.unique(y_global_train)
@@ -1284,32 +963,65 @@ class EncodingDesigner(nn.Module):
             if self.user_parameters['Verbose'] == 1: print(log_msg)
         self.log.info("-----------------------------")
 
+        # Test model robustness under different noise conditions
+        # We use the existing noise parameters in the model to simulate different noise levels
+        # This ensures complete compatibility with the training pipeline
         noise_levels = {
-            "No Noise":    {'poisson': 0, 'shifts': 0,    'background': 0},
-            "Low Noise":   {'poisson': 1, 'shifts': 0.25, 'background': 2.5},
-            "Medium Noise":{'poisson': 1, 'shifts': 0.5,  'background': 3.0},
-            "High Noise":  {'poisson': 1, 'shifts': 1.0,  'background': 3.5}
+            "No Noise": {
+                'constant_noise': 0.0,
+                'gene_fold_noise': 0.0,
+                'gene_dropout_proportion': 0.0,
+                'projection_dropout_proportion': 0.0,
+                'weight_dropout_proportion': 0.0
+            },
+            "Low Noise": {
+                'constant_noise': 2.0,
+                'gene_fold_noise': 0.05,
+                'gene_dropout_proportion': 0.02,
+                'projection_dropout_proportion': 0.02,
+                'weight_dropout_proportion': 0.02
+            },
+            "Medium Noise": {
+                'constant_noise': 2.5,
+                'gene_fold_noise': 0.1,
+                'gene_dropout_proportion': 0.05,
+                'projection_dropout_proportion': 0.05,
+                'weight_dropout_proportion': 0.05
+            },
+            "High Noise": {
+                'constant_noise': 3.0,
+                'gene_fold_noise': 0.15,
+                'gene_dropout_proportion': 0.1,
+                'projection_dropout_proportion': 0.1,
+                'weight_dropout_proportion': 0.1
+            }
         }
         self.eval()
         for level_name, params in noise_levels.items():
             self.log.info(f"Calculating {level_name} Accuracy (Global)")
             try:
-                P_test_noisy, _ = self.simulate_noise(
-                    poisson_noise_scale=params['poisson'],
-                    max_cell_type_gene_shifts=params['shifts'],
-                    max_background_scale=params['background']
-                )
-                P_test_noisy = P_test_noisy.to(current_device)
+                # Store original parameters
+                original_params = {}
+                for param_name in params.keys():
+                    original_params[param_name] = self.user_parameters[param_name]
+                
+                # Update parameters for this noise level
+                for param_name, param_value in params.items():
+                    self.user_parameters[param_name] = param_value
+                
                 with torch.no_grad():
-                    P_sum_test = P_test_noisy.sum(dim=1, keepdim=True).clamp(min=1e-8)
-                    P_mean_sum_test = P_sum_test.mean().clamp(min=1e-8)
-                    P_norm_test = P_test_noisy * (P_mean_sum_test / P_sum_test)
-                    input_to_tanh_test = (P_norm_test.clamp(min=1).log10() - self.user_parameters['target_brightness_log'])
-                    Pnorm_transformed_test = (self.user_parameters['tanh_slope_factor'] * input_to_tanh_test).tanh() 
-                    y_pred_test, accuracy_test, _ = self.decode(Pnorm_transformed_test, self.y_test)
+                    # Use the existing pipeline: get_encoding_weights -> project -> decode
+                    E_weights = self.get_encoding_weights()
+                    P_test, Pnormalized_test, Pnormalized_dropout_test = self.project(self.X_test, E_weights)
+                    y_pred_test, accuracy_test, _ = self.decode(Pnormalized_dropout_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
+                
+                # Restore original parameters
+                for param_name, original_value in original_params.items():
+                    self.user_parameters[param_name] = original_value
+                
             except Exception as e:
                 self.log.error(f"Error during {level_name} accuracy calculation: {e}")
                 self.results[f'{level_name} Accuracy'] = np.nan
@@ -1327,7 +1039,7 @@ class EncodingDesigner(nn.Module):
 
     def visualize(self, show_plots=False): 
         self.log.info("Starting visualization generation...")
-        if self.E is None or self.decoder is None or \
+        if self.encoder is None or self.decoder is None or \
            self.X_train is None or self.y_train is None or \
            self.y_reverse_label_map is None : 
             self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
@@ -1337,8 +1049,10 @@ class EncodingDesigner(nn.Module):
         output_dir = self.user_parameters['output']
         saved_plot_paths = []
 
-        final_E_device = self.E.to(current_device)
-        self.eval() 
+        # Use get_encoding_weights() to get proper encoding weights with sigmoid and constraints
+        E_weights = self.get_encoding_weights()
+        final_E_device = E_weights.to(current_device)
+        self.eval()
 
         # Visualizations are now global
         global_name_str = "Global"
@@ -1448,14 +1162,16 @@ class EncodingDesigner(nn.Module):
                 plot_path = os.path.join(output_dir, plot_filename)
                 try:
                     y_vis_str_labels = np.array([self.y_reverse_label_map.get(idx.item(), f"Type_{idx.item()}") for idx in y_data_vis])
+                    # Use the proper encoding weights for the projection density plot
+                    E_weights_cpu = E_weights.cpu().numpy()
                     plot_projection_space_density(
-                        X_data_vis.cpu().numpy() @ self.E.cpu().numpy(), 
+                        X_data_vis.cpu().numpy() @ E_weights_cpu, 
                         y_vis_str_labels, 
                         plot_path,
                         sum_norm=False, 
                         log=True
                         )
-                    saved_plot_paths.append(plot_path) 
+                    saved_plot_paths.append(plot_path)
                 except Exception as e:
                     self.log.error(f"Error generating projection space density plot for {global_name_str}: {str(e)}")
             elif n_bits < 2:
