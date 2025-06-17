@@ -129,7 +129,6 @@ class EncodingDesigner(nn.Module):
                 else:
                     loaded_user_parameters = dict(zip(user_parameters_df.index, user_parameters_df['values']))
                     self.log.info(f"Successfully loaded {len(loaded_user_parameters)} parameters from file.")
-
                     for key, val in loaded_user_parameters.items():
                         try:
                             float_val = float(val)
@@ -141,7 +140,6 @@ class EncodingDesigner(nn.Module):
                             self.log.debug(f"Could not convert parameter '{key}' value '{val}' to float. Keeping as string.")
                             continue 
                     self.log.info("Attempted conversion of loaded parameters to numeric types.")
-
             except FileNotFoundError:
                 self.log.error(f"Parameter file not found at: {user_parameters_path}. Using default parameters.")
                 loaded_user_parameters = {} 
@@ -166,11 +164,7 @@ class EncodingDesigner(nn.Module):
                     self.log.info(f"Parameter '{new_key}' already exists. Skipping creation.")
 
         input_dir = self.user_parameters['input']
-        file_params_to_prefix = [
-            'constraints', 'X_test', 'y_test', 
-            'X_train', 'y_train', 
-            'y_label_converter_path' 
-        ]
+        file_params_to_prefix = ['constraints', 'X_test', 'y_test', 'X_train', 'y_train', 'y_label_converter_path']
         for param_key in file_params_to_prefix:
             current_path = self.user_parameters[param_key]
             if current_path and not os.path.dirname(current_path) and not os.path.isabs(current_path):
@@ -185,7 +179,6 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"Final Parameters (after path construction & type conversion):")
         for key, val in self.user_parameters.items():
             self.log.info(f"{key}: {val} (type: {type(val).__name__})") 
-
         self.log.info(f"Limiting Torch to {self.user_parameters['n_cpu']} threads")
         torch.set_num_threads(self.user_parameters['n_cpu'])
 
@@ -196,13 +189,8 @@ class EncodingDesigner(nn.Module):
         pd.DataFrame(self.user_parameters.values(), index=self.user_parameters.keys(), columns=['values']).to_csv(os.path.join(output_dir, 'used_user_parameters.csv'))
 
         self.log.info("Creating symlinks for input files in output directory...")
-        input_param_keys = [
-            'constraints', 'X_test', 'y_test', 
-            'X_train', 'y_train', 
-            'y_label_converter_path'
-        ]
         input_files_to_link = []
-        for key in input_param_keys:
+        for key in file_params_to_prefix:
             path = self.user_parameters.get(key)
             if isinstance(path, str) and path: 
                 input_files_to_link.append(path)
@@ -241,7 +229,6 @@ class EncodingDesigner(nn.Module):
                 self.log.error(f"An unexpected error occurred while trying to symlink {input_path}: {e}")
                 error_count += 1
         self.log.info(f"Symlinking complete. Created: {linked_count}, Skipped: {skipped_count}, Errors: {error_count}")
-
         self.E = None
         self.P = None
         self.Pnormalized = None
@@ -253,8 +240,7 @@ class EncodingDesigner(nn.Module):
         self.learning_stats = {}
         self.saved_models = {}
         self.saved_optimizer_states = {}
-        self.is_initialized_from_file = False 
-        self.type_cooccurrence_mask = None  
+        self.is_initialized_from_file = False  
         self.X_train, self.y_train = None, None
         self.X_test, self.y_test = None, None
         self.n_genes = None 
@@ -283,7 +269,6 @@ class EncodingDesigner(nn.Module):
         current_device = self.user_parameters['device']
         output_dir = self.user_parameters['output']
         model_state_path = os.path.join(output_dir, 'final_model_state.pt')
-
         try:
             self.log.info("Loading Gene Constraints")
             constraints_path = self.user_parameters['constraints']
@@ -308,7 +293,6 @@ class EncodingDesigner(nn.Module):
             
             self.X_train = load_tensor(self.user_parameters['X_train'], torch.float32, current_device)
             self.X_test = load_tensor(self.user_parameters['X_test'], torch.float32, current_device)
-
             self.y_train = load_tensor(self.user_parameters['y_train'], torch.long, current_device)
             self.y_test = load_tensor(self.user_parameters['y_test'], torch.long, current_device)
             
@@ -340,27 +324,20 @@ class EncodingDesigner(nn.Module):
             self.log.info("Data loaded and shapes validated.")
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
-            # --- Initialize Model Components Structurally (ONCE) ---
-            # Initialize encoder with proper scaling
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-            
-            # Initialize encoder weights for sigmoid-based fractions
             with torch.no_grad():
                 # Initialize to larger random values for sigmoid
                 # This gives sigmoid values roughly in [0.1, 0.9] range
                 self.encoder.weight.data = torch.randn_like(self.encoder.weight.data) * 2.0
-                
                 self.log.info(f"Initialized encoder weights for sigmoid-based fractions")
                 self.log.info(f"Initial sigmoid range: {torch.sigmoid(self.encoder.weight).min().item():.3f} to {torch.sigmoid(self.encoder.weight).max().item():.3f}")
-
+            self.log.info(f"Initialized encoder.") 
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
             hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
             dropout_rate_decoder = self.user_parameters['decoder_dropout_rate']
-
             decoder_modules = []
             current_decoder_layer_input_dim = self.user_parameters['n_bit']
-
             if n_hidden_layers_decoder == 0:
                 decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
                 log_msg_decoder_structure = "Initialized single linear decoder."
@@ -375,12 +352,8 @@ class EncodingDesigner(nn.Module):
                 log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, dropout={dropout_rate_decoder}) and output layer."
             
             self.decoder = nn.Sequential(*decoder_modules).to(current_device)
-            self.log.info(f"Initialized encoder.") 
+            self.log.info(f"Initialized dencoder.") 
             self.log.info(log_msg_decoder_structure)
-
-            self.log.info("Calculating type co-occurrence mask...")
-            self.type_cooccurrence_mask = ~torch.eye(self.n_categories, dtype=torch.bool, device=current_device)
-            self.log.info("All type pairs (excluding self-correlation) considered co-occurring for correlation loss.")
             
             if os.path.exists(model_state_path):
                 self.log.info(f"Found existing model state file: {model_state_path}. Attempting to load.")
@@ -416,7 +389,6 @@ class EncodingDesigner(nn.Module):
             else:
                 self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
                 self.is_initialized_from_file = False
-            
             self.log.info("--- Initialization Complete ---")
             return True
 
@@ -436,50 +408,25 @@ class EncodingDesigner(nn.Module):
     def get_encoding_weights(self):
         if self.encoder is None:
             raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
-        
-        # Get fractions (0 to 1) using sigmoid
         fractions = torch.sigmoid(self.encoder.weight)
-        
-        # Convert to actual probe counts using gene constraints
         E = fractions * self.constraints.unsqueeze(1)
-        
-        # Apply dropout if training - set percentage of E values to 0
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             dropout_mask_E = (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
             E = E * dropout_mask_E
-        
         return E
 
     def perturb_weights(self):
-        """
-        Randomly perturb encoder weights to random fractions (0 to 1).
-        """
         with torch.no_grad():
-            # Get current weights
             current_weights = self.encoder.weight.data.clone()
-            
-            # Calculate number of weights to perturb
             total_weights = current_weights.numel()
             num_to_perturb = int(total_weights * self.user_parameters['perturbation_percentage'])
-            
-            # Randomly select weights to perturb
             flat_indices = torch.randperm(total_weights)[:num_to_perturb]
             row_indices = flat_indices // current_weights.shape[1]
             col_indices = flat_indices % current_weights.shape[1]
-            
-            # Generate random fractions (0 to 1) and convert to sigmoid input values
             random_fractions = torch.rand(num_to_perturb)
-            # Use inverse sigmoid (logit) to get the raw weight values
             perturbation_values = torch.logit(random_fractions.clamp(min=1e-7, max=1-1e-7))
-            
-            # Apply the perturbation
             current_weights[row_indices, col_indices] = perturbation_values
             self.encoder.weight.data = current_weights
-            
-            if self.user_parameters.get('Verbose', 0) == 1:
-                print(f"Perturbed {num_to_perturb} weights ({self.user_parameters['perturbation_percentage']*100:.1f}%) "
-                      f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
-            
             self.log.info(f"Perturbed {num_to_perturb} weights ({self.user_parameters['perturbation_percentage']*100:.1f}%) "
                          f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
 
@@ -488,11 +435,9 @@ class EncodingDesigner(nn.Module):
             fold = self.user_parameters['gene_fold_noise']
             gene_noise = torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
             X = X * gene_noise
-
         if self.user_parameters['gene_dropout_proportion'] != 0:
             dropout_mask_X = (torch.rand_like(X) > self.user_parameters['gene_dropout_proportion']).float()
             X = X * dropout_mask_X
-            
         P = X.mm(E)
         if self.user_parameters['constant_noise'] != 0:
             noise = torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
@@ -510,13 +455,10 @@ class EncodingDesigner(nn.Module):
             raise RuntimeError("Decoder not initialized.")
         if not isinstance(self.decoder, nn.Module):
             raise ValueError("Invalid decoder module.")
-
         decoder_input = Pnormalized_dropout 
         R = self.decoder(decoder_input) 
-
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
-
         if self.user_parameters['categorical_weight'] != 0:
             loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
             categorical_loss = loss_fn(R, y)
@@ -605,7 +547,6 @@ class EncodingDesigner(nn.Module):
         if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
             self.log.error("Model is not initialized. Call initialize() before fit().")
             raise RuntimeError("Model is not initialized. Call initialize() before fit().")
-
         self.learning_stats = {} 
         self.saved_models = {}
         self.saved_optimizer_states = {}
@@ -614,14 +555,12 @@ class EncodingDesigner(nn.Module):
         self.best_iteration = -1
         start_time = time.time()
         current_device = self.user_parameters['device']
-
         last_report_time = start_time
         last_report_iteration = 0
         n_iterations = self.user_parameters['n_iterations']
         report_freq = self.user_parameters['report_freq']
         batch_size = self.user_parameters['batch_size']
         n_train_samples = self.X_train.shape[0]
-
         try:
             for iteration in range(n_iterations):
                 progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
@@ -629,24 +568,19 @@ class EncodingDesigner(nn.Module):
                 for param in parameters_to_update:
                     self.user_parameters[param] = (self.user_parameters[f'{param}_start'] + (self.user_parameters[f'{param}_end'] - self.user_parameters[f'{param}_start']) * progress)
                 self.learning_stats[iteration] = {}
-
                 if iteration == 0:
                     if not self.is_initialized_from_file:
                         self.log.info("Model not initialized from file, using randomly initialized weights.")
                     else:
                         self.log.info("Using model loaded during initialization.")
                     self.to(current_device)
-
                     optimizer_gen = torch.optim.Adam([
                         {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
                         {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
                     ])
                     self.optimizer_gen = optimizer_gen
-
                 for param_group in self.optimizer_gen.param_groups: param_group['lr'] = self.user_parameters['learning_rate']
-
                 is_report_iter = (iteration % report_freq == 0) or (iteration == n_iterations - 1) 
-
                 self.train() 
 
                 if (batch_size > 0) and (batch_size < n_train_samples):
@@ -681,15 +615,11 @@ class EncodingDesigner(nn.Module):
                     max_norm_value = self.user_parameters.get('gradient_clip_max_norm', 1.0) 
                     if max_norm_value > 0:
                         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
-                    # --- END GRADIENT CLIPPING ---
                     self.optimizer_gen.step()  
-                    
                     # --- WEIGHT PERTURBATION ---
                     if self.user_parameters['perturbation_frequency'] > 0:
                         if iteration % self.user_parameters['perturbation_frequency'] == 0:
                             self.perturb_weights()
-                    # --- END WEIGHT PERTURBATION ---
-                    
                     current_loss_item = total_loss.item()
                     
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
@@ -1194,25 +1124,16 @@ class EncodingDesigner(nn.Module):
                 self.log.warning("\nPlots saved to output directory. Run in an IPython environment (like Jupyter) and set show_plots=True to display inline.")
 
 
-# --- Helper function to sanitize filenames ---
 def sanitize_filename(name):
     """Removes or replaces characters invalid for filenames."""
-    # Remove leading/trailing whitespace
     name = name.strip()
-    # Replace spaces and slashes with underscores
     name = re.sub(r'[\s/\\:]+', '_', name)
-    # Remove characters that are generally problematic in filenames
     name = re.sub(r'[<>:"|?*]+', '', name)
-    # Limit length if necessary (optional)
-    # max_len = 100
-    # name = name[:max_len]
     return name
 
-# --- Standalone Visualization Function (Based on Prototype) ---
 def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
-    logger = logging.getLogger("ProjectionPlotDensity") # Use a specific logger
+    logger = logging.getLogger("ProjectionPlotDensity")
     logger.info(f"Generating projection space density plot: {plot_path}")
-    # Normalize P (add epsilon for numerical stability if sums can be zero)
     if sum_norm:
         P = P * (np.clip(P.sum(1),1,None).mean() / (np.clip(P.sum(1),1,None)[:, None]))
     labels = np.array([f"Bit {str(bit)}" for bit in range(P.shape[1])])
@@ -1220,31 +1141,10 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
     num_measurements = labels.shape[0]
     num_plot_pairs = math.ceil(num_measurements / 2)
     total_rows = num_plot_pairs
-    total_cols = 2 # Strict 2 columns
-
-    # Handle case with zero measurements -> zero rows/plots
-    if num_plot_pairs == 0:
-        print("No measurement pairs to plot.")
-        # Optionally create an empty plot or just return
-        fig, ax = plt.subplots(1,1, figsize=(6,1))
-        ax.text(0.5, 0.5, "No data to plot", ha='center', va='center')
-        ax.axis('off')
-        try:
-            plt.savefig(plot_path, dpi=100)
-        except Exception as e:
-            logger.error(f"Failed to save empty plot {plot_path}: {e}")
-        finally:
-            plt.close(fig)
-        return
-
-
-    fig, axes = plt.subplots(total_rows, total_cols,
-                                   figsize=(12, 5 * total_rows), 
-                                   squeeze=False) 
-
+    total_cols = 2
+    fig, axes = plt.subplots(total_rows, total_cols,figsize=(12, 5 * total_rows), squeeze=False) 
     color_mapper = {}
     used_colors_list = [np.array([0., 0., 0.]), np.array([1., 1., 1.])]
-
     plot_pair_idx = 0 
     for i_pair_start in range(num_measurements):
         if i_pair_start % 2 == 0 and plot_pair_idx < num_plot_pairs: 
@@ -1254,66 +1154,46 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                 if feature_idx2 < 0: continue 
             else:
                 feature_idx2 = feature_idx1 + 1
-
             feature_name1 = labels[feature_idx1]
             feature_name2 = labels[feature_idx2]
-
             x = np.array(P[:, feature_idx1]).ravel()
             y = np.array(P[:, feature_idx2]).ravel()
-
             x_pos = x[x > 0]
             y_pos = y[y > 0]
-
-            if len(x_pos) > 1:
-                vmin_x, vmax_x = np.percentile(x_pos, [0.1, 99.9])
+            if len(x_pos) > 1: vmin_x, vmax_x = np.percentile(x_pos, [0.1, 99.9])
             elif len(x_pos) == 1: vmin_x, vmax_x = x_pos[0], x_pos[0]
             else: vmin_x, vmax_x = 0, 0
-
-            if len(y_pos) > 1:
-                vmin_y, vmax_y = np.percentile(y_pos, [0.1, 99.9])
+            if len(y_pos) > 1: vmin_y, vmax_y = np.percentile(y_pos, [0.1, 99.9])
             elif len(y_pos) == 1: vmin_y, vmax_y = y_pos[0], y_pos[0]
             else: vmin_y, vmax_y = 0, 0
-
             vmax_x = max(vmax_x, vmin_x)
             vmax_y = max(vmax_y, vmin_y)
-
             x = np.clip(x, vmin_x, vmax_x)
-            if log:
-                x = np.log10(x + 1) 
+            if log: x = np.log10(x + 1) 
             x_min, x_max = x.min(), x.max()
             x_bins = np.linspace(x_min, x_max if x_max > x_min else x_max + 1, 100)
-
             y = np.clip(y, vmin_y, vmax_y)
-            if log:
-                y = np.log10(y + 1) 
+            if log: y = np.log10(y + 1) 
             y_min, y_max = y.min(), y.max()
             y_bins = np.linspace(y_min, y_max if y_max > y_min else y_max + 1, 100)
-
             current_row_idx = plot_pair_idx
-            
             ax1 = axes[current_row_idx, 0] 
-
             img, _, _ = np.histogram2d(x, y, bins=[x_bins, y_bins])
             img = np.log10(img + 1) 
-
             img_pos = img[img > 0]
             if len(img_pos) > 0:
                 vmin_img, vmax_img = np.percentile(img_pos, [0.1, 99]) 
                 if vmin_img == vmax_img: vmax_img += 1e-6 
             else: vmin_img, vmax_img = 0, 1 
-
             im1 = ax1.imshow(img.T, vmin=vmin_img, vmax=vmax_img, cmap='bwr', origin='lower', aspect='auto', interpolation='nearest',
                            extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]])
-
             num_ticks = 5
             x_tick_labels_val = np.linspace(x_bins[0], x_bins[-1], num=num_ticks)
             y_tick_labels_val = np.linspace(y_bins[0], y_bins[-1], num=num_ticks)
             ax1.set_xticks(x_tick_labels_val)
             ax1.set_yticks(y_tick_labels_val)
-
             ax1.set_xticklabels(np.round(x_tick_labels_val, 1))
             ax1.set_yticklabels(np.round(y_tick_labels_val, 1))
-
             if log:
                 ax1.set_xlabel(f"Bit {feature_name1} (log10)")
                 ax1.set_ylabel(f"Bit {feature_name2} (log10)")
@@ -1321,48 +1201,33 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                 ax1.set_xlabel(f"Bit {feature_name1}")
                 ax1.set_ylabel(f"Bit {feature_name2}")
             ax1.grid(False)
-            
             ax2 = axes[current_row_idx, 1] 
-
             composite_img = np.zeros((len(y_bins)-1, len(x_bins)-1, 3))
-            legend_handles = [] 
-
             for ct in unique_cell_types:
                 mask = y_labels == ct
-                if np.sum(mask) < 2:
-                    continue
-
+                if np.sum(mask) < 2: continue
                 img_ct, _, _ = np.histogram2d(x[mask], y[mask], bins=[x_bins, y_bins])
                 img_ct = np.log10(img_ct + 1)
-
                 img_ct_pos = img_ct[img_ct > 0]
                 if len(img_ct_pos) >= 2: 
                     vmin_ct, vmax_ct = np.percentile(img_ct_pos, [0.1, 99]) 
                     vmin_ct = 0 
                     if vmax_ct <= vmin_ct: vmax_ct = vmin_ct + 1e-6 
-                    if vmax_ct > 1e-9:
-                        img_ct_norm = (img_ct - vmin_ct) / vmax_ct
-                    else:
-                        img_ct_norm = np.zeros_like(img_ct)
-                elif len(img_ct_pos) == 1: 
-                    img_ct_norm = (img_ct > 0).astype(float) 
-                else: 
-                    img_ct_norm = np.zeros_like(img_ct) 
-
+                    if vmax_ct > 1e-9: img_ct_norm = (img_ct - vmin_ct) / vmax_ct
+                    else: img_ct_norm = np.zeros_like(img_ct)
+                elif len(img_ct_pos) == 1: img_ct_norm = (img_ct > 0).astype(float) 
+                else: img_ct_norm = np.zeros_like(img_ct) 
                 img_ct_norm = np.clip(img_ct_norm, 0, 1).T 
-
                 if ct not in color_mapper:
                     attempts = 0
                     max_attempts = 200
                     min_dist_sq = 0.1 
                     min_sum = 0.5 
-
                     while attempts < max_attempts:
                         color = np.random.rand(3)
                         color_sum = np.sum(color)
                         distances_sq = [np.sum((color - existing_color)**2) for existing_color in used_colors_list]
                         min_d2 = min(distances_sq) if distances_sq else 1.0
-
                         if min_d2 > min_dist_sq and color_sum > min_sum:
                             color_mapper[ct] = color
                             used_colors_list.append(color)
@@ -1371,19 +1236,14 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                     if ct not in color_mapper: 
                         color_mapper[ct] = np.random.rand(3) * 0.8
                         used_colors_list.append(color_mapper[ct])
-
                 ct_layer = np.dstack([img_ct_norm] * 3) * color_mapper[ct]
                 composite_img += ct_layer
-
             if composite_img.max() > 0:
                 vmax_composite = 1.0 
                 composite_img = composite_img / max(vmax_composite, 1e-9) 
-
             composite_img = np.clip(composite_img, 0, 1)
-
             ax2.imshow(composite_img, origin='lower', aspect='auto', interpolation='nearest',
                        extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]]) 
-
             ax2.set_xticks(x_tick_labels_val)
             ax2.set_xticklabels(np.round(x_tick_labels_val, 1)) 
             ax2.set_yticks(y_tick_labels_val)
@@ -1395,11 +1255,7 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                 ax2.set_xlabel(f"Bit {feature_name1}")
                 ax2.set_ylabel(f"Bit {feature_name2}")
             ax2.grid(False)
-            handles = [Patch(color=color_mapper[ct], label=ct) for ct in unique_cell_types if ct in color_mapper]
-            # ax2.legend(handles=handles, title="Cell Types", bbox_to_anchor=(1.05, 1), loc='upper left')
-
             plot_pair_idx += 1 
-
     try:
         plt.savefig(plot_path, dpi=300)
         logger.info(f"Saved projection space density plot to {plot_path}")
@@ -1407,7 +1263,6 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
         logger.error(f"Failed to save plot {plot_path}: {e}")
     finally:
         plt.close(fig)
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
