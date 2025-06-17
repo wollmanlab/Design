@@ -631,11 +631,6 @@ class EncodingDesigner(nn.Module):
         self.best_iteration = -1
         start_time = time.time()
         current_device = self.user_parameters['device']
-        n_categories = self.n_categories
-
-
-        lr_start = self.user_parameters['learning_rate_start']
-        lr_end = self.user_parameters['learning_rate_end']
 
         last_report_time = start_time
         last_report_iteration = 0
@@ -646,10 +641,7 @@ class EncodingDesigner(nn.Module):
 
         try:
             for iteration in range(n_iterations):
-                # Calculate current parameter values based on iteration progress
                 progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
-                
-                # Update user_parameters with current iteration's values
                 parameters_to_update = [i.replace('_start', '') for i in self.user_parameters if '_start' in i]
                 for param in parameters_to_update:
                     self.user_parameters[param] = (self.user_parameters[f'{param}_start'] + (self.user_parameters[f'{param}_end'] - self.user_parameters[f'{param}_start']) * progress)
@@ -663,14 +655,12 @@ class EncodingDesigner(nn.Module):
                     self.to(current_device)
 
                     optimizer_gen = torch.optim.Adam([
-                        {'params': self.encoder.parameters(), 'lr': lr_start},
-                        {'params': self.decoder.parameters(), 'lr': lr_start}
+                        {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
+                        {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
                     ])
                     self.optimizer_gen = optimizer_gen
 
-                if n_iterations <= 1: current_lr = lr_start
-                else: current_lr = lr_start + (lr_end - lr_start) * (iteration / (n_iterations - 1))
-                for param_group in self.optimizer_gen.param_groups: param_group['lr'] = current_lr
+                for param_group in self.optimizer_gen.param_groups: param_group['lr'] = self.user_parameters['learning_rate']
 
                 is_report_iter = (iteration % report_freq == 0) or (iteration == n_iterations - 1) 
 
@@ -736,8 +726,8 @@ class EncodingDesigner(nn.Module):
                             self.load_state_dict(self.saved_models[revert_iter])
                             self.to(current_device)
                             optimizer_gen = torch.optim.Adam([ # Re-init optimizer for the reverted state
-                                {'params': self.encoder.parameters(), 'lr': lr_start},
-                                {'params': self.decoder.parameters(), 'lr': lr_start}
+                                {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
+                                {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
                             ])
                             optimizer_gen.load_state_dict(self.saved_optimizer_states[revert_iter])
                             self.optimizer_gen = optimizer_gen
@@ -748,8 +738,8 @@ class EncodingDesigner(nn.Module):
                         except Exception as e:
                             self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
                             self.optimizer_gen = torch.optim.Adam([
-                                {'params': self.encoder.parameters(), 'lr': lr_start},
-                                {'params': self.decoder.parameters(), 'lr': lr_start}
+                                {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
+                                {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
                             ])
                         self.learning_stats[iteration] = {} 
                         self.learning_stats[iteration]['status'] = f'Reverted from NaN at {iteration}'
@@ -793,7 +783,7 @@ class EncodingDesigner(nn.Module):
                     log_msg_header = f"--- Iteration: {iteration}/{n_iterations} Eval (Global Test Set) ---"
                     self.log.info(log_msg_header)
                     if self.user_parameters['Verbose'] == 1: print(f"{red_start}{log_msg_header}{reset_color}")
-                    log_msg_lr = f"Current LR: {current_lr:.6f}"
+                    log_msg_lr = f"Current LR: {self.user_parameters['learning_rate']:.6f}"
                     self.log.info(log_msg_lr)
                     if self.user_parameters['Verbose'] == 1: print(log_msg_lr)
                     train_loss_key = 'total_loss_train' 
