@@ -957,21 +957,21 @@ class EncodingDesigner(nn.Module):
             },
             "Low Noise": {
                 'constant_noise': 2.0,
-                'gene_fold_noise': 0.05,
+                'gene_fold_noise': 0.1,
                 'gene_dropout_proportion': 0.02,
                 'projection_dropout_proportion': 0.02,
                 'weight_dropout_proportion': 0.02
             },
             "Medium Noise": {
                 'constant_noise': 2.5,
-                'gene_fold_noise': 0.1,
+                'gene_fold_noise': 0.5,
                 'gene_dropout_proportion': 0.05,
                 'projection_dropout_proportion': 0.05,
                 'weight_dropout_proportion': 0.05
             },
             "High Noise": {
                 'constant_noise': 3.0,
-                'gene_fold_noise': 0.15,
+                'gene_fold_noise': 1.0,
                 'gene_dropout_proportion': 0.1,
                 'projection_dropout_proportion': 0.1,
                 'weight_dropout_proportion': 0.1
