@@ -46,8 +46,8 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 12,
             'n_bit': 24,
-            'n_iterations': 10000,
-            'batch_size': 1000,
+            'n_iterations': 50000,
+            'batch_size': 2500,
             'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
             'probe_weight': 1.0,
@@ -92,7 +92,13 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0,1000]
+    'perturbation_frequency':[0,1000],
+    'gene_fold_noise_end':[0.0,0.5],
+    'gene_dropout_proportion_end':[0.0,0.1],
+    'projection_dropout_proportion_end':[0.0,0.1],
+    'decoder_dropout_rate_end':[0.0,0.1],
+    'constant_noise_end':[0.0,3.0],
+    'weight_dropout_proportion_end':[0.0,0.1],
 }
 
 # Generate all parameter combinations
