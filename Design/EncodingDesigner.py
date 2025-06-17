@@ -53,8 +53,14 @@ class EncodingDesigner(nn.Module):
             'probe_weight': 1,
             'probe_under_weight_factor': 0.05, 
             'weight_dropout_proportion': 0.1,
+            'weight_dropout_proportion_start': 0.1,
+            'weight_dropout_proportion_end': 0.0,
             'projection_dropout_proportion': 0.1,
+            'projection_dropout_proportion_start': 0.1,
+            'projection_dropout_proportion_end': 0.0,
             'gene_dropout_proportion':0.1,
+            'gene_dropout_proportion_start': 0.1,
+            'gene_dropout_proportion_end': 0.0,
             'gene_constraint_weight': 1,
             'target_brightness_log': 4.5,
             'target_brightness_weight':1.0,
@@ -65,7 +71,11 @@ class EncodingDesigner(nn.Module):
             'type_correlation_mean_weight': 0,
             'type_correlation_max_weight': 1,
             'constant_noise': 3.0,
+            'constant_noise_start': 3.0,
+            'constant_noise_end': 1.0,
             'gene_fold_noise':0.0,
+            'gene_fold_noise_start': 0.0,
+            'gene_fold_noise_end': 0.0,
             'categorical_weight': 1,
             'batch_size': 1000,
             'pnorm_std_weight': 0.1, 
@@ -87,6 +97,8 @@ class EncodingDesigner(nn.Module):
             'decoder_hidden_layers': 0,
             'decoder_hidden_dim': 128,
             'decoder_dropout_rate': 0.3,
+            'decoder_dropout_rate_start': 0.3,
+            'decoder_dropout_rate_end': 0.1,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'convergence_threshold': float('inf'), # Added for early stopping when loss converges
             'l1_regularization_weight': 0.001, # L1 regularization to encourage sparsity (reduced from 0.01)
@@ -586,7 +598,7 @@ class EncodingDesigner(nn.Module):
 
     def calculate_loss(self, X, y, iteration, suffix=''):
         E = self.get_encoding_weights()
-        P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) 
+        P_original, Pnormalized, Pnormalized_dropout = self.project(X, E)
         # P_rescaled = P_original / (10**self.user_parameters['target_brightness_log'])  
         y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, y)
         raw_losses = {}
@@ -881,6 +893,35 @@ class EncodingDesigner(nn.Module):
 
         try:
             for iteration in range(n_iterations):
+                # Calculate current parameter values based on iteration progress
+                progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
+                
+                # Update user_parameters with current iteration's values
+                self.user_parameters['weight_dropout_proportion'] = (
+                    self.user_parameters['weight_dropout_proportion_start'] + 
+                    (self.user_parameters['weight_dropout_proportion_end'] - self.user_parameters['weight_dropout_proportion_start']) * progress
+                )
+                self.user_parameters['projection_dropout_proportion'] = (
+                    self.user_parameters['projection_dropout_proportion_start'] + 
+                    (self.user_parameters['projection_dropout_proportion_end'] - self.user_parameters['projection_dropout_proportion_start']) * progress
+                )
+                self.user_parameters['gene_dropout_proportion'] = (
+                    self.user_parameters['gene_dropout_proportion_start'] + 
+                    (self.user_parameters['gene_dropout_proportion_end'] - self.user_parameters['gene_dropout_proportion_start']) * progress
+                )
+                self.user_parameters['constant_noise'] = (
+                    self.user_parameters['constant_noise_start'] + 
+                    (self.user_parameters['constant_noise_end'] - self.user_parameters['constant_noise_start']) * progress
+                )
+                self.user_parameters['gene_fold_noise'] = (
+                    self.user_parameters['gene_fold_noise_start'] + 
+                    (self.user_parameters['gene_fold_noise_end'] - self.user_parameters['gene_fold_noise_start']) * progress
+                )
+                self.user_parameters['decoder_dropout_rate'] = (
+                    self.user_parameters['decoder_dropout_rate_start'] + 
+                    (self.user_parameters['decoder_dropout_rate_end'] - self.user_parameters['decoder_dropout_rate_start']) * progress
+                )
+                
                 self.learning_stats[iteration] = {}
 
                 if iteration == 0:
