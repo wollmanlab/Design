@@ -174,7 +174,7 @@ class EncodingDesigner(nn.Module):
         params_to_int = ['n_bit', 'n_iterations', 'report_freq', 'batch_size', 'n_cpu',
                          'decoder_hidden_layers', 'decoder_hidden_dim'] 
         for param_key in params_to_int:
-            self._convert_param_to_int(param_key) 
+            self.convert_param_to_int(param_key) 
 
         self.log.info(f"Final Parameters (after path construction & type conversion):")
         for key, val in self.user_parameters.items():
@@ -249,7 +249,7 @@ class EncodingDesigner(nn.Module):
         self.y_reverse_label_map = None
         self.y_unique_labels = None
 
-    def _convert_param_to_int(self, param_key):
+    def convert_param_to_int(self, param_key):
         try:
             original_value = self.user_parameters[param_key]
             float_value = float(original_value)
