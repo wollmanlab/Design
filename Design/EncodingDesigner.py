@@ -526,8 +526,7 @@ class EncodingDesigner(nn.Module):
 
     def calculate_loss(self, X, y, iteration, suffix=''):
         E = self.get_encoding_weights()
-        P_original, Pnormalized, Pnormalized_dropout = self.project(X, E)
-        # P_rescaled = P_original / (10**self.user_parameters['target_brightness_log'])  
+        P_original, Pnormalized, Pnormalized_dropout = self.project(X, E) 
         y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized_dropout, y)
         raw_losses = {}
         current_stats = {}
@@ -536,37 +535,24 @@ class EncodingDesigner(nn.Module):
         
         # Calculate dynamic range utilization and median brightness for each bit
         bit_dynamic_ranges = []
-        bit_percentiles = []  # Store percentiles for each bit
-        bit_medians = []  # Store medians for each bit
+        bit_percentiles = []
+        bit_medians = []
         for bit_idx in range(P_original.shape[1]):
             bit_values = P_original[:, bit_idx]
-            # Calculate all quantiles at once for efficiency
             p10, p50, p90 = torch.quantile(bit_values, torch.tensor([0.1, 0.5, 0.9]))
             fold_change = p90 / p10.clamp(min=1e-8)  # Avoid division by zero
             bit_dynamic_ranges.append(fold_change.item())
             bit_percentiles.append((p10.item(), p50.item(), p90.item()))
             bit_medians.append(p50.item())
-        
-        # Calculate median brightness statistics
         current_stats['lowest bit median brightness' + suffix] = f"{np.log10(min(bit_medians)):.2f}"
-        current_stats['brightest bit median brightness' + suffix] = f"{np.log10(max(bit_medians)):.2f}"
-        
-        # Find bits with lowest and highest dynamic range
         min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
-        
-        # Format percentiles in log10 scale with 2 decimal places
         min_p10, min_p50, min_p90 = bit_percentiles[min_range_idx]
         max_p10, max_p50, max_p90 = bit_percentiles[max_range_idx]
-        
         min_fold_change = bit_dynamic_ranges[min_range_idx]
         max_fold_change = bit_dynamic_ranges[max_range_idx]
-        
-        min_range_str = f"p10:{np.log10(min_p10):.2f}, p50:{np.log10(min_p50):.2f}, p90:{np.log10(min_p90):.2f}, fold:{min_fold_change:.2f}"
-        max_range_str = f"p10:{np.log10(max_p10):.2f}, p50:{np.log10(max_p50):.2f}, p90:{np.log10(max_p90):.2f}, fold:{max_fold_change:.2f}"
-        
-        current_stats['lowest_dynamic_range_bit' + suffix] = min_range_str
-        current_stats['highest_dynamic_range_bit' + suffix] = max_range_str
+        current_stats['lowest_dynamic_range_bit' + suffix] = f"p10:{np.log10(min_p10):.2f}, p50:{np.log10(min_p50):.2f}, p90:{np.log10(min_p90):.2f}, fold:{min_fold_change:.2f}"
+        current_stats['highest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max_p10):.2f}, p50:{np.log10(max_p50):.2f}, p90:{np.log10(max_p90):.2f}, fold:{max_fold_change:.2f}"
 
         # The model should not use more probes than self.user_parameters['total_n_probes'] and below that it can use as few as it wants
         probe_count = E.sum()
