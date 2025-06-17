@@ -93,9 +93,10 @@ user_parameters = {
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
     'gene_fold_noise' : [0.0, 0.5],
-    'probe_weight' : [1.0, 5.0, 10.0],
+    'probe_weight' : [1.0],
     'l1_regularization_weight' : [0.01, 0],
-    'sparsity_target' : [0.8, 0.9, 0],
+    'sparsity_target' : [0.8, 0.9, 0.95],
+    'sparsity_weight' : [0.1, 0],
     'convergence_threshold' : [0,0.0001],
 }
 
