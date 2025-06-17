@@ -85,13 +85,15 @@ user_parameters = {
             'convergence_threshold':0,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'sparsity_target': 0.95, # Target sparsity ratio (80% zeros)
-            'sparsity_weight': 1.0, # Weight for sparsity loss (increased from 0.1)
+            'sparsity_weight': 0, # Weight for sparsity loss (increased from 0.1)
+            'perturbation_frequency': 1000, # How often to perturb weights (every N iterations)
+            'perturbation_percentage': 0.05, # Percentage of weights to perturb (0.0-1.0)
         }
 
 
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'sparsity_weight' : [10.0, 0],
+    'perturbation_frequency':[0,500]
 }
 
 # Generate all parameter combinations
