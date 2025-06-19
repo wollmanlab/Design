@@ -513,7 +513,8 @@ class EncodingDesigner(nn.Module):
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
 
-        total_loss = torch.tensor(sum(raw_losses.values()), device=X.device, requires_grad=True) if raw_losses else torch.tensor(0.0, device=X.device, requires_grad=True)
+        #total_loss is a tensor
+        total_loss = sum(raw_losses.values())
         
         return total_loss, current_stats
 
