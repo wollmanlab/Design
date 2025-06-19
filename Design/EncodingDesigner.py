@@ -400,7 +400,8 @@ class EncodingDesigner(nn.Module):
                          f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
 
     def get_encoding_weights(self):
-        E = ((F.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
+        E = torch.abs(self.encoder.weight)
+        # E = ((F.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
