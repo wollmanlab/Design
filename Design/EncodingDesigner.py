@@ -505,7 +505,7 @@ class EncodingDesigner(nn.Module):
             total_probes_per_gene = E.sum(1)
             non_zero_constraints = self.constraints>0
             fold = total_probes_per_gene[non_zero_constraints] / self.constraints[non_zero_constraints]
-            gene_constraint_loss = self.user_parameters['gene_constraint_weight']* F.relu(fold-1)            
+            gene_constraint_loss = self.user_parameters['gene_constraint_weight']* F.relu(fold-1).mean()            
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
