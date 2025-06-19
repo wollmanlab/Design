@@ -405,7 +405,7 @@ class EncodingDesigner(nn.Module):
     def get_encoding_weights(self):
         if self.encoder is None: raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
         # self.encoder.weight.data = torch.clamp(self.encoder.weight.data, 0, 1)
-        E = F.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
+        E = ((F.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
