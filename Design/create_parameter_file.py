@@ -108,6 +108,7 @@ parameter_variants = {
     'decoder_dropout_rate_end':[0.0],
     'constant_noise_end':[2.0],
     'weight_dropout_proportion_end':[0.1],
+    'learning_rate_end':[0.005,0.05],
     'sparsity_weight':[0.0],
 }
 
