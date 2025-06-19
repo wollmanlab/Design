@@ -327,11 +327,7 @@ class EncodingDesigner(nn.Module):
 
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
             with torch.no_grad():
-                # Initialize to larger random values for sigmoid
-                # This gives sigmoid values roughly in [0.1, 0.9] range
-                self.encoder.weight.data = torch.randn_like(self.encoder.weight.data) * 2.0
-                self.log.info(f"Initialized encoder weights for sigmoid-based fractions")
-                self.log.info(f"Initial sigmoid range: {torch.sigmoid(self.encoder.weight).min().item():.3f} to {torch.sigmoid(self.encoder.weight).max().item():.3f}")
+                self.encoder.weight.data = torch.randn_like(self.encoder.weight.data).abs().clamp(min=1e-8,max=1-1e-8)
             self.log.info(f"Initialized encoder.") 
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
@@ -408,8 +404,8 @@ class EncodingDesigner(nn.Module):
 
     def get_encoding_weights(self):
         if self.encoder is None: raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
-        fractions = torch.sigmoid(self.encoder.weight)
-        E = fractions * self.constraints.unsqueeze(1)
+        self.encoder.weight.data = torch.clamp(self.encoder.weight.data, 0, 1)
+        E = self.encoder.weight * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
@@ -440,8 +436,7 @@ class EncodingDesigner(nn.Module):
             P = P + torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
             P = P * (torch.rand_like(P) > self.user_parameters['projection_dropout_proportion']).float()
-        Pnormalized = P.clamp(min=1).log10() - self.user_parameters['target_brightness_log']
-        return P, Pnormalized
+        return P
 
     def decode(self, Pnormalized, y):
         if self.decoder is None :
@@ -460,8 +455,8 @@ class EncodingDesigner(nn.Module):
 
     def calculate_loss(self, X, y, iteration, suffix=''):
         E = self.get_encoding_weights()
-        P_original, Pnormalized = self.project(X, E) 
-        y_predict, accuracy, raw_categorical_loss_component = self.decode(Pnormalized, y)
+        P_original = self.project(X, E) 
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(P_original, y)
         raw_losses = {}
         current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
@@ -496,7 +491,7 @@ class EncodingDesigner(nn.Module):
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
         if self.user_parameters['probe_weight']!=0:
             fold = (probe_count/self.user_parameters['total_n_probes']) - 1
-            probe_weight_loss = self.user_parameters['probe_weight'] * (F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
+            probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(fold)#(F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
             raw_losses['probe_weight_loss'] = probe_weight_loss
             current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
@@ -508,14 +503,13 @@ class EncodingDesigner(nn.Module):
 
         # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
-            fold = (E.sum(dim=1) / self.constraints) - 1
-            gene_constraint_loss = self.user_parameters['gene_constraint_weight']*F.relu(fold).mean()
+            gene_constraint_loss = F.relu(self.encoder.weight.sum(dim=1)-1).mean()
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
         # The model should have a median brightness atleast to the target brightness
         if self.user_parameters['target_brightness_weight'] != 0:
-            fold = self.user_parameters['target_brightness_log']/P_original.mean(0).min().clamp(min=1).log10() - 1
+            fold = (10**self.user_parameters['target_brightness_log']/P_original.mean(0).min().clamp(min=1)) - 1
             brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
@@ -806,7 +800,7 @@ class EncodingDesigner(nn.Module):
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
                 # Use the E_weights we already calculated above
-                P_global, _ = self.project(X_global_train, E_weights) 
+                P_global = self.project(X_global_train, E_weights) 
                 P_global_cpu = P_global.cpu()
                 P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
                 unique_y_global = torch.unique(y_global_train)
@@ -886,8 +880,8 @@ class EncodingDesigner(nn.Module):
                 with torch.no_grad():
                     # Use the existing pipeline: get_encoding_weights -> project -> decode
                     E_weights = self.get_encoding_weights()
-                    P_test, Pnormalized_test = self.project(self.X_test, E_weights)
-                    y_pred_test, accuracy_test, _ = self.decode(Pnormalized_test, self.y_test)
+                    P_test = self.project(self.X_test, E_weights)
+                    y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
@@ -985,7 +979,7 @@ class EncodingDesigner(nn.Module):
             return
 
         with torch.no_grad():
-            P_tensor_vis, _ = self.project(X_data_vis, final_E_device)
+            P_tensor_vis = self.project(X_data_vis, final_E_device)
             P_np_vis = P_tensor_vis.cpu().numpy() 
 
             n_bits = P_tensor_vis.shape[1]
@@ -1103,8 +1097,8 @@ class EncodingDesigner(nn.Module):
                 fig_cm = None 
                 try:
                     with torch.no_grad():
-                        P_test_tensor, Pnorm_test_tensor = self.project(X_test_global, final_E_device)
-                        y_pred_test, _, _ = self.decode(Pnorm_test_tensor, y_test_global)
+                        P_test_tensor = self.project(X_test_global, final_E_device)
+                        y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
 
                     y_true_np = y_test_global.cpu().numpy()
                     y_pred_np = y_pred_test.cpu().numpy()

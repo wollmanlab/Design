@@ -44,9 +44,9 @@ os.makedirs(os.path.join(base_dir, 'design_results'), exist_ok=True)
 os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 
 user_parameters = {
-            'n_cpu': 12,
+            'n_cpu': 6,
             'n_bit': 24,
-            'n_iterations': 50000,
+            'n_iterations': 25000,
             'batch_size': 2500,
             'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
@@ -100,6 +100,15 @@ parameter_variants = {
     'weight_dropout_proportion_end':[0.0,0.1,0.2],
     'sparsity_weight':[0.0,0.1],
     'total_n_probes':[10e4,20e4,30e4],
+}
+parameter_variants = {
+    'perturbation_frequency':[0],
+    'gene_fold_noise_end':[0.0],
+    'gene_dropout_proportion_end':[0.0],
+    'decoder_dropout_rate_end':[0.0],
+    'constant_noise_end':[2.0],
+    'weight_dropout_proportion_end':[0.1],
+    'sparsity_weight':[0.0],
 }
 
 # Generate all parameter combinations
