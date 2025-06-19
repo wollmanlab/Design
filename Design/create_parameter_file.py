@@ -110,7 +110,7 @@ parameter_variants = {
     'weight_dropout_proportion_end':[0.1],
     'learning_rate_end':[0.05],
     'sparsity_weight':[0.0],
-    'gradient_clip_max_norm':[1.0,50.0, 100.0],
+    'gradient_clip_max_norm':[1.0],
 }
 
 # Generate all parameter combinations

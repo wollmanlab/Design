@@ -450,16 +450,16 @@ class EncodingDesigner(nn.Module):
             bit_dynamic_ranges.append(fold_change.item())
             bit_percentiles.append((p10.item(), p50.item(), p90.item()))
             bit_medians.append(p50.item())
-        current_stats['lowest bit median brightness' + suffix] = f"{np.log10(min(bit_medians)):.2f}"
-        current_stats['highest bit median brightness' + suffix] = f"{np.log10(max(bit_medians)):.2f}"
+        current_stats['lowest bit median brightness' + suffix] = f"{np.log10(max(min(bit_medians), 1)):.2f}"
+        current_stats['highest bit median brightness' + suffix] = f"{np.log10(max(max(bit_medians), 1)):.2f}"
         min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
         min_p10, min_p50, min_p90 = bit_percentiles[min_range_idx]
         max_p10, max_p50, max_p90 = bit_percentiles[max_range_idx]
         min_fold_change = bit_dynamic_ranges[min_range_idx]
         max_fold_change = bit_dynamic_ranges[max_range_idx]
-        current_stats['lowest_dynamic_range_bit' + suffix] = f"p10:{np.log10(min_p10):.2f}, p50:{np.log10(min_p50):.2f}, p90:{np.log10(min_p90):.2f}, fold:{min_fold_change:.2f}"
-        current_stats['highest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max_p10):.2f}, p50:{np.log10(max_p50):.2f}, p90:{np.log10(max_p90):.2f}, fold:{max_fold_change:.2f}"
+        current_stats['lowest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max(min_p10, 1)):.2f}, p50:{np.log10(max(min_p50, 1)):.2f}, p90:{np.log10(max(min_p90, 1)):.2f}, fold:{min_fold_change:.2f}"
+        current_stats['highest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max(max_p10, 1)):.2f}, p50:{np.log10(max(max_p50, 1)):.2f}, p90:{np.log10(max(max_p90, 1)):.2f}, fold:{max_fold_change:.2f}"
 
         # The model should not use more probes than self.user_parameters['total_n_probes']
         probe_count = E.sum()
@@ -514,8 +514,9 @@ class EncodingDesigner(nn.Module):
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
 
         #total_loss is a tensor
-        total_loss = sum(raw_losses.values())
-        
+        total_loss = sum(raw_losses.values()) # tensor not int
+        if isinstance(total_loss, int):
+            total_loss = torch.tensor(total_loss)
         return total_loss, current_stats
 
     def fit(self):
