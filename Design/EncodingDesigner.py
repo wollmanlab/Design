@@ -1139,8 +1139,8 @@ class EncodingDesigner(nn.Module):
         unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
         numeric_parameters = np.array([i for i in unique_parameters if not isinstance(learning_curve[i+'_train'].iloc[1],str)])
         n_start = 0
+        x = np.array(learning_curve.index)[n_start:-1].astype(float)
         for parameter in numeric_parameters:
-            x = np.array(learning_curve.index)[n_start:-1]
             y1 = np.array(learning_curve[parameter+'_train'])[n_start:-1]
             y2 = np.array(learning_curve[parameter+'_test'])[n_start:-1]
             plt.figure(figsize=(5, 3),dpi=200)
