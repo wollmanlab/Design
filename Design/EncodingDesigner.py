@@ -326,8 +326,8 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-            with torch.no_grad():
-                self.encoder.weight.data = torch.randn_like(self.encoder.weight.data).abs().clamp(min=1e-8,max=1-1e-8)
+            # with torch.no_grad():
+            #     self.encoder.weight.data = torch.randn_like(self.encoder.weight.data).abs().clamp(min=1e-8,max=1-1e-8)
             self.log.info(f"Initialized encoder.") 
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
@@ -404,8 +404,8 @@ class EncodingDesigner(nn.Module):
 
     def get_encoding_weights(self):
         if self.encoder is None: raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
-        self.encoder.weight.data = torch.clamp(self.encoder.weight.data, 0, 1)
-        E = self.encoder.weight * self.constraints.unsqueeze(1)
+        # self.encoder.weight.data = torch.clamp(self.encoder.weight.data, 0, 1)
+        E = F.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
@@ -509,7 +509,7 @@ class EncodingDesigner(nn.Module):
 
         # The model should have a median brightness atleast to the target brightness
         if self.user_parameters['target_brightness_weight'] != 0:
-            fold = (10**self.user_parameters['target_brightness_log']/P_original.mean(0).min().clamp(min=1)) - 1
+            fold = ((10**self.user_parameters['target_brightness_log'])/(P_original.mean(0).min().clamp(min=1))).log2()
             brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
