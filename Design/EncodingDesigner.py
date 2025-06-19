@@ -891,6 +891,50 @@ class EncodingDesigner(nn.Module):
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
+                    
+                    # Save P_test averages for "No Noise" condition
+                    if level_name == "No Noise":
+                        self.log.info("Saving P_test averages for No Noise condition...")
+                        try:
+                            # Calculate cell type averages of P_test
+                            P_test_cpu = P_test.cpu()
+                            n_bits = P_test_cpu.shape[1]
+                            P_type_test = torch.zeros((self.n_categories, n_bits), device='cpu')
+                            unique_y_test = torch.unique(self.y_test)
+                            
+                            valid_type_indices = []
+                            valid_type_labels = []
+                            
+                            for type_idx_tensor in unique_y_test:
+                                type_idx = type_idx_tensor.item()
+                                type_mask = (self.y_test == type_idx_tensor)
+                                if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
+                                    P_type_test[type_idx] = P_test_cpu[type_mask].mean(dim=0)
+                                    valid_type_indices.append(type_idx)
+                                    valid_type_labels.append(self.y_reverse_label_map.get(type_idx, f"Type_{type_idx}"))
+                            
+                            if valid_type_indices:
+                                # Create DataFrame with cell types as index and bits as columns
+                                # Apply log10 transformation and round to 3 decimal places
+                                P_type_log10 = torch.log10(P_type_test[valid_type_indices].clamp(min=1e-10))
+                                P_type_rounded = torch.round(P_type_log10 * 1000) / 1000  # Round to 3 decimal places
+                                
+                                P_type_df = pd.DataFrame(
+                                    P_type_rounded.numpy(),
+                                    index=valid_type_labels,
+                                    columns=[f"Bit_{b}" for b in range(n_bits)]
+                                )
+                                
+                                # Save to CSV
+                                p_type_path = os.path.join(self.user_parameters['output'], 'P_Type.csv')
+                                P_type_df.to_csv(p_type_path)
+                                self.log.info(f"P_test averages for No Noise condition saved to {p_type_path}")
+                                self.log.info(f"Saved data for {len(valid_type_indices)} cell types across {n_bits} bits")
+                            else:
+                                self.log.warning("No valid cell types found for P_test averages")
+                                
+                        except Exception as e:
+                            self.log.error(f"Error saving P_test averages for No Noise condition: {e}")
                 
                 # Restore original parameters
                 for param_name, original_value in original_params.items():
