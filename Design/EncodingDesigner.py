@@ -502,7 +502,7 @@ class EncodingDesigner(nn.Module):
 
         # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
-            gene_constraint_loss = F.relu(self.encoder.weight.sum(dim=1)-1).mean()
+            gene_constraint_loss = F.relu(((F.tanh(self.encoder.weight)+1)/2).sum(dim=1)-1).mean()
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
