@@ -20,8 +20,9 @@ import seaborn as sns
 from matplotlib.patches import Patch
 from sklearn.metrics import confusion_matrix
 import argparse
+from typing import Optional, Dict, Any, List, Union
 try:
-    from IPython import get_ipython
+    from IPython.core.getipython import get_ipython
     from IPython.display import Image, display
     _IPYTHON_AVAILABLE = True
 except ImportError:
@@ -29,10 +30,10 @@ except ImportError:
 
 
 class EncodingDesigner(nn.Module):
-    def __init__(self, user_parameters_path=None):
+    def __init__(self, user_parameters_path: Optional[str] = None):
         super().__init__() 
 
-        self.user_parameters = {
+        self.user_parameters: Dict[str, Any] = {
             'n_cpu': 12,
             'n_bit': 24,
             'n_iterations': 10000,
@@ -118,8 +119,6 @@ class EncodingDesigner(nn.Module):
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
-        delayed_perturbation_iter = None  # Track if we need to do a delayed perturbation
-        start_time = time.time()
 
         loaded_user_parameters = {}
         if user_parameters_path is not None:
@@ -188,7 +187,10 @@ class EncodingDesigner(nn.Module):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
             self.log.info(f"Created output directory: {output_dir}")
-        pd.DataFrame(self.user_parameters.values(), index=self.user_parameters.keys(), columns=['values']).to_csv(os.path.join(output_dir, 'used_user_parameters.csv'))
+        param_df = pd.DataFrame({
+            'values': list(self.user_parameters.values())
+        }, index=pd.Index(list(self.user_parameters.keys())))
+        param_df.to_csv(os.path.join(output_dir, 'used_user_parameters.csv'))
 
         self.log.info("Creating symlinks for input files in output directory...")
         input_files_to_link = []
@@ -231,24 +233,6 @@ class EncodingDesigner(nn.Module):
                 self.log.error(f"An unexpected error occurred while trying to symlink {input_path}: {e}")
                 error_count += 1
         self.log.info(f"Symlinking complete. Created: {linked_count}, Skipped: {skipped_count}, Errors: {error_count}")
-        self.E = None
-        self.P = None
-        self.genes = None
-        self.constraints = None
-        self.encoder = None
-        self.decoder = None  
-        self.optimizer_gen = None
-        self.learning_stats = {}
-        self.saved_models = {}
-        self.saved_optimizer_states = {}
-        self.is_initialized_from_file = False  
-        self.X_train, self.y_train = None, None
-        self.X_test, self.y_test = None, None
-        self.n_genes = None 
-        self.n_categories = None
-        self.y_label_map = None
-        self.y_reverse_label_map = None
-        self.y_unique_labels = None
 
     def convert_param_to_int(self, param_key):
         try:
@@ -326,8 +310,6 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-            # with torch.no_grad():
-            #     self.encoder.weight.data = torch.randn_like(self.encoder.weight.data).abs().clamp(min=1e-8,max=1-1e-8)
             self.log.info(f"Initialized encoder.") 
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
@@ -402,13 +384,6 @@ class EncodingDesigner(nn.Module):
             self.log.exception(f"An unexpected error occurred during initialization: {e}")
             return False
 
-    def get_encoding_weights(self):
-        if self.encoder is None: raise RuntimeError("Encoder not initialized. Call initialize() or fit() first.")
-        E = ((F.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
-        if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
-            E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
-        return E
-
     def perturb_weights(self):
         with torch.no_grad():
             current_weights = self.encoder.weight.data.clone()
@@ -424,6 +399,12 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Perturbed {num_to_perturb} weights ({self.user_parameters['perturbation_percentage']*100:.1f}%) "
                          f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
 
+    def get_encoding_weights(self):
+        E = ((F.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
+        if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
+            E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
+        return E
+
     def project(self, X, E):
         if self.user_parameters['gene_fold_noise'] != 0:
             fold = self.user_parameters['gene_fold_noise']
@@ -437,12 +418,8 @@ class EncodingDesigner(nn.Module):
             P = P * (torch.rand_like(P) > self.user_parameters['projection_dropout_proportion']).float()
         return P
 
-    def decode(self, Pnormalized, y):
-        if self.decoder is None :
-            raise RuntimeError("Decoder not initialized.")
-        if not isinstance(self.decoder, nn.Module):
-            raise ValueError("Invalid decoder module.")
-        R = self.decoder(Pnormalized) 
+    def decode(self, P, y):
+        R = self.decoder(P) 
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
         if self.user_parameters['categorical_weight'] != 0:
@@ -452,7 +429,7 @@ class EncodingDesigner(nn.Module):
             categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
         return y_predict, accuracy, categorical_loss
 
-    def calculate_loss(self, X, y, iteration, suffix=''):
+    def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
         E = self.get_encoding_weights()
         P_original = self.project(X, E) 
         y_predict, accuracy, raw_categorical_loss_component = self.decode(P_original, y)
@@ -502,6 +479,7 @@ class EncodingDesigner(nn.Module):
 
         # The model should not use more probes than a gene can supply
         if self.user_parameters['gene_constraint_weight'] != 0:
+            if self.constraints is None: raise RuntimeError("Constraints not initialized")
             total_probes_per_gene = E.sum(1)
             non_zero_constraints = self.constraints>0
             fold = total_probes_per_gene[non_zero_constraints] / self.constraints[non_zero_constraints]
@@ -527,7 +505,7 @@ class EncodingDesigner(nn.Module):
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
 
-        total_loss = sum(raw_losses.values())
+        total_loss = torch.tensor(sum(raw_losses.values()), device=X.device, requires_grad=True) if raw_losses else torch.tensor(0.0, device=X.device, requires_grad=True)
         
         return total_loss, current_stats
 
@@ -556,7 +534,7 @@ class EncodingDesigner(nn.Module):
                 parameters_to_update = [i.replace('_start', '') for i in self.user_parameters if '_start' in i]
                 for param in parameters_to_update:
                     self.user_parameters[param] = (self.user_parameters[f'{param}_start'] + (self.user_parameters[f'{param}_end'] - self.user_parameters[f'{param}_start']) * progress)
-                self.learning_stats[iteration] = {}
+                self.learning_stats[str(iteration)] = {}
                 if iteration == 0:
                     if not self.is_initialized_from_file:
                         self.log.info("Model not initialized from file, using randomly initialized weights.")
@@ -587,8 +565,8 @@ class EncodingDesigner(nn.Module):
                 total_loss, batch_stats = self.calculate_loss(
                     X_batch, y_batch, iteration, suffix='_train'
                 )
-                self.learning_stats[iteration].update(batch_stats)
-                self.learning_stats[iteration]['total_loss_train'] = total_loss.item()
+                self.learning_stats[str(iteration)].update(batch_stats)
+                self.learning_stats[str(iteration)]['total_loss_train'] = total_loss.item()
                 total_loss.backward() 
 
                 nan_detected = False
@@ -650,8 +628,8 @@ class EncodingDesigner(nn.Module):
                                 {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
                                 {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
                             ])
-                        self.learning_stats[iteration] = {} 
-                        self.learning_stats[iteration]['status'] = f'Reverted from NaN at {iteration}'
+                        self.learning_stats[str(iteration)] = {} 
+                        self.learning_stats[str(iteration)]['status'] = f'Reverted from NaN at {iteration}'
                     else:
                         self.log.error(f"NaNs/Infs detected in gradients at iter {iteration}, but no previous state found. Stopping.")
                         raise ValueError("NaNs/Infs encountered and cannot revert.")
@@ -662,7 +640,7 @@ class EncodingDesigner(nn.Module):
                         total_test_loss, test_stats = self.calculate_loss(
                             self.X_test, self.y_test, iteration, suffix='_test')
                         test_stats['total_loss_test'] = total_test_loss.item()
-                        self.learning_stats[iteration].update(test_stats)
+                        self.learning_stats[str(iteration)].update(test_stats)
 
                     current_time = time.time()
                     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -680,12 +658,15 @@ class EncodingDesigner(nn.Module):
                     self.log.info(log_msg_lr)
                     if self.user_parameters['Verbose'] == 1: print(log_msg_lr)
                     train_loss_key = 'total_loss_train' 
-                    if train_loss_key in self.learning_stats[iteration]:
-                        log_msg = f'{train_loss_key}: {round(self.learning_stats[iteration][train_loss_key], 4)}'
+                    if train_loss_key in self.learning_stats[str(iteration)]:
+                        log_msg = f'{train_loss_key}: {round(self.learning_stats[str(iteration)][train_loss_key], 4)}'
                         self.log.info(log_msg)
                         if self.user_parameters['Verbose'] == 1: print(log_msg)
                     for name, item in test_stats.items():
-                        log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int, np.number)) and not np.isnan(item) else item}'
+                        if isinstance(item, (float, int, np.number)) and not np.isnan(item):
+                            log_msg = f'{name}: {round(float(item), 4)}'
+                        else:
+                            log_msg = f'{name}: {item}'
                         self.log.info(log_msg)
                         if self.user_parameters['Verbose'] == 1: print(log_msg)
                     self.log.info('------------------')
@@ -740,7 +721,10 @@ class EncodingDesigner(nn.Module):
             self.log.info(log_prefix)
             if self.user_parameters['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
             for name, item in self.learning_stats[final_iter_key].items():
-                log_msg = f'{name}: {round(item, 4) if isinstance(item, (float, int, np.number)) and not np.isnan(item) else item}'
+                if isinstance(item, (float, int, np.number)) and not np.isnan(item):
+                    log_msg = f'{name}: {round(float(item), 4)}'
+                else:
+                    log_msg = f'{name}: {item}'
                 self.log.info(log_msg)
                 if self.user_parameters['Verbose'] == 1: print(log_msg)
             self.log.info('------------------')
@@ -828,7 +812,10 @@ class EncodingDesigner(nn.Module):
 
         self.log.info("--- Basic Evaluation Stats ---")
         for key, val in self.results.items():
-            log_msg = f" {key}: {round(val, 4) if isinstance(val, (float, int)) else val}"
+            if isinstance(val, (float, int)):
+                log_msg = f" {key}: {round(val, 4)}"
+            else:
+                log_msg = f" {key}: {val}"
             self.log.info(log_msg)
             if self.user_parameters['Verbose'] == 1: print(log_msg)
         self.log.info("-----------------------------")
@@ -907,7 +894,7 @@ class EncodingDesigner(nn.Module):
                                 if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
                                     P_type_test[type_idx] = P_test_cpu[type_mask].mean(dim=0)
                                     valid_type_indices.append(type_idx)
-                                    valid_type_labels.append(self.y_reverse_label_map.get(type_idx, f"Type_{type_idx}"))
+                                    valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
                             
                             if valid_type_indices:
                                 # Create DataFrame with cell types as index and bits as columns
@@ -917,8 +904,8 @@ class EncodingDesigner(nn.Module):
                                 
                                 P_type_df = pd.DataFrame(
                                     P_type_rounded.numpy(),
-                                    index=valid_type_labels,
-                                    columns=[f"Bit_{b}" for b in range(n_bits)]
+                                    index=pd.Index(valid_type_labels),
+                                    columns=pd.Index([f"Bit_{b}" for b in range(n_bits)])
                                 )
                                 
                                 # Save to CSV
@@ -940,7 +927,9 @@ class EncodingDesigner(nn.Module):
                 self.log.error(f"Error during {level_name} accuracy calculation: {e}")
                 self.results[f'{level_name} Accuracy'] = np.nan
 
-        results_df = pd.DataFrame(self.results.values(), index=self.results.keys(), columns=['values'])
+        results_df = pd.DataFrame({
+            'values': list(self.results.values())
+        }, index=pd.Index(list(self.results.keys())))
         results_path = os.path.join(self.user_parameters['output'], 'Results.csv') 
         results_df.to_csv(results_path)
         self.log.info(f"Evaluation results saved to {results_path}")
@@ -948,7 +937,10 @@ class EncodingDesigner(nn.Module):
         if self.user_parameters['Verbose'] == 1:
             print("--- Evaluation Summary ---")
             for key, val in self.results.items():
-                print(f" {key}: {round(val, 4) if isinstance(val, (float, int, np.number)) and not np.isnan(val) else val}")
+                if isinstance(val, (float, int, np.number)) and not np.isnan(val):
+                    print(f" {key}: {round(float(val), 4)}")
+                else:
+                    print(f" {key}: {val}")
             print("-------------------------------------------------")
 
     def visualize(self, show_plots=False): 
@@ -998,7 +990,7 @@ class EncodingDesigner(nn.Module):
                     if 0 <= type_idx < self.n_categories:
                         P_type_global[type_idx] = P_tensor_vis[mask].mean(dim=0) 
                         valid_type_indices.append(type_idx)
-                        valid_type_labels.append(self.y_reverse_label_map.get(type_idx, f"Type_{type_idx}"))
+                        valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
                     else:
                         self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
             
@@ -1014,7 +1006,7 @@ class EncodingDesigner(nn.Module):
                 P_type_std = P_type_centered.std(dim=1, keepdim=True).clamp(min=1e-6)
                 P_type_norm = P_type_centered / P_type_std
                 correlation_matrix = (P_type_norm @ P_type_norm.T / n_bits).numpy() 
-                corr_df = pd.DataFrame(correlation_matrix, index=valid_type_labels, columns=valid_type_labels)
+                corr_df = pd.DataFrame(correlation_matrix, index=pd.Index(valid_type_labels), columns=pd.Index(valid_type_labels))
                 fig_corr = None 
                 try:
                     fig_width = min(max(8, n_types_present / 1.5), 25)
@@ -1041,8 +1033,8 @@ class EncodingDesigner(nn.Module):
 
             if n_types_present > 0:
                 p_type_df = pd.DataFrame(P_type_global_present.clamp(min=1).log10().numpy(), 
-                                         index=valid_type_labels,
-                                         columns=[f"Bit_{b}" for b in range(n_bits)])
+                                         index=pd.Index(valid_type_labels),
+                                         columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
                 cluster_fig = None 
                 try:
                     fig_width = min(max(6, n_bits / 1.5), 25)
@@ -1075,7 +1067,7 @@ class EncodingDesigner(nn.Module):
                 plot_filename = f"projection_density_plot_{global_fname_safe}.png"
                 plot_path = os.path.join(output_dir, plot_filename)
                 try:
-                    y_vis_str_labels = np.array([self.y_reverse_label_map.get(idx.item(), f"Type_{idx.item()}") for idx in y_data_vis])
+                    y_vis_str_labels = np.array([self.y_reverse_label_map.get(int(idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
                     # Use the proper encoding weights for the projection density plot
                     E_weights_cpu = E_weights.cpu().numpy()
                     plot_projection_space_density(
@@ -1111,7 +1103,7 @@ class EncodingDesigner(nn.Module):
                     cm = confusion_matrix(y_true_np, y_pred_np, labels=present_labels_idx) 
                     cm_sum = cm.sum(axis=1, keepdims=True)
                     cm_norm = np.divide(cm, cm_sum, out=np.zeros_like(cm, dtype=float), where=cm_sum!=0) 
-                    cm_df = pd.DataFrame(cm_norm, index=present_labels_str, columns=present_labels_str)
+                    cm_df = pd.DataFrame(cm_norm, index=pd.Index(present_labels_str), columns=pd.Index(present_labels_str))
                     fig_width = min(max(10, len(present_labels_str) / 1.5), 25)
                     fig_height = min(max(8, len(present_labels_str) / 2), 25)
                     fig_cm = plt.figure(figsize=(fig_width, fig_height))
@@ -1265,7 +1257,7 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                     while attempts < max_attempts:
                         color = np.random.rand(3)
                         color_sum = np.sum(color)
-                        distances_sq = [np.sum((color - existing_color)**2) for existing_color in used_colors_list]
+                        distances_sq = [float(np.sum((color - existing_color)**2)) for existing_color in used_colors_list]
                         min_d2 = min(distances_sq) if distances_sq else 1.0
                         if min_d2 > min_dist_sq and color_sum > min_sum:
                             color_mapper[ct] = color

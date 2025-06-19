@@ -160,6 +160,6 @@ for i, combination in enumerate(combinations):
     fullfilepath = os.path.join(input_param_path, f"{param_file_name_base}.csv")
     
     # Save parameter file
-    pd.DataFrame(current_params.values(), index=current_params.keys(), columns=['values']).to_csv(fullfilepath)
+    pd.DataFrame(current_params.values(), index=list(current_params.keys()), columns=['values']).to_csv(fullfilepath)
 
 print(f"Generated {len(combinations)} parameter files in {input_param_path}")
