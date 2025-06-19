@@ -46,7 +46,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,
             'n_bit': 24,
-            'n_iterations': 10000,
+            'n_iterations': 1000,
             'batch_size': 2500,
             'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
@@ -108,8 +108,9 @@ parameter_variants = {
     'decoder_dropout_rate_end':[0.0],
     'constant_noise_end':[0.0],
     'weight_dropout_proportion_end':[0.1],
-    'learning_rate_end':[0.005,0.05],
+    'learning_rate_end':[0.05],
     'sparsity_weight':[0.0],
+    'gradient_clip_max_norm':[0.0,1.0,50.0, 100.0],
 }
 
 # Generate all parameter combinations

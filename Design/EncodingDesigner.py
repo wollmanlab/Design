@@ -400,7 +400,7 @@ class EncodingDesigner(nn.Module):
                          f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
 
     def get_encoding_weights(self):
-        E = F.softplus(self.encoder.weight)
+        E = self.encoder.weight
         # E = ((F.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
@@ -466,6 +466,13 @@ class EncodingDesigner(nn.Module):
         current_stats['total_n_probes' + suffix] = probe_count.item()
         current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
+
+        # the model should have no negative weights
+        negative_weight_loss = F.relu(-self.encoder.weight).mean()
+        raw_losses['negative_weight_loss'] = negative_weight_loss
+        current_stats['negative_weight_loss' + suffix] = negative_weight_loss.item()
+
+        # The model should not use more probes than self.user_parameters['total_n_probes']
         if self.user_parameters['probe_weight']!=0:
             fold = (probe_count/self.user_parameters['total_n_probes']) - 1
             probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(fold)#(F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
