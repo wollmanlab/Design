@@ -1093,63 +1093,72 @@ class EncodingDesigner(nn.Module):
             X_test_global = self.X_test
             y_test_global = self.y_test # True internal labels
 
-            if X_test_global.shape[0] > 0:
-                fig_cm = None 
-                try:
-                    with torch.no_grad():
-                        P_test_tensor = self.project(X_test_global, final_E_device)
-                        y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
 
-                    y_true_np = y_test_global.cpu().numpy()
-                    y_pred_np = y_pred_test.cpu().numpy()
-                    present_labels_idx = np.unique(np.concatenate((y_true_np, y_pred_np)))
-                    present_labels_str = [self.y_reverse_label_map.get(i, f"Type_{i}") for i in present_labels_idx]
+            fig_cm = None 
+            try:
+                with torch.no_grad():
+                    P_test_tensor = self.project(X_test_global, final_E_device)
+                    y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
 
-                    if len(present_labels_idx) > 0: 
-                        cm = confusion_matrix(y_true_np, y_pred_np, labels=present_labels_idx) 
-                        cm_sum = cm.sum(axis=1, keepdims=True)
-                        cm_norm = np.divide(cm, cm_sum, out=np.zeros_like(cm, dtype=float), where=cm_sum!=0) 
-                        cm_df = pd.DataFrame(cm_norm, index=present_labels_str, columns=present_labels_str)
-                        fig_width = min(max(10, len(present_labels_str) / 1.5), 25)
-                        fig_height = min(max(8, len(present_labels_str) / 2), 25)
-                        fig_cm = plt.figure(figsize=(fig_width, fig_height))
-                        ax_cm = fig_cm.add_subplot(111)
-                        sns.heatmap(cm_df, annot=False, cmap='jet', linewidths=0.1, ax=ax_cm, vmin=0, vmax=1) 
-                        ax_cm.set_xlabel('Predicted Label')
-                        ax_cm.set_ylabel('True Label')
-                        ax_cm.set_title(f'Confusion Matrix (Test Set) - {global_name_str}')
-                        plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
-                        plt.setp(ax_cm.get_yticklabels(), rotation=0)
-                        fig_cm.tight_layout()
-                        plot_filename = f"confusion_matrix_test_{global_fname_safe}.png"
-                        plot_path = os.path.join(output_dir, plot_filename)
-                        fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
-                        saved_plot_paths.append(plot_path)
-                        self.log.info(f"Saved Test Confusion Matrix for {global_name_str} to {plot_path}")
-                    else:
-                        self.log.warning(f"Skipping confusion matrix for {global_name_str}: No labels found in true or predicted test data.")
-                except Exception as e:
-                    self.log.error(f"Error generating Test Confusion Matrix for {global_name_str}: {e}")
-                finally:
-                    if fig_cm is not None:
-                        plt.close(fig_cm) 
-            else:
-                self.log.warning(f"Skipping confusion matrix for {global_name_str}: No test data found.")
+                y_true_np = y_test_global.cpu().numpy()
+                y_pred_np = y_pred_test.cpu().numpy()
+                present_labels_idx = np.unique(np.concatenate((y_true_np, y_pred_np)))
+                present_labels_str = [self.y_reverse_label_map.get(i, f"Type_{i}") for i in present_labels_idx]
+
+                if len(present_labels_idx) > 0: 
+                    cm = confusion_matrix(y_true_np, y_pred_np, labels=present_labels_idx) 
+                    cm_sum = cm.sum(axis=1, keepdims=True)
+                    cm_norm = np.divide(cm, cm_sum, out=np.zeros_like(cm, dtype=float), where=cm_sum!=0) 
+                    cm_df = pd.DataFrame(cm_norm, index=present_labels_str, columns=present_labels_str)
+                    fig_width = min(max(10, len(present_labels_str) / 1.5), 25)
+                    fig_height = min(max(8, len(present_labels_str) / 2), 25)
+                    fig_cm = plt.figure(figsize=(fig_width, fig_height))
+                    ax_cm = fig_cm.add_subplot(111)
+                    sns.heatmap(cm_df, annot=False, cmap='jet', linewidths=0.1, ax=ax_cm, vmin=0, vmax=1) 
+                    ax_cm.set_xlabel('Predicted Label')
+                    ax_cm.set_ylabel('True Label')
+                    ax_cm.set_title(f'Confusion Matrix (Test Set) - {global_name_str}')
+                    plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
+                    plt.setp(ax_cm.get_yticklabels(), rotation=0)
+                    fig_cm.tight_layout()
+                    plot_filename = f"confusion_matrix_test_{global_fname_safe}.png"
+                    plot_path = os.path.join(output_dir, plot_filename)
+                    fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
+                    saved_plot_paths.append(plot_path)
+                    self.log.info(f"Saved Test Confusion Matrix for {global_name_str} to {plot_path}")
+                else:
+                    self.log.warning(f"Skipping confusion matrix for {global_name_str}: No labels found in true or predicted test data.")
+            except Exception as e:
+                self.log.error(f"Error generating Test Confusion Matrix for {global_name_str}: {e}")
+            finally:
+                if fig_cm is not None:
+                    plt.close(fig_cm) 
+
+        learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
+        unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
+        unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
+        numeric_parameters = np.array([i for i in unique_parameters if not isinstance(learning_curve[i+'_train'].iloc[1],str)])
+        n_start = 0
+        for parameter in numeric_parameters:
+            x = np.array(learning_curve.index)[n_start:-1]
+            y1 = np.array(learning_curve[parameter+'_train'])[n_start:-1]
+            y2 = np.array(learning_curve[parameter+'_test'])[n_start:-1]
+            plt.figure(figsize=(5, 3),dpi=200)
+            plt.scatter(x,y1,label='Train',s=1)
+            plt.scatter(x,y2,label='Test',c='orange',s=1)
+            plt.xlabel('Epoch')
+            plt.ylabel(parameter)
+            if parameter in ['total_loss','categorical_loss','probe_weight_loss','gene_constraint_loss','median brightness','total_n_probes']:
+                plt.yscale('log')
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, f"learning_curve_{parameter}.png"))
+            plt.close()
+
         self.log.info("Visualization generation finished.")
 
-        if show_plots:
-            if _IPYTHON_AVAILABLE and get_ipython() is not None:
-                self.log.info("Displaying saved plots inline (IPython detected)...")
-                if not saved_plot_paths:
-                    self.log.info("No plots were generated or saved.")
-                for plot_path in saved_plot_paths:
-                    if os.path.exists(plot_path):
-                        self.log.info(f"Displaying: {os.path.basename(plot_path)}")
-                        display(Image(filename=plot_path))
-                    else:
-                        self.log.error(f"Plot file not found: {plot_path}")
-            else:
-                self.log.warning("\nPlots saved to output directory. Run in an IPython environment (like Jupyter) and set show_plots=True to display inline.")
+
+
 
 
 def sanitize_filename(name):
