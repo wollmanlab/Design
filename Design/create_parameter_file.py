@@ -95,7 +95,6 @@ parameter_variants = {
     'perturbation_frequency':[0,1000],
     'gene_fold_noise_end':[0.0,0.5],
     'gene_dropout_proportion_end':[0.0,0.1],
-    'projection_dropout_proportion_end':[0.0,0.1],
     'decoder_dropout_rate_end':[0.0,0.1],
     'constant_noise_end':[0.0,3.0],
     'weight_dropout_proportion_end':[0.0,0.1],
