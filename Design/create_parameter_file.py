@@ -58,7 +58,7 @@ user_parameters = {
             'learning_rate_start': 0.05, 
             'learning_rate_end': 0.005, 
             'report_freq': 100,
-            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
+            'sparsity_target': 0.95, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 0.0, # Weight for sparsity loss (increased from 0.1)
             'categorical_weight': 1.0,
             'weight_dropout_proportion_start': 0.0,
@@ -92,12 +92,14 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0,1000],
-    'gene_fold_noise_end':[0.0,0.5],
-    'gene_dropout_proportion_end':[0.0,0.1],
-    'decoder_dropout_rate_end':[0.0,0.1],
-    'constant_noise_end':[0.0,3.0],
-    'weight_dropout_proportion_end':[0.0,0.1],
+    'perturbation_frequency':[0],
+    'gene_fold_noise_end':[0.0,0.25,0.5],
+    'gene_dropout_proportion_end':[0.0],
+    'decoder_dropout_rate_end':[0.0],
+    'constant_noise_end':[0.0,2.0,3.0],
+    'weight_dropout_proportion_end':[0.0,0.1,0.2],
+    'sparsity_weight':[0.0,0.1],
+    'total_n_probes':[10e4,20e4,30e4],
 }
 
 # Generate all parameter combinations
