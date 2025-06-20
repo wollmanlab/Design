@@ -310,7 +310,26 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
 
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-            self.log.info(f"Initialized encoder.") 
+            with torch.no_grad():
+                min_logit = -4.595  # logit(0.01)
+                max_logit = -1.386  # logit(0.2)
+                random_weights = torch.rand_like(self.encoder.weight.data)
+                initial_weights = min_logit + (max_logit - min_logit) * random_weights
+                initial_sigmoid = torch.sigmoid(initial_weights)
+                current_total_probes = (initial_sigmoid * self.constraints.unsqueeze(1)).sum()
+                target_probes = self.user_parameters['total_n_probes']
+                if current_total_probes > 0:
+                    scale_factor = target_probes / current_total_probes
+                    scaled_sigmoid = initial_sigmoid * scale_factor
+                    scaled_sigmoid = torch.clamp(scaled_sigmoid, 0.01, 0.2)  # Clamp to valid sigmoid range
+                    final_weights = torch.logit(scaled_sigmoid.clamp(min=1e-7, max=1-1e-7))
+                else:
+                    final_weights = initial_weights
+                self.encoder.weight.data = final_weights
+                final_sigmoid = torch.sigmoid(final_weights)
+                final_total_probes = (final_sigmoid * self.constraints.unsqueeze(1)).sum()
+                self.log.info(f"Encoder initialization: sigmoid range [{final_sigmoid.min().item():.3f}, {final_sigmoid.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
+            self.log.info(f"Initialized encoder with improved weight initialization.")
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
             hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
@@ -400,7 +419,7 @@ class EncodingDesigner(nn.Module):
                          f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
 
     def get_encoding_weights(self):
-        E = torch.abs(self.encoder.weight) * self.constraints.unsqueeze(1)
+        E = F.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
@@ -466,10 +485,10 @@ class EncodingDesigner(nn.Module):
         current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
 
-        # the model should have no negative weights
-        negative_weight_loss = F.relu(-self.encoder.weight).mean()
-        raw_losses['negative_weight_loss'] = negative_weight_loss
-        current_stats['negative_weight_loss' + suffix] = negative_weight_loss.item()
+        # # the model should have no negative weights
+        # negative_weight_loss = F.relu(-self.encoder.weight).mean()
+        # raw_losses['negative_weight_loss'] = negative_weight_loss
+        # current_stats['negative_weight_loss' + suffix] = negative_weight_loss.item()
 
         # The model should not use more probes than self.user_parameters['total_n_probes']
         if self.user_parameters['probe_weight']!=0:
