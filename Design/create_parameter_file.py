@@ -46,7 +46,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,
             'n_bit': 24,
-            'n_iterations': 100000,
+            'n_iterations': 5000,
             'batch_size': 2500,
             'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
@@ -77,6 +77,8 @@ user_parameters = {
             'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
             'min_probe_fraction': 0.05, # Minimum sigmoid value for initialization
             'max_probe_fraction': 0.5,  # Maximum sigmoid value for initialization
+            'min_probe_fraction_perturb': 0.05, # Minimum sigmoid value for perturbation
+            'max_probe_fraction_perturb': 0.5,  # Maximum sigmoid value for perturbation
             'activation_function':'tanh',
             'sum_normalize_projection': 0,
             'bit_normalize_projection': 0,
@@ -98,7 +100,7 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0,500],
+    'perturbation_frequency':[0],
     'gene_fold_noise_end':[0.0],
     'gene_dropout_proportion_end':[0.0],
     'decoder_dropout_rate_end':[0.0],
@@ -106,9 +108,12 @@ parameter_variants = {
     'weight_dropout_proportion_end':[0.1],
     'learning_rate_end':[0.05],
     'sparsity_weight':[0.0],
-    'gradient_clip_max_norm':[1.0],
-    'min_probe_fraction':[0.05, 0.01], # Test different minimum probe fractions
-    'max_probe_fraction':[0.25, 0.5],  # Test different maximum probe fractions
+    'gradient_clip_max_norm':[0.0,1.0],
+    'min_probe_fraction':[ 0.01], # Test different minimum probe fractions
+    'max_probe_fraction':[0.25],  # Test different maximum probe fractions
+    'sum_normalize_projection':[0,1],
+    'bit_normalize_projection':[0,1],
+    
 }
 
 # Generate all parameter combinations
