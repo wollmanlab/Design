@@ -554,7 +554,7 @@ class EncodingDesigner(nn.Module):
 
         # The model should have a median brightness atleast to the target brightness
         if self.user_parameters['target_brightness_weight'] != 0:
-            fold = ((10**self.user_parameters['target_brightness_log'])/(P_original.mean(0).min().clamp(min=1))).log2()
+            fold = ((10**self.user_parameters['target_brightness_log'])/(P_original.median(0).min().clamp(min=1))).log2()
             brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()

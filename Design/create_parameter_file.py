@@ -70,9 +70,9 @@ user_parameters = {
             'decoder_dropout_rate_start': 0.0,
             'decoder_dropout_rate_end': 0.0, #0.1
             'constant_noise_start': 0.0,
-            'constant_noise_end': 0.0, # 3.0
+            'constant_noise_end': 2.0, # 3.0
             'gene_fold_noise_start': 0.0,
-            'gene_fold_noise_end': 0.0, #0.5
+            'gene_fold_noise_end': 0.5, #0.5
             'perturbation_frequency': 250, # How often to perturb weights (every N iterations)
             'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
             'min_probe_fraction': 0.01, # Minimum sigmoid value for initialization
@@ -101,11 +101,7 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'constant_noise_end':[1.0, 2.0, 3.0],
-    'gene_fold_noise_end':[0.0,0.25, 0.5],
-    'weight_dropout_proportion_end':[0.0,0.1],
-    'gene_dropout_proportion_end':[0.0,0.1],
-    'target_brightness_log':[4.0, 4.5, 5.0],
+    'best_model':[0,1],
     }
 
 # Generate all parameter combinations
