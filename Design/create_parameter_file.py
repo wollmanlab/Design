@@ -80,8 +80,8 @@ user_parameters = {
             'min_probe_fraction_perturb': 0.05, # Minimum sigmoid value for perturbation
             'max_probe_fraction_perturb': 0.5,  # Maximum sigmoid value for perturbation
             'activation_function':'tanh',
-            'sum_normalize_projection': 0,
-            'bit_normalize_projection': 0,
+            'sum_normalize_projection': 1,
+            'bit_normalize_projection': 1,
             'label_smoothing': 0.1,
             'device': 'cpu',
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
@@ -100,9 +100,7 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'gradient_clip_max_norm':[0.0,1.0],
-    'sum_normalize_projection':[0,1],
-    'bit_normalize_projection':[0,1],
+    'projection_dropout_proportion_end':[0.0,0.1],
     
 }
 

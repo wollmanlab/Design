@@ -337,7 +337,7 @@ class EncodingDesigner(nn.Module):
                     raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
 
                 self.encoder.weight.data = final_weights
-                final_total_probes = (final_weights * self.constraints.unsqueeze(1)).sum()
+                final_total_probes = (post_activation_weights * self.constraints.unsqueeze(1)).sum()
                 self.log.info(f"Encoder initialization: range [{final_weights.min().item():.3f}, {final_weights.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
             self.log.info(f"Initialized encoder with improved weight initialization.")
 
@@ -1203,11 +1203,13 @@ class EncodingDesigner(nn.Module):
         for parameter in numeric_parameters:
             y1 = np.array(learning_curve[parameter+'_train'])[n_start:-1]
             y2 = np.array(learning_curve[parameter+'_test'])[n_start:-1]
+            y_min, y_max = np.percentile(y1,[1,99])
             plt.figure(figsize=(5, 3),dpi=200)
             plt.scatter(x,y1,label='Train',s=1)
             plt.scatter(x,y2,label='Test',c='orange',s=1)
             plt.xlabel('Epoch')
             plt.ylabel(parameter)
+            plt.ylim(y_min,y_max)
             if parameter in ['total_loss','categorical_loss','probe_weight_loss','gene_constraint_loss','median brightness','total_n_probes']:
                 plt.yscale('log')
             plt.legend()
