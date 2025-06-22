@@ -46,7 +46,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,
             'n_bit': 24,
-            'n_iterations': 1000,
+            'n_iterations': 100000,
             'batch_size': 2500,
             'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
@@ -75,6 +75,12 @@ user_parameters = {
             'gene_fold_noise_end': 0.5,
             'perturbation_frequency': 500, # How often to perturb weights (every N iterations)
             'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
+            'min_probe_fraction': 0.05, # Minimum sigmoid value for initialization
+            'max_probe_fraction': 0.5,  # Maximum sigmoid value for initialization
+            'activation_function':'tanh',
+            'sum_normalize_projection': 0,
+            'bit_normalize_projection': 0,
+            'label_smoothing': 0.1,
             'device': 'cpu',
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
             'input': './', 
@@ -92,17 +98,7 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0],
-    'gene_fold_noise_end':[0.0,0.25,0.5],
-    'gene_dropout_proportion_end':[0.0],
-    'decoder_dropout_rate_end':[0.0],
-    'constant_noise_end':[0.0,2.0,3.0],
-    'weight_dropout_proportion_end':[0.0,0.1,0.2],
-    'sparsity_weight':[0.0,0.1],
-    'total_n_probes':[10e4,20e4,30e4],
-}
-parameter_variants = {
-    'perturbation_frequency':[0],
+    'perturbation_frequency':[0,500],
     'gene_fold_noise_end':[0.0],
     'gene_dropout_proportion_end':[0.0],
     'decoder_dropout_rate_end':[0.0],
@@ -110,7 +106,9 @@ parameter_variants = {
     'weight_dropout_proportion_end':[0.1],
     'learning_rate_end':[0.05],
     'sparsity_weight':[0.0],
-    'gradient_clip_max_norm':[1.0, 50.0],
+    'gradient_clip_max_norm':[1.0],
+    'min_probe_fraction':[0.05, 0.01], # Test different minimum probe fractions
+    'max_probe_fraction':[0.25, 0.5],  # Test different maximum probe fractions
 }
 
 # Generate all parameter combinations

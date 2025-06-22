@@ -65,6 +65,14 @@ class EncodingDesigner(nn.Module):
             'gene_fold_noise_end': 0.5,
             'perturbation_frequency': 500, # How often to perturb weights (every N iterations)
             'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
+            'min_probe_fraction': 0.05, # Minimum sigmoid value for initialization
+            'max_probe_fraction': 0.5,  # Maximum sigmoid value for initialization
+            'min_probe_fraction_perturb': 0.05, # Minimum sigmoid value for perturbation
+            'max_probe_fraction_perturb': 0.5,  # Maximum sigmoid value for perturbation
+            'activation_function':'tanh',
+            'sum_normalize_projection': 0,
+            'bit_normalize_projection': 0,
+            'label_smoothing': 0.1,
             'device': 'cpu',
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
             'input': './', 
@@ -311,24 +319,26 @@ class EncodingDesigner(nn.Module):
 
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
             with torch.no_grad():
-                min_logit = -4.595  # logit(0.01)
-                max_logit = -1.386  # logit(0.2)
                 random_weights = torch.rand_like(self.encoder.weight.data)
-                initial_weights = min_logit + (max_logit - min_logit) * random_weights
-                initial_sigmoid = torch.sigmoid(initial_weights)
-                current_total_probes = (initial_sigmoid * self.constraints.unsqueeze(1)).sum()
-                target_probes = self.user_parameters['total_n_probes']
-                if current_total_probes > 0:
-                    scale_factor = target_probes / current_total_probes
-                    scaled_sigmoid = initial_sigmoid * scale_factor
-                    scaled_sigmoid = torch.clamp(scaled_sigmoid, 0.01, 0.2)  # Clamp to valid sigmoid range
-                    final_weights = torch.logit(scaled_sigmoid.clamp(min=1e-7, max=1-1e-7))
+                min_value = torch.tensor(self.user_parameters['min_probe_fraction'],dtype=random_weights.dtype,device=current_device)
+                max_value = torch.tensor(self.user_parameters['max_probe_fraction'],dtype=random_weights.dtype,device=current_device)
+                post_activation_weights = min_value + (max_value - min_value) * random_weights
+
+                if self.user_parameters['activation_function'] == 'sigmoid':
+                    final_weights = torch.logit(post_activation_weights)
+                elif self.user_parameters['activation_function'] == 'tanh':
+                    # modified tanh activation function (torch.tanh(x)+1)/2
+                    final_weights = torch.arctanh(2 * post_activation_weights - 1)
+                elif self.user_parameters['activation_function'] == 'linear':
+                    final_weights = post_activation_weights
+                elif self.user_parameters['activation_function'] == 'relu':
+                    final_weights = torch.abs(post_activation_weights)
                 else:
-                    final_weights = initial_weights
+                    raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
+
                 self.encoder.weight.data = final_weights
-                final_sigmoid = torch.sigmoid(final_weights)
-                final_total_probes = (final_sigmoid * self.constraints.unsqueeze(1)).sum()
-                self.log.info(f"Encoder initialization: sigmoid range [{final_sigmoid.min().item():.3f}, {final_sigmoid.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
+                final_total_probes = (final_weights * self.constraints.unsqueeze(1)).sum()
+                self.log.info(f"Encoder initialization: range [{final_weights.min().item():.3f}, {final_weights.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
             self.log.info(f"Initialized encoder with improved weight initialization.")
 
             n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
@@ -339,7 +349,7 @@ class EncodingDesigner(nn.Module):
             if n_hidden_layers_decoder == 0:
                 decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
                 log_msg_decoder_structure = "Initialized single linear decoder."
-            else:
+            else:# broken right now
                 for i in range(n_hidden_layers_decoder):
                     decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, hidden_dim_decoder))
                     decoder_modules.append(nn.BatchNorm1d(hidden_dim_decoder)) 
@@ -405,21 +415,45 @@ class EncodingDesigner(nn.Module):
 
     def perturb_weights(self):
         with torch.no_grad():
-            current_weights = self.encoder.weight.data.clone()
-            total_weights = current_weights.numel()
-            num_to_perturb = int(total_weights * self.user_parameters['perturbation_percentage'])
-            flat_indices = torch.randperm(total_weights)[:num_to_perturb]
-            row_indices = flat_indices // current_weights.shape[1]
-            col_indices = flat_indices % current_weights.shape[1]
-            random_fractions = torch.rand(num_to_perturb)
-            perturbation_values = torch.logit(random_fractions.clamp(min=1e-7, max=1-1e-7))
-            current_weights[row_indices, col_indices] = perturbation_values
-            self.encoder.weight.data = current_weights
-            self.log.info(f"Perturbed {num_to_perturb} weights ({self.user_parameters['perturbation_percentage']*100:.1f}%) "
-                         f"to random fractions (range: {random_fractions.min().item():.3f} to {random_fractions.max().item():.3f})")
+            # Create mask for weights to perturb
+            mask = (torch.rand_like(self.encoder.weight.data) < self.user_parameters['perturbation_percentage']).float()
+            # Generate new random weights for the perturbed positions
+            random_weights = torch.rand_like(self.encoder.weight.data)
+            min_value = torch.tensor(self.user_parameters['min_probe_fraction_perturb'], 
+                                    dtype=random_weights.dtype, device=random_weights.device)
+            max_value = torch.tensor(self.user_parameters['max_probe_fraction_perturb'], 
+                                    dtype=random_weights.dtype, device=random_weights.device)
+            post_activation_weights = min_value + (max_value - min_value) * random_weights
+            # Convert to logit space based on activation function
+            if self.user_parameters['activation_function'] == 'sigmoid':
+                new_weights = torch.logit(post_activation_weights)
+            elif self.user_parameters['activation_function'] == 'tanh':
+                # modified tanh activation function (torch.tanh(x)+1)/2
+                new_weights = torch.arctanh(2 * post_activation_weights - 1)
+            elif self.user_parameters['activation_function'] == 'linear':
+                new_weights = post_activation_weights
+            elif self.user_parameters['activation_function'] == 'relu':
+                new_weights = torch.abs(post_activation_weights)
+            else:
+                raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
+            # Apply perturbation only to masked positions
+            self.encoder.weight.data = self.encoder.weight.data * (1 - mask) + new_weights * mask
+            # Count how many weights were actually perturbed
+            num_perturbed = mask.sum().item()
+            self.log.info(f"Perturbed {num_perturbed} weights out of {self.encoder.weight.data.numel()} total weights ({num_perturbed/self.encoder.weight.data.numel()*100:.2f}%)")
 
     def get_encoding_weights(self):
-        E = F.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
+        if self.user_parameters['activation_function'] == 'sigmoid':
+            E = torch.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
+        elif self.user_parameters['activation_function'] == 'tanh':
+            # modified tanh activation function (torch.tanh(x)+1)/2
+            E = ((torch.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
+        elif self.user_parameters['activation_function'] == 'linear':
+            E = self.encoder.weight * self.constraints.unsqueeze(1)
+        elif self.user_parameters['activation_function'] == 'relu':
+            E = torch.relu(self.encoder.weight) * self.constraints.unsqueeze(1)
+        else:
+            raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
         return E
@@ -438,11 +472,17 @@ class EncodingDesigner(nn.Module):
         return P
 
     def decode(self, P, y):
+        if self.user_parameters['sum_normalize_projection'] != 0:
+            # Normalize P to have sum of 1
+            P = P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
+        if self.user_parameters['bit_normalize_projection'] != 0:
+            # Normalize P to have mean 0 and std 1
+            P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
         if self.user_parameters['categorical_weight'] != 0:
-            loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
+            loss_fn = nn.CrossEntropyLoss(label_smoothing=self.user_parameters['label_smoothing']) 
             categorical_loss = loss_fn(R, y)
         else:
             categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
@@ -485,21 +525,19 @@ class EncodingDesigner(nn.Module):
         current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
         current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
 
-        # # the model should have no negative weights
-        # negative_weight_loss = F.relu(-self.encoder.weight).mean()
-        # raw_losses['negative_weight_loss'] = negative_weight_loss
-        # current_stats['negative_weight_loss' + suffix] = negative_weight_loss.item()
-
         # The model should not use more probes than self.user_parameters['total_n_probes']
         if self.user_parameters['probe_weight']!=0:
-            fold = (probe_count/self.user_parameters['total_n_probes']) - 1
-            probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(fold)#(F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
+            #bounded in case probe is very off especially in the beginning
+            fold = (probe_count/self.user_parameters['total_n_probes'])
+            probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(fold-1).clamp(min=0,max=5)
+            #(F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
             raw_losses['probe_weight_loss'] = probe_weight_loss
             current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
 
         # The model should accurately decode cell type labels
         if self.user_parameters['categorical_weight'] != 0:
-            categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component
+            # bound this in case of very wrong prediction
+            categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component.clamp(min=0,max=15)
             raw_losses['categorical_loss'] = categorical_loss_component
             current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
 
@@ -522,7 +560,7 @@ class EncodingDesigner(nn.Module):
 
         # Target sparsity loss to encourage specific percentage of zeros
         if self.user_parameters['sparsity_weight'] != 0:
-            sparsity_threshold = 0.01
+            sparsity_threshold = 1
             sparsity_ratio = (E < sparsity_threshold).float().mean()
             target_sparsity = self.user_parameters['sparsity_target']
             difference = F.relu(target_sparsity - sparsity_ratio)
