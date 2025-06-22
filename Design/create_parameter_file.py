@@ -46,7 +46,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,
             'n_bit': 24,
-            'n_iterations': 5000,
+            'n_iterations': 25000,
             'batch_size': 2500,
             'target_brightness_log': 4.5,
             'total_n_probes': 30e4,
@@ -69,11 +69,11 @@ user_parameters = {
             'gene_dropout_proportion_end': 0.0, #0.1
             'decoder_dropout_rate_start': 0.0,
             'decoder_dropout_rate_end': 0.0, #0.1
-            'constant_noise_start': 1.0,
+            'constant_noise_start': 0.0,
             'constant_noise_end': 0.0, # 3.0
             'gene_fold_noise_start': 0.0,
             'gene_fold_noise_end': 0.0, #0.5
-            'perturbation_frequency': 0, # How often to perturb weights (every N iterations)
+            'perturbation_frequency': 250, # How often to perturb weights (every N iterations)
             'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
             'min_probe_fraction': 0.01, # Minimum sigmoid value for initialization
             'max_probe_fraction': 0.25,  # Maximum sigmoid value for initialization
@@ -101,9 +101,12 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0,250, 500, 1000],
-    'perturbation_percentage':[0.01, 0.05, 0.1],
-}
+    'constant_noise_end':[1.0, 2.0, 3.0],
+    'gene_fold_noise_end':[0.0,0.25, 0.5],
+    'weight_dropout_proportion_end':[0.0,0.1],
+    'gene_dropout_proportion_end':[0.0,0.1],
+    'target_brightness_log':[4.0, 4.5, 5.0],
+    }
 
 # Generate all parameter combinations
 param_names = list(parameter_variants.keys())
