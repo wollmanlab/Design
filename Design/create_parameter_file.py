@@ -56,7 +56,7 @@ user_parameters = {
             'target_brightness_weight':1.0,
             'gradient_clip_max_norm': 1.0, # Added for gradient clipping
             'learning_rate_start': 0.05, 
-            'learning_rate_end': 0.005, 
+            'learning_rate_end': 0.05, 
             'report_freq': 100,
             'sparsity_target': 0.95, # Target sparsity ratio (80% zeros)
             'sparsity_weight': 0.0, # Weight for sparsity loss (increased from 0.1)
@@ -66,17 +66,17 @@ user_parameters = {
             'projection_dropout_proportion_start': 0.0,
             'projection_dropout_proportion_end': 0.1,
             'gene_dropout_proportion_start': 0.0,
-            'gene_dropout_proportion_end': 0.1,
+            'gene_dropout_proportion_end': 0.0, #0.1
             'decoder_dropout_rate_start': 0.0,
-            'decoder_dropout_rate_end': 0.1,
+            'decoder_dropout_rate_end': 0.0, #0.1
             'constant_noise_start': 1.0,
-            'constant_noise_end': 3.0,
+            'constant_noise_end': 0.0, # 3.0
             'gene_fold_noise_start': 0.0,
-            'gene_fold_noise_end': 0.5,
-            'perturbation_frequency': 500, # How often to perturb weights (every N iterations)
+            'gene_fold_noise_end': 0.0, #0.5
+            'perturbation_frequency': 0, # How often to perturb weights (every N iterations)
             'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
-            'min_probe_fraction': 0.05, # Minimum sigmoid value for initialization
-            'max_probe_fraction': 0.5,  # Maximum sigmoid value for initialization
+            'min_probe_fraction': 0.01, # Minimum sigmoid value for initialization
+            'max_probe_fraction': 0.25,  # Maximum sigmoid value for initialization
             'min_probe_fraction_perturb': 0.05, # Minimum sigmoid value for perturbation
             'max_probe_fraction_perturb': 0.5,  # Maximum sigmoid value for perturbation
             'activation_function':'tanh',
@@ -100,17 +100,7 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'perturbation_frequency':[0],
-    'gene_fold_noise_end':[0.0],
-    'gene_dropout_proportion_end':[0.0],
-    'decoder_dropout_rate_end':[0.0],
-    'constant_noise_end':[0.0],
-    'weight_dropout_proportion_end':[0.1],
-    'learning_rate_end':[0.05],
-    'sparsity_weight':[0.0],
     'gradient_clip_max_norm':[0.0,1.0],
-    'min_probe_fraction':[ 0.01], # Test different minimum probe fractions
-    'max_probe_fraction':[0.25],  # Test different maximum probe fractions
     'sum_normalize_projection':[0,1],
     'bit_normalize_projection':[0,1],
     
