@@ -73,6 +73,7 @@ class EncodingDesigner(nn.Module):
             'sum_normalize_projection': 0,
             'bit_normalize_projection': 0,
             'label_smoothing': 0.1,
+            'best_model': 1,
             'device': 'cpu',
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
             'input': './', 
@@ -751,6 +752,9 @@ class EncodingDesigner(nn.Module):
         except Exception as e:
             self.log.exception(f"Error during training loop at iteration {iteration}: {e}")
         finally:
+            if self.user_parameters['best_model'] ==0:
+                self.best_model_state_dict = None
+                self.log.info("Best model turned off. Saving the final iteration state.")
             if self.best_model_state_dict is not None:
                 self.log.info(f"Loading best model state from iteration {self.best_iteration} (Train Loss: {self.best_loss:.4f}) before final save.")
                 try:

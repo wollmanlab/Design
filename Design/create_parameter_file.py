@@ -64,7 +64,7 @@ user_parameters = {
             'weight_dropout_proportion_start': 0.0,
             'weight_dropout_proportion_end': 0.1,
             'projection_dropout_proportion_start': 0.0,
-            'projection_dropout_proportion_end': 0.1,
+            'projection_dropout_proportion_end': 0.0, # 0.1
             'gene_dropout_proportion_start': 0.0,
             'gene_dropout_proportion_end': 0.0, #0.1
             'decoder_dropout_rate_start': 0.0,
@@ -83,6 +83,7 @@ user_parameters = {
             'sum_normalize_projection': 1,
             'bit_normalize_projection': 1,
             'label_smoothing': 0.1,
+            'best_model': 1,
             'device': 'cpu',
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
             'input': './', 
@@ -100,8 +101,8 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'projection_dropout_proportion_end':[0.0,0.1],
-    
+    'perturbation_frequency':[0,250, 500, 1000],
+    'perturbation_percentage':[0.01, 0.05, 0.1],
 }
 
 # Generate all parameter combinations
