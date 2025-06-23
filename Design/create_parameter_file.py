@@ -113,8 +113,8 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
-    'n_iters':[1000],
-    'top_n_genes':[1000],
+    'n_iters':[10000],
+    'top_n_genes':[1000, 2500,5000, 10000],
     }
 
 # Generate all parameter combinations

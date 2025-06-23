@@ -458,7 +458,7 @@ class EncodingDesigner(nn.Module):
         losses = []
         accuracies = []
         # Training loop
-        for epoch in range(1000):  # Hardcoded 100 epochs
+        for epoch in range(500):  # Hardcoded 100 epochs
             decoder.train()
             optimizer.zero_grad()
             outputs = decoder(self.X_train)
