@@ -37,29 +37,28 @@ class EncodingDesigner(nn.Module):
             # Core model parameters
             'n_cpu': 12,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iterations': 10000,  # Total number of training iterations
+            'n_iters': 10000,  # Total number of training iterations
             'batch_size': 1000,  # Batch size for training (0 = use full dataset)
-            'target_brightness_log': 4.5,  # Target brightness in log10 scale
-            'total_n_probes': 30e4,  # Target total number of probes across all genes
-            'probe_weight': 1.0,  # Weight for probe count loss term
-            'probe_under_weight_factor': 0.1,  # Factor for under-utilization penalty
-            'gene_constraint_weight': 1.0,  # Weight for gene constraint violation penalty
-            'target_brightness_weight':1.0,  # Weight for target brightness loss term
-            'gradient_clip_max_norm': 1.0,  # Maximum gradient norm for clipping
-            'learning_rate_start': 0.05,  # Initial learning rate
-            'learning_rate_end': 0.005,  # Final learning rate (linear interpolation)
-            'report_freq': 250,  # How often to report training progress
-            'sparsity_target': 0.8,  # Target sparsity ratio (fraction of zeros)
-            'sparsity_weight': 0.0,  # Weight for sparsity loss term
-            'categorical_weight': 1.0,  # Weight for categorical classification loss
+            'brightness': 4.5,  # Target brightness in log10 scale
+            'n_probes': 30e4,  # Target total number of probes across all genes
+            'probe_wt': 1.0,  # Weight for probe count loss term
+            'gene_constraint_wt': 1.0,  # Weight for gene constraint violation penalty
+            'brightness_wt':1.0,  # Weight for target brightness loss term
+            'gradient_clip': 1.0,  # Maximum gradient norm for clipping
+            'lr_s': 0.05,  # Initial learning rate
+            'lr_e': 0.005,  # Final learning rate (linear interpolation)
+            'report_rt': 250,  # How often to report training progress
+            'sparsity': 0.8,  # Target sparsity ratio (fraction of zeros)
+            'sparsity_wt': 0.0,  # Weight for sparsity loss term
+            'categorical_wt': 1.0,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
             'input': './',  # Input directory path
             'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
-            'decoder_hidden_layers': 0,  # Number of hidden layers in decoder
-            'decoder_hidden_dim': 128,  # Hidden dimension size in decoder
+            'decoder_n_lyr': 0,  # Number of hidden layers in decoder
+            'decoder_h_dim': 128,  # Hidden dimension size in decoder
             'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
             'constraints': 'constraints.csv',  # Path to gene constraints file
             'X_test': 'X_test.pt',  # Path to test features tensor
@@ -68,40 +67,40 @@ class EncodingDesigner(nn.Module):
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
-            'gene_dropout_proportion_start': 0.0,  # Initial proportion of genes to drop out
-            'gene_dropout_proportion_end': 0.1,  # Final proportion of genes to drop out
-            'gene_fold_noise_start': 0.0,  # Initial gene expression fold noise level
-            'gene_fold_noise_end': 0.5,  # Final gene expression fold noise level
+            'X_drp_s': 0.0,  # Initial proportion of genes to drop out
+            'X_drp_e': 0.1,  # Final proportion of genes to drop out
+            'X_noise_s': 0.0,  # Initial gene expression fold noise level
+            'X_noise_e': 0.5,  # Final gene expression fold noise level
             # Weight-level noise parameters
-            'weight_dropout_proportion_start': 0.0,  # Initial proportion of encoding weights to drop out
-            'weight_dropout_proportion_end': 0.1,  # Final proportion of encoding weights to drop out
-            'weight_fold_noise_start': 0.0,  # Initial encoding weight fold noise level
-            'weight_fold_noise_end': 0.1,  # Final encoding weight fold noise level
+            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
+            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out
+            'E_noise_s': 0.0,  # Initial encoding weight fold noise level
+            'E_noise_e': 0.1,  # Final encoding weight fold noise level
             # Projection-level noise parameters
-            'projection_dropout_proportion_start': 0.0,  # Initial proportion of projection values to drop out
-            'projection_dropout_proportion_end': 0.1,  # Final proportion of projection values to drop out
-            'projection_fold_noise_start': 0.0,  # Initial projection fold noise level
-            'projection_fold_noise_end': 0.1,  # Final projection fold noise level
+            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
+            'P_drp_e': 0.1,  # Final proportion of projection values to drop out
+            'P_noise_s': 0.0,  # Initial projection fold noise level
+            'P_noise_e': 0.1,  # Final projection fold noise level
             # Decoder-level noise parameters
-            'decoder_dropout_rate_start': 0.1,  # Initial decoder dropout rate
-            'decoder_dropout_rate_end': 0.0,  # Final decoder dropout rate
+            'D_drp_s': 0.1,  # Initial decoder dropout rate
+            'D_drp_e': 0.0,  # Final decoder dropout rate
             # Constant noise parameters
-            'constant_noise_start': 1.0,  # Initial constant noise level (log10 scale)
-            'constant_noise_end': 3.0,  # Final constant noise level (log10 scale)
+            'P_add_s': 1.0,  # Initial constant noise level (log10 scale)
+            'P_add_e': 3.0,  # Final constant noise level (log10 scale)
             # Weight perturbation parameters
-            'perturbation_frequency': 500,  # How often to perturb weights (every N iterations)
-            'perturbation_percentage': 0.01,  # Percentage of weights to perturb (0.0-1.0)
-            'min_probe_fraction': 0.05,  # Minimum probe fraction for initialization
-            'max_probe_fraction': 0.5,  # Maximum probe fraction for initialization
-            'min_probe_fraction_perturb': 0.05,  # Minimum probe fraction for perturbation
-            'max_probe_fraction_perturb': 0.5,  # Maximum probe fraction for perturbation
+            'E_perturb_rt': 500,  # How often to perturb weights (every N iterations)
+            'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
+            'E_init_min': 0.05,  # Minimum probe fraction for initialization
+            'E_init_max': 0.5,  # Maximum probe fraction for initialization
+            'E_perturb_min': 0.05,  # Minimum probe fraction for perturbation
+            'E_perturb_max': 0.5,  # Maximum probe fraction for perturbation
             # Activation and normalization parameters
-            'activation_function':'tanh',  # Activation function for encoding weights
-            'decoder_activation': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
-            'sum_normalize_projection': 0,  # Whether to normalize projection by sum
-            'bit_normalize_projection': 0,  # Whether to normalize projection by bit-wise statistics
+            'encoder_act':'tanh',  # Activation function for encoding weights
+            'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
+            'sum_norm': 0,  # Whether to normalize projection by sum
+            'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
         }
-
+        # Interpolated parameters (created from _s and _e parameters)
         temp_output_dir = self.user_parameters['output']
         loaded_params_temp = {}
         if user_parameters_path is not None:
@@ -119,17 +118,17 @@ class EncodingDesigner(nn.Module):
             except Exception as e:
                 logging.basicConfig(level=logging.ERROR)
                 logging.error(f"Error loading parameter file {user_parameters_path}: {e}. Using default parameters.")
-
+        # Create output directory if it doesn't exist
         if not os.path.exists(temp_output_dir):
             os.makedirs(temp_output_dir)
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         logging.basicConfig(level=logging.INFO) 
-        
+        # Create log file
         input_filename = os.path.basename(user_parameters_path) if user_parameters_path else "default"
         input_filename = os.path.splitext(input_filename)[0]  
         self.log_file = os.path.join(temp_output_dir, f'log_{input_filename}.log')
-        
+        # Remove log file if it exists
         if os.path.exists(self.log_file):
             os.remove(self.log_file)
         logging.basicConfig(
@@ -138,11 +137,11 @@ class EncodingDesigner(nn.Module):
             datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
         self.log = logging.getLogger("Designer")
         self.results = {}
-
+        # Initialize best loss and model state dict
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
-
+        # Load user parameters from file
         loaded_user_parameters = {}
         if user_parameters_path is not None:
             self.log.info(f"Loading user parameters from: {user_parameters_path}")
@@ -172,21 +171,21 @@ class EncodingDesigner(nn.Module):
                 loaded_user_parameters = {} 
         else:
             self.log.info("No user parameter file provided. Using default parameters.")
-
+        # Add loaded user parameters to default parameters
         for key, val in loaded_user_parameters.items():
             if key in self.user_parameters:
                 self.user_parameters[key] = val 
             else:
                 self.log.warning(f"Parameter '{key}' from file is not a default parameter. Adding it.")
                 self.user_parameters[key] = val 
-            if '_start' in key:
-                new_key = key.replace('_start', '')
+            if key.endswith('_s'):
+                new_key = key.replace('_s', '')
                 if new_key not in self.user_parameters:
                     self.user_parameters[new_key] = val
                     self.log.info(f"Created parameter '{new_key}' from '{key}' with value {val}")
                 else:
                     self.log.info(f"Parameter '{new_key}' already exists. Skipping creation.")
-
+        # Construct paths for input files
         input_dir = self.user_parameters['input']
         file_params_to_prefix = ['constraints', 'X_test', 'y_test', 'X_train', 'y_train', 'y_label_converter_path']
         for param_key in file_params_to_prefix:
@@ -194,18 +193,18 @@ class EncodingDesigner(nn.Module):
             if current_path and not os.path.dirname(current_path) and not os.path.isabs(current_path):
                 self.user_parameters[param_key] = os.path.join(input_dir, current_path)
                 self.log.info(f"Constructed path for '{param_key}': {self.user_parameters[param_key]}")
-
-        params_to_int = ['n_bit', 'n_iterations', 'report_freq', 'batch_size', 'n_cpu',
-                         'decoder_hidden_layers', 'decoder_hidden_dim'] 
+        # Convert parameters to integers
+        params_to_int = ['n_bit', 'n_iters', 'report_rt', 'batch_size', 'n_cpu',
+                         'decoder_n_lyr', 'decoder_h_dim'] 
         for param_key in params_to_int:
             self.convert_param_to_int(param_key) 
-
+        # Log final parameters
         self.log.info(f"Final Parameters (after path construction & type conversion):")
         for key, val in self.user_parameters.items():
             self.log.info(f"{key}: {val} (type: {type(val).__name__})") 
         self.log.info(f"Limiting Torch to {self.user_parameters['n_cpu']} threads")
         torch.set_num_threads(self.user_parameters['n_cpu'])
-
+        # Create output directory
         output_dir = self.user_parameters['output'] 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -214,18 +213,18 @@ class EncodingDesigner(nn.Module):
             'values': list(self.user_parameters.values())
         }, index=pd.Index(list(self.user_parameters.keys())))
         param_df.to_csv(os.path.join(output_dir, 'used_user_parameters.csv'))
-
+        # Create symlinks for input files
         self.log.info("Creating symlinks for input files in output directory...")
         input_files_to_link = []
         for key in file_params_to_prefix:
             path = self.user_parameters.get(key)
             if isinstance(path, str) and path: 
                 input_files_to_link.append(path)
-
+        # Add user parameter file and used parameters file to symlinks
         if user_parameters_path is not None and isinstance(user_parameters_path, str):
             input_files_to_link.append(user_parameters_path)
             input_files_to_link.append(os.path.join(output_dir, 'used_user_parameters.csv'))
-
+        # Create symlinks
         linked_count = 0
         skipped_count = 0
         error_count = 0
@@ -271,6 +270,191 @@ class EncodingDesigner(nn.Module):
         except (ValueError, TypeError) as e:
             self.log.error(f"Error converting parameter '{param_key}' to int. Value was '{original_value}' (type: {type(original_value).__name__}). Error: {e}")
             raise ValueError(f"Could not convert parameter '{param_key}' to integer. Invalid value: '{original_value}'.")
+
+    def _initialize_encoder(self):
+        """Initialize the encoder with proper weight initialization."""
+        current_device = self.user_parameters['device']
+        self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
+        with torch.no_grad():
+            random_wts = torch.rand_like(self.encoder.weight.data)
+            min_value = torch.tensor(self.user_parameters['E_init_min'], dtype=random_wts.dtype, device=current_device)
+            max_value = torch.tensor(self.user_parameters['E_init_max'], dtype=random_wts.dtype, device=current_device)
+            post_activation_wts = min_value + (max_value - min_value) * random_wts
+            # Apply activation function
+            if self.user_parameters['encoder_act'] == 'sigmoid':
+                final_wts = torch.logit(post_activation_wts)
+            elif self.user_parameters['encoder_act'] == 'tanh':
+                # modified tanh activation function (torch.tanh(x)+1)/2
+                final_wts = torch.arctanh(2 * post_activation_wts - 1)
+            elif self.user_parameters['encoder_act'] == 'linear':
+                final_wts = post_activation_wts
+            elif self.user_parameters['encoder_act'] == 'relu':
+                final_wts = torch.abs(post_activation_wts)
+            else:
+                raise ValueError(f"Invalid activation function: {self.user_parameters['encoder_act']}")
+            # Set encoder weights
+            self.encoder.weight.data = final_wts
+            final_total_probes = (post_activation_wts * self.constraints.unsqueeze(1)).sum()
+            self.log.info(f"Encoder initialization: range [{final_wts.min().item():.3f}, {final_wts.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
+        self.log.info(f"Initialized encoder with improved weight initialization.")
+
+    def _initialize_decoder(self):
+        """Initialize the decoder with specified architecture."""
+        current_device = self.user_parameters['device']
+        n_hidden_layers_decoder = self.user_parameters['decoder_n_lyr']
+        hidden_dim_decoder = self.user_parameters['decoder_h_dim']
+        dropout_rate_decoder = self.user_parameters['decoder_dropout_rate']
+        decoder_modules = []
+        current_decoder_layer_input_dim = self.user_parameters['n_bit']
+        if n_hidden_layers_decoder == 0:
+            decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
+            log_msg_decoder_structure = "Initialized single linear decoder."
+        else:
+            for i in range(n_hidden_layers_decoder):
+                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, hidden_dim_decoder))
+                # Add activation function based on decoder_activation parameter
+                if self.user_parameters['decoder_act'] == 'relu':
+                    decoder_modules.append(nn.ReLU())
+                elif self.user_parameters['decoder_act'] == 'leaky_relu':
+                    decoder_modules.append(nn.LeakyReLU())
+                elif self.user_parameters['decoder_act'] == 'gelu':
+                    decoder_modules.append(nn.GELU())
+                elif self.user_parameters['decoder_act'] == 'swish':
+                    decoder_modules.append(nn.SiLU())  # SiLU is the same as Swish
+                elif self.user_parameters['decoder_act'] == 'tanh':
+                    decoder_modules.append(nn.Tanh())
+                else:
+                    raise ValueError(f"Invalid decoder activation function: {self.user_parameters['decoder_act']}")
+                decoder_modules.append(nn.Dropout(p=dropout_rate_decoder))
+                current_decoder_layer_input_dim = hidden_dim_decoder 
+            decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
+            log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, activation={self.user_parameters['decoder_act']}, dropout={dropout_rate_decoder}) and output layer."
+        self.decoder = nn.Sequential(*decoder_modules).to(current_device)
+        self.log.info(f"Initialized decoder.")
+        self.log.info(log_msg_decoder_structure)
+
+    def _load_data(self):
+        """Load and validate all data files."""
+        current_device = self.user_parameters['device']
+        def load_tensor(path, dtype, device):
+            self.log.info(f"Loading {os.path.basename(path)} from {path}")
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Data file not found: {path}")
+            loaded_data = torch.load(path)
+            if not isinstance(loaded_data, torch.Tensor):
+                tensor = torch.tensor(loaded_data, dtype=dtype, device=device)
+            else:
+                tensor = loaded_data.to(dtype=dtype, device=device)
+            return tensor
+        # Load data tensors
+        self.X_train = load_tensor(self.user_parameters['X_train'], torch.float32, current_device)
+        self.X_test = load_tensor(self.user_parameters['X_test'], torch.float32, current_device)
+        self.y_train = load_tensor(self.user_parameters['y_train'], torch.long, current_device)
+        self.y_test = load_tensor(self.user_parameters['y_test'], torch.long, current_device)
+        # Process labels
+        all_y_labels = torch.cat((self.y_train, self.y_test))
+        self.updated_y_label_map = {label.item(): i for i, label in enumerate(torch.unique(all_y_labels))}
+        self.y_train = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_train], dtype=torch.long, device=current_device)
+        self.y_test = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_test], dtype=torch.long, device=current_device)
+        # Load label converter
+        y_converter_path = self.user_parameters['y_label_converter_path']
+        self.log.info(f"Loading y label converter from: {y_converter_path}")
+        y_converter_df = pd.read_csv(y_converter_path, index_col=0) 
+        y_converter_dict = dict(zip(y_converter_df.index, y_converter_df['label'])) 
+        self.y_label_map = {k: self.updated_y_label_map[j] for k, j in y_converter_dict.items()}
+        self.y_reverse_label_map = {j: k for k, j in self.y_label_map.items()}
+        # Determine number of categories
+        all_y_labels_for_n_categories = torch.cat((self.y_train, self.y_test)) 
+        unique_y_labels_tensor = torch.unique(all_y_labels_for_n_categories)
+        self.n_categories = len(unique_y_labels_tensor)
+        self.mapped_category_indices = list(range(self.n_categories))
+        # Validate data shapes
+        if self.X_train.shape[1] != self.n_genes:
+            raise ValueError(f"X_train gene dimension mismatch")
+        if self.X_test.shape[1] != self.n_genes:
+            raise ValueError(f"X_test gene dimension mismatch")
+        if not (self.X_train.shape[0] == self.y_train.shape[0]):
+            raise ValueError(f"Training data shape mismatch (X_train, y_train)")
+        if not (self.X_test.shape[0] == self.y_test.shape[0]): 
+            raise ValueError(f"Testing data shape mismatch (X_test, y_test)")
+        self.log.info("Data loaded and shapes validated.")
+        self.log.info(f"Inferred {self.n_categories} cell type categories.")
+
+    def _load_constraints(self):
+        """Load gene constraints from file."""
+        current_device = self.user_parameters['device']
+        constraints_path = self.user_parameters['constraints']
+        constraints_df = pd.read_csv(constraints_path, index_col=0)
+        self.genes = np.array(constraints_df.index)
+        if 'constraints' not in constraints_df.columns:
+            raise KeyError(f"Column 'constraints' not found in {constraints_path}")
+        self.constraints = torch.tensor(constraints_df['constraints'].values, dtype=torch.float32, device=current_device)
+        self.n_genes = len(self.genes)
+        self.log.info(f"Loaded {self.n_genes} genes from constraints.")
+
+    def _load_pretrained_model(self):
+        """Load pretrained model state and gene mask if available."""
+        current_device = self.user_parameters['device']
+        output_dir = self.user_parameters['output']
+        model_state_path = os.path.join(output_dir, 'final_model_state.pt')
+        if not os.path.exists(model_state_path):
+            self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
+            self.is_initialized_from_file = False
+            return
+        self.log.info(f"Found existing model state file: {model_state_path}. Attempting to load.")
+        try:
+            loaded_state_dict = torch.load(model_state_path, map_location=current_device)
+            missing_keys, unexpected_keys = self.load_state_dict(loaded_state_dict, strict=False)
+            if missing_keys: self.log.warning(f"Missing keys when loading state_dict: {missing_keys}")
+            if unexpected_keys: self.log.warning(f"Unexpected keys when loading state_dict: {unexpected_keys}")
+            self.to(current_device) 
+            self.is_initialized_from_file = True
+            self.log.info("Successfully loaded model state from file (strict=False).")
+            # Check if gene mask exists and load it if present
+            gene_mask_path = os.path.join(output_dir, 'gene_mask.pt')
+            if os.path.exists(gene_mask_path):
+                self.log.info(f"Found gene mask file: {gene_mask_path}. Loading gene filtering.")
+                try:
+                    gene_mask = torch.load(gene_mask_path, map_location=current_device)
+                    if gene_mask.dtype != torch.bool:
+                        gene_mask = gene_mask.bool()
+                    # Apply gene mask to data matrices
+                    self.X_train = self.X_train[:, gene_mask]
+                    self.X_test = self.X_test[:, gene_mask]
+                    self.constraints = self.constraints[gene_mask]
+                    self.genes = self.genes[gene_mask.cpu().numpy()]
+                    # Update number of genes
+                    self.n_genes = gene_mask.sum().item()
+                    self.log.info(f"Applied gene mask: {self.n_genes} genes retained from {len(gene_mask)} total genes")
+                    # Reinitialize encoder with correct dimensions
+                    self._initialize_encoder()
+                    self.log.info(f"Reinitialized encoder with {self.n_genes} genes")
+                except Exception as e:
+                    self.log.error(f"Failed to load gene mask from {gene_mask_path}: {e}")
+                    self.log.warning("Continuing without gene filtering.")
+            else:
+                self.log.info("No gene mask file found. Using all genes.")
+            self.eval() 
+            with torch.no_grad():
+                final_E = self.get_E().detach().clone()
+                self.log.info("Enforcing constraints on loaded E matrix...")
+                if self.constraints is None:
+                    self.log.error("Cannot enforce constraints: self.constraints is None.")
+                    self.E = final_E 
+                else:
+                    E_final_constrained = torch.clip(final_E.round(), 0, None)
+                    T = self.constraints.clone().detach()
+                    m = E_final_constrained.sum(1) > T
+                    if m.any():
+                        scaling_factors = (T[m] / E_final_constrained.sum(1)[m].clamp(min=1e-8)).unsqueeze(1)
+                        E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
+                        E_final_constrained = E_final_constrained.clamp(min=0)
+                    self.E = E_final_constrained.clone().detach() 
+                    self.log.info(f"Stored constrained E matrix from loaded model. Probe count: {self.E.sum().item():.2f}")
+        except Exception as e:
+            self.log.error(f"Failed to load model state from {model_state_path}: {e}. Model will use fresh initial weights.")
+            self.is_initialized_from_file = False
+            self.E = None
 
     def train_gene_importance_decoder(self):
         """Train a simple linear decoder from genes to cell types to identify important genes."""
@@ -356,184 +540,16 @@ class EncodingDesigner(nn.Module):
 
     def initialize(self):
         self.log.info("--- Starting Initialization ---")
-        current_device = self.user_parameters['device']
-        output_dir = self.user_parameters['output']
-        model_state_path = os.path.join(output_dir, 'final_model_state.pt')
         try:
             self.log.info("Loading Gene Constraints")
-            constraints_path = self.user_parameters['constraints']
-            constraints_df = pd.read_csv(constraints_path, index_col=0)
-            self.genes = np.array(constraints_df.index)
-            if 'constraints' not in constraints_df.columns:
-                raise KeyError(f"Column 'constraints' not found in {constraints_path}")
-            self.constraints = torch.tensor(constraints_df['constraints'].values, dtype=torch.float32, device=current_device)
-            self.n_genes = len(self.genes) 
-            self.log.info(f"Loaded {self.n_genes} genes from constraints.")
-
-            def load_tensor(path, dtype, device):
-                self.log.info(f"Loading {os.path.basename(path)} from {path}")
-                if not os.path.exists(path):
-                    raise FileNotFoundError(f"Data file not found: {path}")
-                loaded_data = torch.load(path)
-                if not isinstance(loaded_data, torch.Tensor):
-                    tensor = torch.tensor(loaded_data, dtype=dtype, device=device)
-                else:
-                    tensor = loaded_data.to(dtype=dtype, device=device)
-                return tensor
-            
-            self.X_train = load_tensor(self.user_parameters['X_train'], torch.float32, current_device)
-            self.X_test = load_tensor(self.user_parameters['X_test'], torch.float32, current_device)
-            self.y_train = load_tensor(self.user_parameters['y_train'], torch.long, current_device)
-            self.y_test = load_tensor(self.user_parameters['y_test'], torch.long, current_device)
-            
-            all_y_labels = torch.cat((self.y_train, self.y_test))
-            self.updated_y_label_map = {label.item(): i for i, label in enumerate(torch.unique(all_y_labels))}
-            self.y_train = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_train], dtype=torch.long, device=current_device)
-            self.y_test = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_test], dtype=torch.long, device=current_device)
-            
-            y_converter_path = self.user_parameters['y_label_converter_path']
-            self.log.info(f"Loading y label converter from: {y_converter_path}")
-            y_converter_df = pd.read_csv(y_converter_path, index_col=0) 
-            y_converter_dict = dict(zip(y_converter_df.index,y_converter_df['label'])) 
-            self.y_label_map = {k:self.updated_y_label_map[j] for k,j in y_converter_dict.items()}
-            self.y_reverse_label_map = {j:k for k,j in self.y_label_map.items()}
-            
-            all_y_labels_for_n_categories = torch.cat((self.y_train, self.y_test)) 
-            unique_y_labels_tensor = torch.unique(all_y_labels_for_n_categories)
-            self.n_categories = len(unique_y_labels_tensor)
-            self.mapped_category_indices = list(range(self.n_categories)) 
-
-            if self.X_train.shape[1] != self.n_genes:
-                raise ValueError(f"X_train gene dimension mismatch")
-            if self.X_test.shape[1] != self.n_genes:
-                raise ValueError(f"X_test gene dimension mismatch")
-            if not (self.X_train.shape[0] == self.y_train.shape[0]):
-                raise ValueError(f"Training data shape mismatch (X_train, y_train)")
-            if not (self.X_test.shape[0] == self.y_test.shape[0]): 
-                raise ValueError(f"Testing data shape mismatch (X_test, y_test)")
-            self.log.info("Data loaded and shapes validated.")
-            self.log.info(f"Inferred {self.n_categories} cell type categories.")
-
+            self._load_constraints()
+            self._load_data()
             # Filter genes if top_n_genes is specified
             if self.user_parameters['top_n_genes'] > 0 and self.user_parameters['top_n_genes'] < self.n_genes:
                 self.train_gene_importance_decoder()
-
-            self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-            with torch.no_grad():
-                random_weights = torch.rand_like(self.encoder.weight.data)
-                min_value = torch.tensor(self.user_parameters['min_probe_fraction'],dtype=random_weights.dtype,device=current_device)
-                max_value = torch.tensor(self.user_parameters['max_probe_fraction'],dtype=random_weights.dtype,device=current_device)
-                post_activation_weights = min_value + (max_value - min_value) * random_weights
-
-                if self.user_parameters['activation_function'] == 'sigmoid':
-                    final_weights = torch.logit(post_activation_weights)
-                elif self.user_parameters['activation_function'] == 'tanh':
-                    # modified tanh activation function (torch.tanh(x)+1)/2
-                    final_weights = torch.arctanh(2 * post_activation_weights - 1)
-                elif self.user_parameters['activation_function'] == 'linear':
-                    final_weights = post_activation_weights
-                elif self.user_parameters['activation_function'] == 'relu':
-                    final_weights = torch.abs(post_activation_weights)
-                else:
-                    raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
-
-                self.encoder.weight.data = final_weights
-                final_total_probes = (post_activation_weights * self.constraints.unsqueeze(1)).sum()
-                self.log.info(f"Encoder initialization: range [{final_weights.min().item():.3f}, {final_weights.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
-            self.log.info(f"Initialized encoder with improved weight initialization.")
-
-            n_hidden_layers_decoder = self.user_parameters['decoder_hidden_layers']
-            hidden_dim_decoder = self.user_parameters['decoder_hidden_dim']
-            dropout_rate_decoder = self.user_parameters['decoder_dropout_rate']
-            decoder_modules = []
-            current_decoder_layer_input_dim = self.user_parameters['n_bit']
-            if n_hidden_layers_decoder == 0:
-                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
-                log_msg_decoder_structure = "Initialized single linear decoder."
-            else:# broken right now
-                for i in range(n_hidden_layers_decoder):
-                    decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, hidden_dim_decoder))
-                    # Add activation function based on decoder_activation parameter
-                    if self.user_parameters['decoder_activation'] == 'relu':
-                        decoder_modules.append(nn.ReLU())
-                    elif self.user_parameters['decoder_activation'] == 'leaky_relu':
-                        decoder_modules.append(nn.LeakyReLU())
-                    elif self.user_parameters['decoder_activation'] == 'gelu':
-                        decoder_modules.append(nn.GELU())
-                    elif self.user_parameters['decoder_activation'] == 'swish':
-                        decoder_modules.append(nn.SiLU())  # SiLU is the same as Swish
-                    elif self.user_parameters['decoder_activation'] == 'tanh':
-                        decoder_modules.append(nn.Tanh())
-                    else:
-                        raise ValueError(f"Invalid decoder activation function: {self.user_parameters['decoder_activation']}")
-                    decoder_modules.append(nn.Dropout(p=dropout_rate_decoder))
-                    current_decoder_layer_input_dim = hidden_dim_decoder 
-                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
-                log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, activation={self.user_parameters['decoder_activation']}, dropout={dropout_rate_decoder}) and output layer."
-            
-            self.decoder = nn.Sequential(*decoder_modules).to(current_device)
-            self.log.info(f"Initialized dencoder.") 
-            self.log.info(log_msg_decoder_structure)
-            
-            if os.path.exists(model_state_path):
-                self.log.info(f"Found existing model state file: {model_state_path}. Attempting to load.")
-                try:
-                    loaded_state_dict = torch.load(model_state_path, map_location=current_device)
-                    missing_keys, unexpected_keys = self.load_state_dict(loaded_state_dict, strict=False)
-                    if missing_keys: self.log.warning(f"Missing keys when loading state_dict: {missing_keys}")
-                    if unexpected_keys: self.log.warning(f"Unexpected keys when loading state_dict: {unexpected_keys}")
-                    self.to(current_device) 
-                    self.is_initialized_from_file = True
-                    self.log.info("Successfully loaded model state from file (strict=False).")
-                    # Check if gene mask exists and load it if present
-                    gene_mask_path = os.path.join(output_dir, 'gene_mask.pt')
-                    if os.path.exists(gene_mask_path):
-                        self.log.info(f"Found gene mask file: {gene_mask_path}. Loading gene filtering.")
-                        try:
-                            gene_mask = torch.load(gene_mask_path, map_location=current_device)
-                            if gene_mask.dtype != torch.bool:
-                                gene_mask = gene_mask.bool()
-                            # Apply gene mask to data matrices
-                            self.X_train = self.X_train[:, gene_mask]
-                            self.X_test = self.X_test[:, gene_mask]
-                            self.constraints = self.constraints[gene_mask]
-                            self.genes = self.genes[gene_mask.cpu().numpy()]
-                            # Update number of genes
-                            self.n_genes = gene_mask.sum().item()
-                            self.log.info(f"Applied gene mask: {self.n_genes} genes retained from {len(gene_mask)} total genes")
-                            # Reinitialize encoder with correct dimensions
-                            self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
-                            self.log.info(f"Reinitialized encoder with {self.n_genes} genes")
-                        except Exception as e:
-                            self.log.error(f"Failed to load gene mask from {gene_mask_path}: {e}")
-                            self.log.warning("Continuing without gene filtering.")
-                    else:
-                        self.log.info("No gene mask file found. Using all genes.")
-                    
-                    self.eval() 
-                    with torch.no_grad():
-                        final_E = self.get_encoding_weights().detach().clone()
-                        self.log.info("Enforcing constraints on loaded E matrix...")
-                        if self.constraints is None:
-                            self.log.error("Cannot enforce constraints: self.constraints is None.")
-                            self.E = final_E 
-                        else:
-                            E_final_constrained = torch.clip(final_E.round(), 0, None)
-                            T = self.constraints.clone().detach()
-                            m = E_final_constrained.sum(1) > T
-                            if m.any():
-                                scaling_factors = (T[m] / E_final_constrained.sum(1)[m].clamp(min=1e-8)).unsqueeze(1)
-                                E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
-                                E_final_constrained = E_final_constrained.clamp(min=0)
-                            self.E = E_final_constrained.clone().detach() 
-                            self.log.info(f"Stored constrained E matrix from loaded model. Probe count: {self.E.sum().item():.2f}")
-                except Exception as e:
-                    self.log.error(f"Failed to load model state from {model_state_path}: {e}. Model will use fresh initial weights.")
-                    self.is_initialized_from_file = False
-                    self.E = None
-            else:
-                self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
-                self.is_initialized_from_file = False
+            self._initialize_encoder()
+            self._initialize_decoder()
+            self._load_pretrained_model()
             self.log.info("--- Initialization Complete ---")
             return True
 
@@ -550,81 +566,81 @@ class EncodingDesigner(nn.Module):
             self.log.exception(f"An unexpected error occurred during initialization: {e}")
             return False
 
-    def perturb_weights(self):
+    def perturb_E(self):
         with torch.no_grad():
             # Create mask for weights to perturb
-            mask = (torch.rand_like(self.encoder.weight.data) < self.user_parameters['perturbation_percentage']).float()
+            mask = (torch.rand_like(self.encoder.weight.data) < self.user_parameters['E_perb_prct']).float()
             # Generate new random weights for the perturbed positions
-            random_weights = torch.rand_like(self.encoder.weight.data)
-            min_value = torch.tensor(self.user_parameters['min_probe_fraction_perturb'], 
-                                    dtype=random_weights.dtype, device=random_weights.device)
-            max_value = torch.tensor(self.user_parameters['max_probe_fraction_perturb'], 
-                                    dtype=random_weights.dtype, device=random_weights.device)
-            post_activation_weights = min_value + (max_value - min_value) * random_weights
+            random_wts = torch.rand_like(self.encoder.weight.data)
+            min_value = torch.tensor(self.user_parameters['E_perturb_min'], 
+                                    dtype=random_wts.dtype, device=random_wts.device)
+            max_value = torch.tensor(self.user_parameters['E_perturb_max'], 
+                                    dtype=random_wts.dtype, device=random_wts.device)
+            post_activation_wts = min_value + (max_value - min_value) * random_wts
             # Convert to logit space based on activation function
-            if self.user_parameters['activation_function'] == 'sigmoid':
-                new_weights = torch.logit(post_activation_weights)
-            elif self.user_parameters['activation_function'] == 'tanh':
+            if self.user_parameters['encoder_act'] == 'sigmoid':
+                new_wts = torch.logit(post_activation_wts)
+            elif self.user_parameters['encoder_act'] == 'tanh':
                 # modified tanh activation function (torch.tanh(x)+1)/2
-                new_weights = torch.arctanh(2 * post_activation_weights - 1)
-            elif self.user_parameters['activation_function'] == 'linear':
-                new_weights = post_activation_weights
-            elif self.user_parameters['activation_function'] == 'relu':
-                new_weights = torch.abs(post_activation_weights)
+                new_wts = torch.arctanh(2 * post_activation_wts - 1)
+            elif self.user_parameters['encoder_act'] == 'linear':
+                new_wts = post_activation_wts
+            elif self.user_parameters['encoder_act'] == 'relu':
+                new_wts = torch.abs(post_activation_wts)
             else:
-                raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
+                raise ValueError(f"Invalid activation function: {self.user_parameters['encoder_act']}")
             # Apply perturbation only to masked positions
-            self.encoder.weight.data = self.encoder.weight.data * (1 - mask) + new_weights * mask
+            self.encoder.weight.data = self.encoder.weight.data * (1 - mask) + new_wts * mask
             # Count how many weights were actually perturbed
             num_perturbed = mask.sum().item()
             self.log.info(f"Perturbed {num_perturbed} weights out of {self.encoder.weight.data.numel()} total weights ({num_perturbed/self.encoder.weight.data.numel()*100:.2f}%)")
 
-    def get_encoding_weights(self):
-        if self.user_parameters['activation_function'] == 'sigmoid':
+    def get_E(self):
+        if self.user_parameters['encoder_act'] == 'sigmoid':
             E = torch.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
-        elif self.user_parameters['activation_function'] == 'tanh':
+        elif self.user_parameters['encoder_act'] == 'tanh':
             # modified tanh activation function (torch.tanh(x)+1)/2
             E = ((torch.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
-        elif self.user_parameters['activation_function'] == 'linear':
+        elif self.user_parameters['encoder_act'] == 'linear':
             E = self.encoder.weight * self.constraints.unsqueeze(1)
-        elif self.user_parameters['activation_function'] == 'relu':
+        elif self.user_parameters['encoder_act'] == 'relu':
             E = torch.relu(self.encoder.weight) * self.constraints.unsqueeze(1)
         else:
-            raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
-        if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
-            E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
-        if self.training and self.user_parameters['weight_fold_noise'] > 0:
-            fold = self.user_parameters['weight_fold_noise']
+            raise ValueError(f"Invalid activation function: {self.user_parameters['encoder_act']}")
+        if self.training and self.user_parameters['E_drp'] > 0:
+            E = E * (torch.rand_like(E) > self.user_parameters['E_drp']).float()
+        if self.training and self.user_parameters['E_noise'] > 0:
+            fold = self.user_parameters['E_noise']
             E = E * torch.exp(torch.rand_like(E) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
         return E
 
     def project(self, X, E):
-        if self.training and self.user_parameters['gene_fold_noise'] != 0:
-            fold = self.user_parameters['gene_fold_noise']
+        if self.training and self.user_parameters['X_noise'] != 0:
+            fold = self.user_parameters['X_noise']
             X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
-        if self.training and self.user_parameters['gene_dropout_proportion'] != 0:
-            X = X * (torch.rand_like(X) > self.user_parameters['gene_dropout_proportion']).float()
+        if self.training and self.user_parameters['X_drp'] != 0:
+            X = X * (torch.rand_like(X) > self.user_parameters['X_drp']).float()
         P = X.mm(E)
-        if self.training and self.user_parameters['projection_fold_noise'] > 0:
-            fold = self.user_parameters['projection_fold_noise']
+        if self.training and self.user_parameters['P_noise'] > 0:
+            fold = self.user_parameters['P_noise']
             P = P * torch.exp(torch.rand_like(P) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
-        if self.training and self.user_parameters['constant_noise'] != 0:
-            P = P + torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
-        if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
-            P = P * (torch.rand_like(P) > self.user_parameters['projection_dropout_proportion']).float()
+        if self.training and self.user_parameters['P_add'] != 0:
+            P = P + torch.rand_like(P) * (10 ** self.user_parameters['P_add'])
+        if self.training and self.user_parameters['P_drp'] > 0:
+            P = P * (torch.rand_like(P) > self.user_parameters['P_drp']).float()
         return P
 
     def decode(self, P, y):
-        if self.user_parameters['sum_normalize_projection'] != 0:
+        if self.user_parameters['sum_norm'] != 0:
             # Normalize P to have sum of 1
             P = P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
-        if self.user_parameters['bit_normalize_projection'] != 0:
+        if self.user_parameters['bit_norm'] != 0:
             # Normalize P to have mean 0 and std 1
             P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
-        if self.user_parameters['categorical_weight'] != 0:
+        if self.user_parameters['categorical_wt'] != 0:
             loss_fn = nn.CrossEntropyLoss(label_smoothing=self.user_parameters['label_smoothing']) 
             categorical_loss = loss_fn(R, y)
         else:
@@ -632,20 +648,20 @@ class EncodingDesigner(nn.Module):
         return y_predict, accuracy, categorical_loss
 
     def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
-        E = self.get_encoding_weights()
-        P_original = self.project(X, E) 
-        y_predict, accuracy, raw_categorical_loss_component = self.decode(P_original, y)
+        E = self.get_E()
+        P = self.project(X, E) 
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(P, y)
         raw_losses = {}
         current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
-        current_stats['median brightness' + suffix] = P_original.median().item()
+        current_stats['median brightness' + suffix] = P.median().item()
         
         # Calculate dynamic range utilization and median brightness for each bit
         bit_dynamic_ranges = []
         bit_percentiles = []
         bit_medians = []
-        for bit_idx in range(P_original.shape[1]):
-            bit_values = P_original[:, bit_idx]
+        for bit_idx in range(P.shape[1]):
+            bit_values = P[:, bit_idx]
             p10, p50, p90 = torch.quantile(bit_values, torch.tensor([0.1, 0.5, 0.9]))
             fold_change = p90 / p10.clamp(min=1e-8)  # Avoid division by zero
             bit_dynamic_ranges.append(fold_change.item())
@@ -662,52 +678,51 @@ class EncodingDesigner(nn.Module):
         current_stats['lowest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max(min_p10, 1)):.2f}, p50:{np.log10(max(min_p50, 1)):.2f}, p90:{np.log10(max(min_p90, 1)):.2f}, fold:{min_fold_change:.2f}"
         current_stats['highest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max(max_p10, 1)):.2f}, p50:{np.log10(max(max_p50, 1)):.2f}, p90:{np.log10(max(max_p90, 1)):.2f}, fold:{max_fold_change:.2f}"
 
-        # The model should not use more probes than self.user_parameters['total_n_probes']
+        # The model should not use more probes than self.user_parameters['n_probes']
         probe_count = E.sum()
-        current_stats['total_n_probes' + suffix] = probe_count.item()
+        current_stats['n_probes' + suffix] = probe_count.item()
         current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
-        current_stats['median_probe_weight' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
+        current_stats['median_probe_wt' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
 
-        # The model should not use more probes than self.user_parameters['total_n_probes']
-        if self.user_parameters['probe_weight']!=0:
+        # The model should not use more probes than self.user_parameters['n_probes']
+        if self.user_parameters['probe_wt']!=0:
             #bounded in case probe is very off especially in the beginning
-            fold = (probe_count/self.user_parameters['total_n_probes'])
-            probe_weight_loss = self.user_parameters['probe_weight'] * F.relu(fold-1).clamp(min=0,max=5)
-            #(F.relu(fold) + self.user_parameters['probe_under_weight_factor'] * F.relu(-fold))
-            raw_losses['probe_weight_loss'] = probe_weight_loss
-            current_stats['probe_weight_loss' + suffix] = probe_weight_loss.item()
+            fold = (probe_count/self.user_parameters['n_probes'])
+            probe_wt_loss = self.user_parameters['probe_wt'] * F.relu(fold-1).clamp(min=0,max=5)
+            raw_losses['probe_wt_loss'] = probe_wt_loss
+            current_stats['probe_wt_loss' + suffix] = probe_wt_loss.item()
 
         # The model should accurately decode cell type labels
-        if self.user_parameters['categorical_weight'] != 0:
+        if self.user_parameters['categorical_wt'] != 0:
             # bound this in case of very wrong prediction
-            categorical_loss_component = self.user_parameters['categorical_weight'] * raw_categorical_loss_component.clamp(min=0,max=15)
+            categorical_loss_component = self.user_parameters['categorical_wt'] * raw_categorical_loss_component.clamp(min=0,max=15)
             raw_losses['categorical_loss'] = categorical_loss_component
             current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
 
         # The model should not use more probes than a gene can supply
-        if self.user_parameters['gene_constraint_weight'] != 0:
+        if self.user_parameters['gene_constraint_wt'] != 0:
             if self.constraints is None: raise RuntimeError("Constraints not initialized")
             total_probes_per_gene = E.sum(1)
             non_zero_constraints = self.constraints>0
             fold = total_probes_per_gene[non_zero_constraints] / self.constraints[non_zero_constraints]
-            gene_constraint_loss = self.user_parameters['gene_constraint_weight']* F.relu(fold-1).mean()            
+            gene_constraint_loss = self.user_parameters['gene_constraint_wt']* F.relu(fold-1).mean()            
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
         # The model should have a median brightness atleast to the target brightness
-        if self.user_parameters['target_brightness_weight'] != 0:
-            fold = ((10**self.user_parameters['target_brightness_log'])/(P_original.median(0).values.min().clamp(min=1))).log2()
-            brightness_loss = self.user_parameters['target_brightness_weight']* F.relu(fold)
+        if self.user_parameters['brightness_wt'] != 0:
+            fold = ((10**self.user_parameters['brightness'])/(P_original.median(0).values.min().clamp(min=1))).log2()
+            brightness_loss = self.user_parameters['brightness_wt']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
 
         # Target sparsity loss to encourage specific percentage of zeros
-        if self.user_parameters['sparsity_weight'] != 0:
+        if self.user_parameters['sparsity_wt'] != 0:
             sparsity_threshold = 1
             sparsity_ratio = (E < sparsity_threshold).float().mean()
-            target_sparsity = self.user_parameters['sparsity_target']
+            target_sparsity = self.user_parameters['sparsity']
             difference = F.relu(target_sparsity - sparsity_ratio)
-            sparsity_loss = self.user_parameters['sparsity_weight'] * difference
+            sparsity_loss = self.user_parameters['sparsity_wt'] * difference
             raw_losses['sparsity_loss'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
@@ -733,16 +748,16 @@ class EncodingDesigner(nn.Module):
         current_device = self.user_parameters['device']
         last_report_time = start_time
         last_report_iteration = 0
-        n_iterations = self.user_parameters['n_iterations']
-        report_freq = self.user_parameters['report_freq']
+        n_iterations = self.user_parameters['n_iters']
+        report_rt = self.user_parameters['report_rt']
         batch_size = self.user_parameters['batch_size']
         n_train_samples = self.X_train.shape[0]
         try:
             for iteration in range(n_iterations):
                 progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
-                parameters_to_update = [i.replace('_start', '') for i in self.user_parameters if '_start' in i]
+                parameters_to_update = [i.replace('_s', '') for i in self.user_parameters if i.endswith('_s')]
                 for param in parameters_to_update:
-                    self.user_parameters[param] = (self.user_parameters[f'{param}_start'] + (self.user_parameters[f'{param}_end'] - self.user_parameters[f'{param}_start']) * progress)
+                    self.user_parameters[param] = (self.user_parameters[f'{param}_s'] + (self.user_parameters[f'{param}_e'] - self.user_parameters[f'{param}_s']) * progress)
                 self.learning_stats[str(iteration)] = {}
                 if iteration == 0:
                     if not self.is_initialized_from_file:
@@ -751,12 +766,12 @@ class EncodingDesigner(nn.Module):
                         self.log.info("Using model loaded during initialization.")
                     self.to(current_device)
                     optimizer_gen = torch.optim.Adam([
-                        {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
-                        {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
+                        {'params': self.encoder.parameters(), 'lr': self.user_parameters['lr']},
+                        {'params': self.decoder.parameters(), 'lr': self.user_parameters['lr']}
                     ])
                     self.optimizer_gen = optimizer_gen
-                for param_group in self.optimizer_gen.param_groups: param_group['lr'] = self.user_parameters['learning_rate']
-                is_report_iter = (iteration % report_freq == 0) or (iteration == n_iterations - 1) 
+                for param_group in self.optimizer_gen.param_groups: param_group['lr'] = self.user_parameters['lr']
+                is_report_iter = (iteration % report_rt == 0) or (iteration == n_iterations - 1) 
                 self.train() 
 
                 if (batch_size > 0) and (batch_size < n_train_samples):
@@ -788,21 +803,21 @@ class EncodingDesigner(nn.Module):
                 
                 if not nan_detected:
                     # --- GRADIENT CLIPPING ---
-                    max_norm_value = self.user_parameters.get('gradient_clip_max_norm', 1.0) 
+                    max_norm_value = self.user_parameters.get('gradient_clip', 1.0) 
                     if max_norm_value > 0:
                         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
                     self.optimizer_gen.step()  
                     # --- WEIGHT PERTURBATION ---
-                    if self.user_parameters['perturbation_frequency'] > 0:
-                        if iteration % self.user_parameters['perturbation_frequency'] == 0:
+                    if self.user_parameters['E_perturb_rt'] > 0:
+                        if iteration % self.user_parameters['E_perturb_rt'] == 0:
                             # Check if we're within 50 iterations of the next test
-                            next_test_iter = ((iteration // report_freq) + 1) * report_freq
+                            next_test_iter = ((iteration // report_rt) + 1) * report_rt
                             if next_test_iter - iteration <= 50:
                                 # Delay perturbation until after the test
                                 self.log.info(f"Delaying weight perturbation from iteration {iteration} to after test at iteration {next_test_iter}")
                                 delayed_perturbation_iter = next_test_iter
                             else:
-                                self.perturb_weights()
+                                self.perturb_E()
                     current_loss_item = total_loss.item()
                     
                     if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
@@ -822,8 +837,8 @@ class EncodingDesigner(nn.Module):
                             self.load_state_dict(self.saved_models[revert_iter])
                             self.to(current_device)
                             optimizer_gen = torch.optim.Adam([ # Re-init optimizer for the reverted state
-                                {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
-                                {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
+                                {'params': self.encoder.parameters(), 'lr': self.user_parameters['lr']},
+                                {'params': self.decoder.parameters(), 'lr': self.user_parameters['lr']}
                             ])
                             optimizer_gen.load_state_dict(self.saved_optimizer_states[revert_iter])
                             self.optimizer_gen = optimizer_gen
@@ -834,8 +849,8 @@ class EncodingDesigner(nn.Module):
                         except Exception as e:
                             self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
                             self.optimizer_gen = torch.optim.Adam([
-                                {'params': self.encoder.parameters(), 'lr': self.user_parameters['learning_rate']},
-                                {'params': self.decoder.parameters(), 'lr': self.user_parameters['learning_rate']}
+                                {'params': self.encoder.parameters(), 'lr': self.user_parameters['lr']},
+                                {'params': self.decoder.parameters(), 'lr': self.user_parameters['lr']}
                             ])
                         self.learning_stats[str(iteration)] = {} 
                         self.learning_stats[str(iteration)]['status'] = f'Reverted from NaN at {iteration}'
@@ -863,7 +878,7 @@ class EncodingDesigner(nn.Module):
                     log_msg_header = f"--- Iteration: {iteration}/{n_iterations} Eval (Global Test Set) ---"
                     self.log.info(log_msg_header)
                     if self.user_parameters['Verbose'] == 1: print(f"{red_start}{log_msg_header}{reset_color}")
-                    log_msg_lr = f"Current LR: {self.user_parameters['learning_rate']:.6f}"
+                    log_msg_lr = f"Current LR: {self.user_parameters['lr']:.6f}"
                     self.log.info(log_msg_lr)
                     if self.user_parameters['Verbose'] == 1: print(log_msg_lr)
                     train_loss_key = 'total_loss_train' 
@@ -883,7 +898,7 @@ class EncodingDesigner(nn.Module):
                 # Perform delayed perturbation if needed
                 if delayed_perturbation_iter == iteration:
                     self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
-                    self.perturb_weights()
+                    self.perturb_E()
                     delayed_perturbation_iter = None
 
                 if iteration > 20:
@@ -944,13 +959,13 @@ class EncodingDesigner(nn.Module):
             self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
             self.eval() 
             with torch.no_grad():
-                final_E = self.get_encoding_weights().detach().clone() 
+                E = self.get_E().detach().clone() 
             self.log.info("Enforcing constraints on the final E matrix...")
             if self.constraints is None:
                 self.log.error("Cannot enforce constraints: self.constraints is None.")
-                self.E = final_E 
+                self.E = E 
             else:
-                E_final_constrained = torch.clip(final_E.round(), 0, None)
+                E_final_constrained = torch.clip(E.round(), 0, None)
                 T = self.constraints.clone().detach()
                 m = E_final_constrained.sum(1) > T
                 if m.any():
@@ -980,12 +995,11 @@ class EncodingDesigner(nn.Module):
             return
 
         self.results = {}
-        current_device = self.user_parameters['device']
 
-        # Use get_encoding_weights() to get proper encoding weights with sigmoid and constraints
-        E_weights = self.get_encoding_weights()
-        final_E_cpu = E_weights.cpu().detach()
-        self.results['Number of Probes (Constrained)'] = final_E_cpu.sum().item()
+        # Use get_E() to get proper encoding weights with sigmoid and constraints
+        E = self.get_E()
+        E_cpu = E.cpu().detach()
+        self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
 
         all_P_type = []
         X_global_train = self.X_train 
@@ -993,8 +1007,8 @@ class EncodingDesigner(nn.Module):
 
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
-                # Use the E_weights we already calculated above
-                P_global = self.project(X_global_train, E_weights) 
+                # Use the E_wts we already calculated above
+                P_global = self.project(X_global_train, E) 
                 P_global_cpu = P_global.cpu()
                 P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
                 unique_y_global = torch.unique(y_global_train)
@@ -1011,7 +1025,7 @@ class EncodingDesigner(nn.Module):
             self.results['Average Signal (Avg P_type)'] = avg_P_type.mean().item()
             self.results['Maximum Signal (Avg P_type)'] = avg_P_type.max().item()
             for bit in range(avg_P_type.shape[1]):
-                self.results[f"Number of Probes Bit {bit}"] = final_E_cpu[:, bit].sum().item()
+                self.results[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
                 self.results[f"Minimum Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].min().item()
                 self.results[f"Average Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].mean().item()
                 self.results[f"Maximum Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].max().item()
@@ -1033,40 +1047,40 @@ class EncodingDesigner(nn.Module):
         # This ensures complete compatibility with the training pipeline
         noise_levels = {
             "No Noise": {
-                'constant_noise': 0.0,
-                'gene_fold_noise': 0.0,
-                'weight_fold_noise': 0.0,
-                'projection_fold_noise': 0.0,
-                'gene_dropout_proportion': 0.0,
-                'projection_dropout_proportion': 0.0,
-                'weight_dropout_proportion': 0.0
+                'P_add': 0.0,
+                'E_noise': 0.0,
+                'E_noise': 0.0,
+                'P_noise': 0.0,
+                'X_drp': 0.0,
+                'P_drp': 0.0,
+                'E_drp': 0.0
             },
             "Low Noise": {
-                'constant_noise': 2.0,
-                'gene_fold_noise': 0.1,
-                'weight_fold_noise': 0.05,
-                'projection_fold_noise': 0.05,
-                'gene_dropout_proportion': 0.02,
-                'projection_dropout_proportion': 0.0,
-                'weight_dropout_proportion': 0.02
+                'P_add': 2.0,
+                'E_noise': 0.1,
+                'E_noise': 0.05,
+                'P_noise': 0.05,
+                'X_drp': 0.02,
+                'P_drp': 0.0,
+                'E_drp': 0.02
             },
             "Medium Noise": {
-                'constant_noise': 2.5,
-                'gene_fold_noise': 0.5,
-                'weight_fold_noise': 0.1,
-                'projection_fold_noise': 0.1,
-                'gene_dropout_proportion': 0.05,
-                'projection_dropout_proportion': 0.0,
-                'weight_dropout_proportion': 0.05
+                'P_add': 2.5,
+                'E_noise': 0.5,
+                'E_noise': 0.1,
+                'P_noise': 0.1,
+                'X_drp': 0.05,
+                'P_drp': 0.0,
+                'E_drp': 0.05
             },
             "High Noise": {
-                'constant_noise': 3.0,
-                'gene_fold_noise': 1.0,
-                'weight_fold_noise': 0.2,
-                'projection_fold_noise': 0.2,
-                'gene_dropout_proportion': 0.1,
-                'projection_dropout_proportion': 0.0,
-                'weight_dropout_proportion': 0.1
+                'P_add': 3.0,
+                'E_noise': 1.0,
+                'E_noise': 0.2,
+                'P_noise': 0.2,
+                'X_drp': 0.1,
+                'P_drp': 0.0,
+                'E_drp': 0.1
             }
         }
         self.eval()
@@ -1083,9 +1097,9 @@ class EncodingDesigner(nn.Module):
                     self.user_parameters[param_name] = param_value
                 
                 with torch.no_grad():
-                    # Use the existing pipeline: get_encoding_weights -> project -> decode
-                    E_weights = self.get_encoding_weights()
-                    P_test = self.project(self.X_test, E_weights)
+                    # Use the existing pipeline: get_encoding_wts -> project -> decode
+                    E = self.get_E()
+                    P_test = self.project(self.X_test, E)
                     y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
@@ -1171,9 +1185,9 @@ class EncodingDesigner(nn.Module):
         output_dir = self.user_parameters['output']
         saved_plot_paths = []
 
-        # Use get_encoding_weights() to get proper encoding weights with sigmoid and constraints
-        E_weights = self.get_encoding_weights()
-        final_E_device = E_weights.to(current_device)
+        # Use get_E() to get proper encoding weights with sigmoid and constraints
+        E = self.get_E()
+        E = E.to(current_device)
         self.eval()
 
         # Visualizations are now global
@@ -1189,10 +1203,9 @@ class EncodingDesigner(nn.Module):
             return
 
         with torch.no_grad():
-            P_tensor_vis = self.project(X_data_vis, final_E_device)
-            P_np_vis = P_tensor_vis.cpu().numpy() 
+            P = self.project(X_data_vis, E)
 
-            n_bits = P_tensor_vis.shape[1]
+            n_bits = P.shape[1]
             P_type_global = torch.zeros((self.n_categories, n_bits), device=current_device)
             unique_y_indices_global = torch.unique(y_data_vis)
 
@@ -1204,7 +1217,7 @@ class EncodingDesigner(nn.Module):
                 mask = (y_data_vis == type_idx_tensor)
                 if mask.sum() > 0:
                     if 0 <= type_idx < self.n_categories:
-                        P_type_global[type_idx] = P_tensor_vis[mask].mean(dim=0) 
+                        P_type_global[type_idx] = P[mask].mean(dim=0) 
                         valid_type_indices.append(type_idx)
                         valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
                     else:
@@ -1285,9 +1298,8 @@ class EncodingDesigner(nn.Module):
                 try:
                     y_vis_str_labels = np.array([self.y_reverse_label_map.get(int(idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
                     # Use the proper encoding weights for the projection density plot
-                    E_weights_cpu = E_weights.cpu().numpy()
                     plot_projection_space_density(
-                        X_data_vis.cpu().numpy() @ E_weights_cpu, 
+                        X_data_vis.cpu().numpy() @ E.cpu().numpy(), 
                         y_vis_str_labels, 
                         plot_path,
                         sum_norm=False, 
@@ -1360,7 +1372,7 @@ class EncodingDesigner(nn.Module):
             plt.xlabel('Epoch')
             plt.ylabel(parameter)
             plt.ylim(y_min,y_max)
-            if parameter in ['total_loss','categorical_loss','probe_weight_loss','gene_constraint_loss','median brightness','total_n_probes']:
+            if parameter in ['total_loss','categorical_loss','probe_wt_loss','gene_constraint_loss','median brightness','n_probes']:
                 plt.yscale('log')
             plt.legend()
             plt.tight_layout()
