@@ -34,58 +34,71 @@ class EncodingDesigner(nn.Module):
         super().__init__() 
 
         self.user_parameters: Dict[str, Any] = {
-            'n_cpu': 12,
-            'n_bit': 24,
-            'n_iterations': 10000,
-            'batch_size': 1000,
-            'target_brightness_log': 4.5,
-            'total_n_probes': 30e4,
-            'probe_weight': 1.0,
-            'probe_under_weight_factor': 0.1,
-            'gene_constraint_weight': 1.0,
-            'target_brightness_weight':1.0,
-            'gradient_clip_max_norm': 1.0, # Added for gradient clipping
-            'learning_rate_start': 0.05, 
-            'learning_rate_end': 0.005, 
-            'report_freq': 250,
-            'sparsity_target': 0.8, # Target sparsity ratio (80% zeros)
-            'sparsity_weight': 0.0, # Weight for sparsity loss (increased from 0.1)
-            'categorical_weight': 1.0,
-            'weight_dropout_proportion_start': 0.0,
-            'weight_dropout_proportion_end': 0.1,
-            'projection_dropout_proportion_start': 0.0,
-            'projection_dropout_proportion_end': 0.1,
-            'gene_dropout_proportion_start': 0.0,
-            'gene_dropout_proportion_end': 0.1,
-            'decoder_dropout_rate_start': 0.1,
-            'decoder_dropout_rate_end': 0.0,
-            'constant_noise_start': 1.0,
-            'constant_noise_end': 3.0,
-            'gene_fold_noise_start': 0.0,
-            'gene_fold_noise_end': 0.5,
-            'perturbation_frequency': 500, # How often to perturb weights (every N iterations)
-            'perturbation_percentage': 0.01, # Percentage of weights to perturb (0.0-1.0)
-            'min_probe_fraction': 0.05, # Minimum sigmoid value for initialization
-            'max_probe_fraction': 0.5,  # Maximum sigmoid value for initialization
-            'min_probe_fraction_perturb': 0.05, # Minimum sigmoid value for perturbation
-            'max_probe_fraction_perturb': 0.5,  # Maximum sigmoid value for perturbation
-            'activation_function':'tanh',
-            'sum_normalize_projection': 0,
-            'bit_normalize_projection': 0,
-            'label_smoothing': 0.1,
-            'best_model': 1,
-            'device': 'cpu',
-            'output': '/u/project/rwollman/rwollman/atlas_design/design_results',
-            'input': './', 
-            'Verbose': 1,
-            'decoder_hidden_layers': 0,
-            'decoder_hidden_dim': 128,
-            'constraints': 'constraints.csv', 
-            'X_test': 'X_test.pt',            
-            'y_test': 'y_test.pt',            
-            'X_train': 'X_train.pt',          
-            'y_train': 'y_train.pt',          
-            'y_label_converter_path': 'categorical_converter.csv', 
+            # Core model parameters
+            'n_cpu': 12,  # Number of CPU threads to use for PyTorch
+            'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
+            'n_iterations': 10000,  # Total number of training iterations
+            'batch_size': 1000,  # Batch size for training (0 = use full dataset)
+            'target_brightness_log': 4.5,  # Target brightness in log10 scale
+            'total_n_probes': 30e4,  # Target total number of probes across all genes
+            'probe_weight': 1.0,  # Weight for probe count loss term
+            'probe_under_weight_factor': 0.1,  # Factor for under-utilization penalty
+            'gene_constraint_weight': 1.0,  # Weight for gene constraint violation penalty
+            'target_brightness_weight':1.0,  # Weight for target brightness loss term
+            'gradient_clip_max_norm': 1.0,  # Maximum gradient norm for clipping
+            'learning_rate_start': 0.05,  # Initial learning rate
+            'learning_rate_end': 0.005,  # Final learning rate (linear interpolation)
+            'report_freq': 250,  # How often to report training progress
+            'sparsity_target': 0.8,  # Target sparsity ratio (fraction of zeros)
+            'sparsity_weight': 0.0,  # Weight for sparsity loss term
+            'categorical_weight': 1.0,  # Weight for categorical classification loss
+            'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
+            'best_model': 1,  # Whether to save the best model during training
+            'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
+            'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
+            'input': './',  # Input directory path
+            'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
+            'decoder_hidden_layers': 0,  # Number of hidden layers in decoder
+            'decoder_hidden_dim': 128,  # Hidden dimension size in decoder
+            'constraints': 'constraints.csv',  # Path to gene constraints file
+            'X_test': 'X_test.pt',  # Path to test features tensor
+            'y_test': 'y_test.pt',  # Path to test labels tensor
+            'X_train': 'X_train.pt',  # Path to training features tensor
+            'y_train': 'y_train.pt',  # Path to training labels tensor
+            'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
+            # Gene-level noise parameters
+            'gene_dropout_proportion_start': 0.0,  # Initial proportion of genes to drop out
+            'gene_dropout_proportion_end': 0.1,  # Final proportion of genes to drop out
+            'gene_fold_noise_start': 0.0,  # Initial gene expression fold noise level
+            'gene_fold_noise_end': 0.5,  # Final gene expression fold noise level
+            # Weight-level noise parameters
+            'weight_dropout_proportion_start': 0.0,  # Initial proportion of encoding weights to drop out
+            'weight_dropout_proportion_end': 0.1,  # Final proportion of encoding weights to drop out
+            'weight_fold_noise_start': 0.0,  # Initial encoding weight fold noise level
+            'weight_fold_noise_end': 0.1,  # Final encoding weight fold noise level
+            # Projection-level noise parameters
+            'projection_dropout_proportion_start': 0.0,  # Initial proportion of projection values to drop out
+            'projection_dropout_proportion_end': 0.1,  # Final proportion of projection values to drop out
+            'projection_fold_noise_start': 0.0,  # Initial projection fold noise level
+            'projection_fold_noise_end': 0.1,  # Final projection fold noise level
+            # Decoder-level noise parameters
+            'decoder_dropout_rate_start': 0.1,  # Initial decoder dropout rate
+            'decoder_dropout_rate_end': 0.0,  # Final decoder dropout rate
+            # Constant noise parameters
+            'constant_noise_start': 1.0,  # Initial constant noise level (log10 scale)
+            'constant_noise_end': 3.0,  # Final constant noise level (log10 scale)
+            # Weight perturbation parameters
+            'perturbation_frequency': 500,  # How often to perturb weights (every N iterations)
+            'perturbation_percentage': 0.01,  # Percentage of weights to perturb (0.0-1.0)
+            'min_probe_fraction': 0.05,  # Minimum probe fraction for initialization
+            'max_probe_fraction': 0.5,  # Maximum probe fraction for initialization
+            'min_probe_fraction_perturb': 0.05,  # Minimum probe fraction for perturbation
+            'max_probe_fraction_perturb': 0.5,  # Maximum probe fraction for perturbation
+            # Activation and normalization parameters
+            'activation_function':'tanh',  # Activation function for encoding weights
+            'decoder_activation': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
+            'sum_normalize_projection': 0,  # Whether to normalize projection by sum
+            'bit_normalize_projection': 0,  # Whether to normalize projection by bit-wise statistics
         }
 
         temp_output_dir = self.user_parameters['output']
@@ -353,12 +366,23 @@ class EncodingDesigner(nn.Module):
             else:# broken right now
                 for i in range(n_hidden_layers_decoder):
                     decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, hidden_dim_decoder))
-                    decoder_modules.append(nn.BatchNorm1d(hidden_dim_decoder)) 
-                    decoder_modules.append(nn.ReLU())
+                    # Add activation function based on decoder_activation parameter
+                    if self.user_parameters['decoder_activation'] == 'relu':
+                        decoder_modules.append(nn.ReLU())
+                    elif self.user_parameters['decoder_activation'] == 'leaky_relu':
+                        decoder_modules.append(nn.LeakyReLU())
+                    elif self.user_parameters['decoder_activation'] == 'gelu':
+                        decoder_modules.append(nn.GELU())
+                    elif self.user_parameters['decoder_activation'] == 'swish':
+                        decoder_modules.append(nn.SiLU())  # SiLU is the same as Swish
+                    elif self.user_parameters['decoder_activation'] == 'tanh':
+                        decoder_modules.append(nn.Tanh())
+                    else:
+                        raise ValueError(f"Invalid decoder activation function: {self.user_parameters['decoder_activation']}")
                     decoder_modules.append(nn.Dropout(p=dropout_rate_decoder))
                     current_decoder_layer_input_dim = hidden_dim_decoder 
                 decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
-                log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, dropout={dropout_rate_decoder}) and output layer."
+                log_msg_decoder_structure = f"Initialized decoder with {n_hidden_layers_decoder} hidden layer(s) (dim={hidden_dim_decoder}, activation={self.user_parameters['decoder_activation']}, dropout={dropout_rate_decoder}) and output layer."
             
             self.decoder = nn.Sequential(*decoder_modules).to(current_device)
             self.log.info(f"Initialized dencoder.") 
@@ -457,16 +481,22 @@ class EncodingDesigner(nn.Module):
             raise ValueError(f"Invalid activation function: {self.user_parameters['activation_function']}")
         if self.training and self.user_parameters['weight_dropout_proportion'] > 0:
             E = E * (torch.rand_like(E) > self.user_parameters['weight_dropout_proportion']).float()
+        if self.training and self.user_parameters['weight_fold_noise'] > 0:
+            fold = self.user_parameters['weight_fold_noise']
+            E = E * torch.exp(torch.rand_like(E) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
         return E
 
     def project(self, X, E):
-        if self.user_parameters['gene_fold_noise'] != 0:
+        if self.training and self.user_parameters['gene_fold_noise'] != 0:
             fold = self.user_parameters['gene_fold_noise']
             X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
-        if self.user_parameters['gene_dropout_proportion'] != 0:
+        if self.training and self.user_parameters['gene_dropout_proportion'] != 0:
             X = X * (torch.rand_like(X) > self.user_parameters['gene_dropout_proportion']).float()
         P = X.mm(E)
-        if self.user_parameters['constant_noise'] != 0:
+        if self.training and self.user_parameters['projection_fold_noise'] > 0:
+            fold = self.user_parameters['projection_fold_noise']
+            P = P * torch.exp(torch.rand_like(P) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
+        if self.training and self.user_parameters['constant_noise'] != 0:
             P = P + torch.rand_like(P) * (10 ** self.user_parameters['constant_noise'])
         if self.training and self.user_parameters['projection_dropout_proportion'] > 0:
             P = P * (torch.rand_like(P) > self.user_parameters['projection_dropout_proportion']).float()
@@ -897,6 +927,8 @@ class EncodingDesigner(nn.Module):
             "No Noise": {
                 'constant_noise': 0.0,
                 'gene_fold_noise': 0.0,
+                'weight_fold_noise': 0.0,
+                'projection_fold_noise': 0.0,
                 'gene_dropout_proportion': 0.0,
                 'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.0
@@ -904,6 +936,8 @@ class EncodingDesigner(nn.Module):
             "Low Noise": {
                 'constant_noise': 2.0,
                 'gene_fold_noise': 0.1,
+                'weight_fold_noise': 0.05,
+                'projection_fold_noise': 0.05,
                 'gene_dropout_proportion': 0.02,
                 'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.02
@@ -911,6 +945,8 @@ class EncodingDesigner(nn.Module):
             "Medium Noise": {
                 'constant_noise': 2.5,
                 'gene_fold_noise': 0.5,
+                'weight_fold_noise': 0.1,
+                'projection_fold_noise': 0.1,
                 'gene_dropout_proportion': 0.05,
                 'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.05
@@ -918,6 +954,8 @@ class EncodingDesigner(nn.Module):
             "High Noise": {
                 'constant_noise': 3.0,
                 'gene_fold_noise': 1.0,
+                'weight_fold_noise': 0.2,
+                'projection_fold_noise': 0.2,
                 'gene_dropout_proportion': 0.1,
                 'projection_dropout_proportion': 0.0,
                 'weight_dropout_proportion': 0.1
