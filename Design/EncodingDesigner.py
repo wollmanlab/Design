@@ -60,6 +60,7 @@ class EncodingDesigner(nn.Module):
             'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
             'decoder_hidden_layers': 0,  # Number of hidden layers in decoder
             'decoder_hidden_dim': 128,  # Hidden dimension size in decoder
+            'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
             'constraints': 'constraints.csv',  # Path to gene constraints file
             'X_test': 'X_test.pt',  # Path to test features tensor
             'y_test': 'y_test.pt',  # Path to test labels tensor
@@ -271,6 +272,88 @@ class EncodingDesigner(nn.Module):
             self.log.error(f"Error converting parameter '{param_key}' to int. Value was '{original_value}' (type: {type(original_value).__name__}). Error: {e}")
             raise ValueError(f"Could not convert parameter '{param_key}' to integer. Invalid value: '{original_value}'.")
 
+    def train_gene_importance_decoder(self):
+        """Train a simple linear decoder from genes to cell types to identify important genes."""
+        self.log.info("Training gene importance decoder...")
+        device = self.X_train.device
+        n_genes = self.X_train.shape[1]
+        n_categories = len(torch.unique(self.y_train))
+        # Create simple linear decoder: genes -> cell types
+        decoder = nn.Linear(n_genes, n_categories).to(device)
+        optimizer = torch.optim.Adam(decoder.parameters(), lr=0.01)
+        criterion = nn.CrossEntropyLoss()
+        # Track training metrics
+        losses = []
+        accuracies = []
+        # Training loop
+        for epoch in range(1000):  # Hardcoded 100 epochs
+            decoder.train()
+            optimizer.zero_grad()
+            outputs = decoder(self.X_train)
+            loss = criterion(outputs, self.y_train)
+            loss.backward()
+            optimizer.step()
+            # Calculate accuracy
+            with torch.no_grad():
+                predictions = outputs.argmax(dim=1)
+                accuracy = (predictions == self.y_train).float().mean()
+                losses.append(loss.item())
+                accuracies.append(accuracy.item())
+            if (epoch + 1) % 50 == 0:
+                self.log.info(f"Gene importance decoder epoch {epoch+1}/1000, loss: {loss.item():.4f}, accuracy: {accuracy.item():.4f}")
+        # Extract gene importance scores from the trained weights
+        with torch.no_grad():
+            gene_importance_scores = torch.abs(decoder.weight).sum(dim=0)  # Sum across output classes
+        self.log.info(f"Gene importance decoder training complete. Score range: [{gene_importance_scores.min().item():.4f}, {gene_importance_scores.max().item():.4f}]")
+        # Find top genes
+        top_n = min(self.user_parameters['top_n_genes'], 100)
+        self.log.info(f"Top {top_n} genes by importance score:")
+        # Filter genes based on importance scores
+        top_n_actual = self.user_parameters['top_n_genes']
+        top_gene_indices = torch.argsort(gene_importance_scores, descending=True)[:top_n_actual]
+        gene_mask = torch.zeros(n_genes, dtype=torch.bool, device=device)
+        gene_mask[top_gene_indices] = True
+        # Filter data matrices
+        self.X_train = self.X_train[:, gene_mask]
+        self.X_test = self.X_test[:, gene_mask]
+        self.constraints = self.constraints[gene_mask]
+        self.genes = self.genes[gene_mask.cpu().numpy()]
+        # Update number of genes
+        self.n_genes = top_n_actual
+        # Save gene importance scores and gene mask
+        output_dir = self.user_parameters['output']
+        gene_importance_df = pd.DataFrame({
+            'gene_name': self.genes,
+            'importance_score': gene_importance_scores[gene_mask].cpu().numpy()
+        })
+        gene_importance_path = os.path.join(output_dir, 'gene_importance_scores.csv')
+        gene_mask_path = os.path.join(output_dir, 'gene_mask.pt')
+        gene_importance_df.to_csv(gene_importance_path, index=False)
+        torch.save(gene_mask.cpu(), gene_mask_path)
+        self.log.info(f"Gene importance scores saved to {gene_importance_path}")
+        self.log.info(f"Gene mask saved to {gene_mask_path}")
+        # Create training plots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        # Loss plot
+        ax1.plot(losses)
+        ax1.set_title('Gene Importance Decoder Training Loss')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Loss')
+        ax1.grid(True)
+        # Accuracy plot
+        ax2.plot(accuracies)
+        ax2.set_title('Gene Importance Decoder Training Accuracy')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Accuracy')
+        ax2.grid(True)
+        plt.tight_layout()
+        training_plots_path = os.path.join(output_dir, 'gene_importance_decoder_training.png')
+        plt.savefig(training_plots_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        self.log.info(f"Training plots saved to {training_plots_path}")
+        self.log.info(f"Gene filtering complete: {self.n_genes} genes retained")
+        return gene_importance_scores
+
     def initialize(self):
         self.log.info("--- Starting Initialization ---")
         current_device = self.user_parameters['device']
@@ -330,6 +413,10 @@ class EncodingDesigner(nn.Module):
                 raise ValueError(f"Testing data shape mismatch (X_test, y_test)")
             self.log.info("Data loaded and shapes validated.")
             self.log.info(f"Inferred {self.n_categories} cell type categories.")
+
+            # Filter genes if top_n_genes is specified
+            if self.user_parameters['top_n_genes'] > 0 and self.user_parameters['top_n_genes'] < self.n_genes:
+                self.train_gene_importance_decoder()
 
             self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
             with torch.no_grad():
@@ -398,6 +485,31 @@ class EncodingDesigner(nn.Module):
                     self.to(current_device) 
                     self.is_initialized_from_file = True
                     self.log.info("Successfully loaded model state from file (strict=False).")
+                    # Check if gene mask exists and load it if present
+                    gene_mask_path = os.path.join(output_dir, 'gene_mask.pt')
+                    if os.path.exists(gene_mask_path):
+                        self.log.info(f"Found gene mask file: {gene_mask_path}. Loading gene filtering.")
+                        try:
+                            gene_mask = torch.load(gene_mask_path, map_location=current_device)
+                            if gene_mask.dtype != torch.bool:
+                                gene_mask = gene_mask.bool()
+                            # Apply gene mask to data matrices
+                            self.X_train = self.X_train[:, gene_mask]
+                            self.X_test = self.X_test[:, gene_mask]
+                            self.constraints = self.constraints[gene_mask]
+                            self.genes = self.genes[gene_mask.cpu().numpy()]
+                            # Update number of genes
+                            self.n_genes = gene_mask.sum().item()
+                            self.log.info(f"Applied gene mask: {self.n_genes} genes retained from {len(gene_mask)} total genes")
+                            # Reinitialize encoder with correct dimensions
+                            self.encoder = nn.Embedding(self.n_genes, self.user_parameters['n_bit']).to(current_device)
+                            self.log.info(f"Reinitialized encoder with {self.n_genes} genes")
+                        except Exception as e:
+                            self.log.error(f"Failed to load gene mask from {gene_mask_path}: {e}")
+                            self.log.warning("Continuing without gene filtering.")
+                    else:
+                        self.log.info("No gene mask file found. Using all genes.")
+                    
                     self.eval() 
                     with torch.no_grad():
                         final_E = self.get_encoding_weights().detach().clone()
@@ -418,7 +530,7 @@ class EncodingDesigner(nn.Module):
                 except Exception as e:
                     self.log.error(f"Failed to load model state from {model_state_path}: {e}. Model will use fresh initial weights.")
                     self.is_initialized_from_file = False
-                    self.E = None 
+                    self.E = None
             else:
                 self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
                 self.is_initialized_from_file = False
@@ -848,11 +960,7 @@ class EncodingDesigner(nn.Module):
                 self.E = E_final_constrained.clone().detach() 
                 e_csv_path = os.path.join(output_dir, 'E_constrained.csv')
                 e_pt_path = os.path.join(output_dir, 'E_constrained.pt')
-                if self.genes is None:
-                    self.log.warning("Gene names not available. Saving E_constrained.csv without index.")
-                    pd.DataFrame(self.E.cpu().numpy()).to_csv(e_csv_path)
-                else:
-                    pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
+                pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
                 torch.save(self.E.cpu(), e_pt_path)
                 self.log.info(f"Final constrained E matrix saved to {e_csv_path} and {e_pt_path}")
                 self.log.info(f"Final constrained probe count: {self.E.sum().item():.2f}")

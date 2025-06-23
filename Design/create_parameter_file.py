@@ -69,6 +69,7 @@ user_parameters = {
             'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
             'decoder_hidden_layers': 0,  # Number of hidden layers in decoder
             'decoder_hidden_dim': 128,  # Hidden dimension size in decoder
+            'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
             'constraints': 'constraints.csv',  # Path to gene constraints file
             'X_test': 'X_test.pt',  # Path to test features tensor
             'y_test': 'y_test.pt',  # Path to test labels tensor
