@@ -230,27 +230,27 @@ class EncodingDesigner(nn.Module):
             try:
                 abs_input_path = os.path.abspath(input_path)
                 if not os.path.exists(abs_input_path):
-                    self.log.warning(f"Input file not found, cannot create symlink: {abs_input_path}")
+                    self.log.warning(f"Input file not found, cannot create symlink: \n {abs_input_path}")
                     skipped_count += 1
                     continue
                 filename = os.path.basename(abs_input_path)
                 symlink_path = os.path.join(output_dir, filename)
                 if os.path.lexists(symlink_path): 
                     if os.path.islink(symlink_path):
-                        self.log.debug(f"Removing existing symlink: {symlink_path}")
+                        self.log.debug(f"Removing existing symlink: \n {symlink_path}")
                         os.remove(symlink_path)
                     else:
-                        self.log.warning(f"Target path exists but is not a symlink, skipping: {symlink_path}")
+                        self.log.warning(f"Target path exists but is not a symlink, skipping: \n {symlink_path}")
                         skipped_count += 1
                         continue
                 os.symlink(abs_input_path, symlink_path)
-                self.log.info(f"Created symlink: {symlink_path} -> {abs_input_path}")
+                self.log.info(f"Created symlink: \n {symlink_path} \n -> \n {abs_input_path}")
                 linked_count += 1
             except OSError as e:
-                self.log.error(f"Failed to create symlink for {input_path} -> {symlink_path}: {e}")
+                self.log.error(f"Failed to create symlink for \n {input_path} \n -> \n {symlink_path}: {e}")
                 error_count += 1
             except Exception as e:
-                self.log.error(f"An unexpected error occurred while trying to symlink {input_path}: {e}")
+                self.log.error(f"An unexpected error occurred while trying to symlink \n {input_path}: {e}")
                 error_count += 1
         self.log.info(f"Symlinking complete. Created: {linked_count}, Skipped: {skipped_count}, Errors: {error_count}")
 
