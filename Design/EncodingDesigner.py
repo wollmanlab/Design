@@ -100,25 +100,25 @@ class EncodingDesigner(nn.Module):
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
         }
-        # Interpolated parameters (created from _s and _e parameters)
+        self._setup_logging(user_parameters_path)
+        self._load_and_process_parameters(user_parameters_path)
+        self._setup_output_and_symlinks(user_parameters_path)
+        self.results = {}
+        self.best_loss = float('inf')
+        self.best_model_state_dict = None
+        self.best_iteration = -1
+
+    def _setup_logging(self, user_parameters_path):
         temp_output_dir = self.I['output']
-        loaded_params_temp = {}
         if user_parameters_path is not None:
             try:
                 df_temp = pd.read_csv(user_parameters_path, index_col=0, low_memory=False)
-                if 'values' not in df_temp.columns:
-                    logging.basicConfig(level=logging.ERROR)
-                    logging.error(f"Parameter file {user_parameters_path} missing 'values' column.")
-                else:
+                if 'values' in df_temp.columns:
                     loaded_params_temp = dict(zip(df_temp.index, df_temp['values']))
-                    temp_output_dir = loaded_params_temp.get('output', temp_output_dir) 
-            except FileNotFoundError:
-                logging.basicConfig(level=logging.ERROR)
-                logging.error(f"Parameter file not found at: {user_parameters_path}. Using default parameters.")
-            except Exception as e:
-                logging.basicConfig(level=logging.ERROR)
-                logging.error(f"Error loading parameter file {user_parameters_path}: {e}. Using default parameters.")
-        # Create output directory if it doesn't exist
+                    temp_output_dir = loaded_params_temp.get('output', temp_output_dir)
+            except (FileNotFoundError, Exception):
+                pass
+        
         if not os.path.exists(temp_output_dir):
             os.makedirs(temp_output_dir)
         for handler in logging.root.handlers[:]:
@@ -136,12 +136,8 @@ class EncodingDesigner(nn.Module):
             format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
             datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
         self.log = logging.getLogger("Designer")
-        self.results = {}
-        # Initialize best loss and model state dict
-        self.best_loss = float('inf')
-        self.best_model_state_dict = None
-        self.best_iteration = -1
-        # Load user parameters from file
+
+    def _load_and_process_parameters(self, user_parameters_path):
         loaded_user_parameters = {}
         if user_parameters_path is not None:
             self.log.info(f"Loading user parameters from: {user_parameters_path}")
@@ -204,7 +200,8 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"{key}: {val} (type: {type(val).__name__})") 
         self.log.info(f"Limiting Torch to {self.I['n_cpu']} threads")
         torch.set_num_threads(self.I['n_cpu'])
-        # Create output directory
+
+    def _setup_output_and_symlinks(self, user_parameters_path):
         output_dir = self.I['output'] 
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -216,6 +213,7 @@ class EncodingDesigner(nn.Module):
         # Create symlinks for input files
         self.log.info("Creating symlinks for input files in output directory...")
         input_files_to_link = []
+        file_params_to_prefix = ['constraints', 'X_test', 'y_test', 'X_train', 'y_train', 'y_label_converter_path']
         for key in file_params_to_prefix:
             path = self.I.get(key)
             if isinstance(path, str) and path: 
