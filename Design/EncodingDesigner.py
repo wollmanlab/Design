@@ -711,7 +711,7 @@ class EncodingDesigner(nn.Module):
 
         # The model should have a median brightness atleast to the target brightness
         if self.user_parameters['brightness_wt'] != 0:
-            fold = ((10**self.user_parameters['brightness'])/(P_original.median(0).values.min().clamp(min=1))).log2()
+            fold = ((10**self.user_parameters['brightness'])/(P.median(0).values.min().clamp(min=1))).log2()
             brightness_loss = self.user_parameters['brightness_wt']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
@@ -1319,7 +1319,7 @@ class EncodingDesigner(nn.Module):
             fig_cm = None 
             try:
                 with torch.no_grad():
-                    P_test_tensor = self.project(X_test_global, final_E_device)
+                    P_test_tensor = self.project(X_test_global, E)
                     y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
 
                 y_true_np = y_test_global.cpu().numpy()
