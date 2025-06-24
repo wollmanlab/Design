@@ -28,11 +28,9 @@ try:
 except ImportError:
     _IPYTHON_AVAILABLE = False
 
-
 class EncodingDesigner(nn.Module):
     def __init__(self, user_parameters_path: Optional[str] = None):
         super().__init__() 
-
         self.I: Dict[str, Any] = {
             # Core model parameters
             'n_cpu': 12,  # Number of CPU threads to use for PyTorch
@@ -118,17 +116,14 @@ class EncodingDesigner(nn.Module):
                     temp_output_dir = loaded_params_temp.get('output', temp_output_dir)
             except (FileNotFoundError, Exception):
                 pass
-        
         if not os.path.exists(temp_output_dir):
             os.makedirs(temp_output_dir)
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         logging.basicConfig(level=logging.INFO) 
-        # Create log file
         input_filename = os.path.basename(user_parameters_path) if user_parameters_path else "default"
         input_filename = os.path.splitext(input_filename)[0]  
         self.log_file = os.path.join(temp_output_dir, f'log_{input_filename}.log')
-        # Remove log file if it exists
         if os.path.exists(self.log_file):
             os.remove(self.log_file)
         logging.basicConfig(
@@ -340,7 +335,6 @@ class EncodingDesigner(nn.Module):
             else:
                 tensor = loaded_data.to(dtype=dtype, device=device)
             return tensor
-        # Load data tensors
         self.X_train = load_tensor(self.I['X_train'], torch.float32, self.I['device'])
         self.X_test = load_tensor(self.I['X_test'], torch.float32, self.I['device'])
         self.y_train = load_tensor(self.I['y_train'], torch.long, self.I['device'])
@@ -408,12 +402,10 @@ class EncodingDesigner(nn.Module):
                     gene_mask = torch.load(gene_mask_path, map_location=self.I['device'])
                     if gene_mask.dtype != torch.bool:
                         gene_mask = gene_mask.bool()
-                    # Apply gene mask to data matrices
                     self.X_train = self.X_train[:, gene_mask]
                     self.X_test = self.X_test[:, gene_mask]
                     self.constraints = self.constraints[gene_mask]
                     self.genes = self.genes[gene_mask.cpu().numpy()]
-                    # Update number of genes
                     self.n_genes = gene_mask.sum().item()
                     self.log.info(f"Applied gene mask: {self.n_genes} genes retained from {len(gene_mask)} total genes")
                     # Reinitialize encoder with correct dimensions
@@ -510,13 +502,11 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"Gene mask saved to {gene_mask_path}")
         # Create training plots
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        # Loss plot
         ax1.plot(losses)
         ax1.set_title('Gene Importance Decoder Training Loss')
         ax1.set_xlabel('Epoch')
         ax1.set_ylabel('Loss')
         ax1.grid(True)
-        # Accuracy plot
         ax2.plot(accuracies)
         ax2.set_title('Gene Importance Decoder Training Accuracy')
         ax2.set_xlabel('Epoch')
@@ -536,7 +526,6 @@ class EncodingDesigner(nn.Module):
             self.log.info("Loading Gene Constraints")
             self._load_constraints()
             self._load_data()
-            # Filter genes if top_n_genes is specified
             if self.I['top_n_genes'] > 0 and self.I['top_n_genes'] < self.n_genes:
                 self.train_gene_importance_decoder()
             self._initialize_encoder()
@@ -642,7 +631,6 @@ class EncodingDesigner(nn.Module):
         current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
         current_stats['median brightness' + suffix] = P.median().item()
-        
         # Calculate dynamic range utilization and median brightness for each bit
         bit_dynamic_ranges = []
         bit_percentiles = []
