@@ -305,6 +305,8 @@ class EncodingDesigner(nn.Module):
         else:
             for i in range(self.I['decoder_n_lyr']):
                 decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.I['decoder_h_dim']))
+                # Add batch normalization for better training stability
+                decoder_modules.append(nn.BatchNorm1d(self.I['decoder_h_dim']))
                 # Add activation function based on decoder_activation parameter
                 if self.I['decoder_act'] == 'relu':
                     decoder_modules.append(nn.ReLU())
@@ -321,7 +323,7 @@ class EncodingDesigner(nn.Module):
                 decoder_modules.append(nn.Dropout(p=self.I['D_drp']))
                 current_decoder_layer_input_dim = self.I['decoder_h_dim'] 
             decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
-            log_msg_decoder_structure = f"Initialized decoder with {self.I['decoder_h_dim']} hidden layer(s) (dim={self.I['decoder_h_dim']}, activation={self.I['decoder_act']}, dropout={self.I['D_drp']}) and output layer."
+            log_msg_decoder_structure = f"Initialized decoder with {self.I['decoder_n_lyr']} hidden layer(s) (dim={self.I['decoder_h_dim']}, activation={self.I['decoder_act']}, dropout={self.I['D_drp']}) and output layer."
         self.decoder = nn.Sequential(*decoder_modules).to(self.I['device'])
         self.log.info(f"Initialized decoder.")
         self.log.info(log_msg_decoder_structure)
