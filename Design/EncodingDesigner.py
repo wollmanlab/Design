@@ -1311,10 +1311,6 @@ class EncodingDesigner(nn.Module):
             plt.close()
         self.log.info("Visualization generation finished.")
 
-
-
-
-
 def sanitize_filename(name):
     """Removes or replaces characters invalid for filenames."""
     name = name.strip()
@@ -1460,7 +1456,6 @@ if __name__ == '__main__':
     parser.add_argument("user_parameters_path", type=str, help="Path to csv containing parameters for model")
     args = parser.parse_args()
     user_parameters_path = args.user_parameters_path
-    
     model = EncodingDesigner(user_parameters_path=user_parameters_path)
     if not model.initialize():
         print("Initialization failed. Check the log file for details.")
