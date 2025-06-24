@@ -507,7 +507,7 @@ class EncodingDesigner(nn.Module):
         ax2.set_ylabel('Accuracy')
         ax2.grid(True)
         plt.tight_layout()
-        training_plots_path = os.path.join(self.I['output'], 'gene_importance_decoder_training.png')
+        training_plots_path = os.path.join(self.I['output'], 'gene_importance_decoder_training.pdf')
         plt.savefig(training_plots_path, dpi=300, bbox_inches='tight')
         plt.close()
         self.log.info(f"Training plots saved to {training_plots_path}")
@@ -1186,7 +1186,7 @@ class EncodingDesigner(nn.Module):
                     plt.setp(ax_corr.get_xticklabels(), rotation=45, ha='right')
                     plt.setp(ax_corr.get_yticklabels(), rotation=0)
                     fig_corr.tight_layout()
-                    plot_filename = f"type_correlation_heatmap_{global_fname_safe}.png"
+                    plot_filename = f"type_correlation_heatmap_{global_fname_safe}.pdf"
                     plot_path = os.path.join(self.I['output'], plot_filename)
                     fig_corr.savefig(plot_path, dpi=300, bbox_inches='tight')
                     saved_plot_paths.append(plot_path) 
@@ -1206,48 +1206,48 @@ class EncodingDesigner(nn.Module):
                         'data': P_type_global_present.clamp(min=1).log10(),
                         'cmap': 'inferno',
                         'center': None,
-                        'filename': f"P_type_clustermap_{global_fname_safe}.png",
-                        'corr_filename': f"type_correlation_raw_{global_fname_safe}.png"
+                        'filename': f"P_type_clustermap_{global_fname_safe}.pdf",
+                        'corr_filename': f"type_correlation_raw_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Sum Norm',
                         'data': sum_normalize_p_type(P_type_global_present).clamp(min=1).log10(),
                         'cmap': 'inferno',
                         'center': None,
-                        'filename': f"P_type_clustermap_sum_norm_{global_fname_safe}.png",
-                        'corr_filename': f"type_correlation_sum_norm_{global_fname_safe}.png"
+                        'filename': f"P_type_clustermap_sum_norm_{global_fname_safe}.pdf",
+                        'corr_filename': f"type_correlation_sum_norm_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Bit Center',
                         'data': bitwise_center_p_type(P_type_global_present),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_bit_center_{global_fname_safe}.png",
-                        'corr_filename': f"type_correlation_bit_center_{global_fname_safe}.png"
+                        'filename': f"P_type_clustermap_bit_center_{global_fname_safe}.pdf",
+                        'corr_filename': f"type_correlation_bit_center_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Bit Z-score',
                         'data': bitwise_normalize_p_type(P_type_global_present),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_bit_zscore_{global_fname_safe}.png",
-                        'corr_filename': f"type_correlation_bit_zscore_{global_fname_safe}.png"
+                        'filename': f"P_type_clustermap_bit_zscore_{global_fname_safe}.pdf",
+                        'corr_filename': f"type_correlation_bit_zscore_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Sum and Bit Center',
                         'data': bitwise_center_p_type(sum_normalize_p_type(P_type_global_present)),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_sum_bit_center_{global_fname_safe}.png",
-                        'corr_filename': f"type_correlation_sum_bit_center_{global_fname_safe}.png"
+                        'filename': f"P_type_clustermap_sum_bit_center_{global_fname_safe}.pdf",
+                        'corr_filename': f"type_correlation_sum_bit_center_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Sum and Bit Z-score',
                         'data': bitwise_normalize_p_type(sum_normalize_p_type(P_type_global_present)),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_sum_bit_zscore_{global_fname_safe}.png",
-                        'corr_filename': f"type_correlation_sum_bit_zscore_{global_fname_safe}.png"
+                        'filename': f"P_type_clustermap_sum_bit_zscore_{global_fname_safe}.pdf",
+                        'corr_filename': f"type_correlation_sum_bit_zscore_{global_fname_safe}.pdf"
                     }
                 ]
                 
@@ -1259,7 +1259,7 @@ class EncodingDesigner(nn.Module):
             else:
                 self.log.warning(f"Skipping P_type plot for {global_name_str}: No cell types present.")
             if n_types_present > 0 and n_bits >= 2:
-                plot_filename = f"projection_density_plot_{global_fname_safe}.png"
+                plot_filename = f"projection_density_plot_{global_fname_safe}.pdf"
                 plot_path = os.path.join(self.I['output'], plot_filename)
                 try:
                     y_vis_str_labels = np.array([self.y_reverse_label_map.get(int(idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
@@ -1304,7 +1304,7 @@ class EncodingDesigner(nn.Module):
                     plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
                     plt.setp(ax_cm.get_yticklabels(), rotation=0)
                     fig_cm.tight_layout()
-                    plot_filename = f"confusion_matrix_test_{global_fname_safe}.png"
+                    plot_filename = f"confusion_matrix_test_{global_fname_safe}.pdf"
                     plot_path = os.path.join(self.I['output'], plot_filename)
                     fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
                     saved_plot_paths.append(plot_path)
@@ -1327,8 +1327,8 @@ class EncodingDesigner(nn.Module):
             y2 = np.array(learning_curve[parameter+'_test'])[n_start:-1]
             y_min, y_max = np.percentile(y1,[1,99])
             plt.figure(figsize=(5, 3),dpi=200)
-            plt.scatter(x,y1,label='Train',s=1)
-            plt.scatter(x,y2,label='Test',c='orange',s=1)
+            plt.scatter(x,y1,label='Train',s=1, alpha=0.6, rasterized=True)
+            plt.scatter(x,y2,label='Test',c='orange',s=1, alpha=0.6, rasterized=True)
             plt.xlabel('Epoch')
             plt.ylabel(parameter)
             plt.ylim(y_min,y_max)
@@ -1336,7 +1336,7 @@ class EncodingDesigner(nn.Module):
                 plt.yscale('log')
             plt.legend()
             plt.tight_layout()
-            plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.png"))
+            plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.pdf"), dpi=300, bbox_inches='tight')
             plt.close()
         self.log.info("Visualization generation finished.")
 
@@ -1402,7 +1402,7 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                 if vmin_img == vmax_img: vmax_img += 1e-6 
             else: vmin_img, vmax_img = 0, 1 
             im1 = ax1.imshow(img.T, vmin=vmin_img, vmax=vmax_img, cmap='bwr', origin='lower', aspect='auto', interpolation='nearest',
-                           extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]])
+                           extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]], rasterized=True)
             num_ticks = 5
             x_tick_labels_val = np.linspace(x_bins[0], x_bins[-1], num=num_ticks)
             y_tick_labels_val = np.linspace(y_bins[0], y_bins[-1], num=num_ticks)
@@ -1459,7 +1459,7 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
                 composite_img = composite_img / max(vmax_composite, 1e-9) 
             composite_img = np.clip(composite_img, 0, 1)
             ax2.imshow(composite_img, origin='lower', aspect='auto', interpolation='nearest',
-                       extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]]) 
+                       extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]], rasterized=True)
             ax2.set_xticks(x_tick_labels_val)
             ax2.set_xticklabels(np.round(x_tick_labels_val, 1)) 
             ax2.set_yticks(y_tick_labels_val)
@@ -1473,10 +1473,10 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
             ax2.grid(False)
             plot_pair_idx += 1 
     try:
-        plt.savefig(plot_path, dpi=300)
-        logger.info(f"Saved projection space density plot to {plot_path}")
+        plt.savefig(plot_path.replace('.png', '.pdf'), dpi=300, bbox_inches='tight')
+        logger.info(f"Saved projection space density plot to {plot_path.replace('.png', '.pdf')}")
     except Exception as e:
-        logger.error(f"Failed to save plot {plot_path}: {e}")
+        logger.error(f"Failed to save plot {plot_path.replace('.png', '.pdf')}: {e}")
     finally:
         plt.close(fig)
 
@@ -1505,7 +1505,7 @@ def generate_p_type_clustermaps(normalization_strategies, valid_type_labels, n_b
             plt.setp(cluster_fig.ax_heatmap.get_xticklabels(), rotation=90)
             plt.setp(cluster_fig.ax_heatmap.get_yticklabels(), rotation=0)
             
-            plot_path = os.path.join(output_dir, strategy['filename'])
+            plot_path = os.path.join(output_dir, strategy['filename'].replace('.png', '.pdf'))
             cluster_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
             log.info(f"Saved {strategy['name']} P_type clustermap for {global_name_str} to {plot_path}")
             
@@ -1543,7 +1543,7 @@ def generate_type_correlation_clustermaps(normalization_strategies, valid_type_l
             plt.setp(ax_corr.get_yticklabels(), rotation=0)
             corr_fig.tight_layout()
             
-            plot_path = os.path.join(output_dir, strategy['corr_filename'])
+            plot_path = os.path.join(output_dir, strategy['corr_filename'].replace('.png', '.pdf'))
             corr_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
             log.info(f"Saved {strategy['name']} type correlation clustermap for {global_name_str} to {plot_path}")
             
