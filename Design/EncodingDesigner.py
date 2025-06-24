@@ -1060,22 +1060,25 @@ class EncodingDesigner(nn.Module):
         for level_name, params in noise_levels.items():
             self.log.info(f"Calculating {level_name} Accuracy (Global)")
             try:
-                # Store original parameters
+                # Store original parameters and training state
                 original_params = {}
+                original_training_state = self.training
                 for param_name in params.keys():
                     original_params[param_name] = self.I[param_name]
+                
                 # Update parameters for this noise level
                 for param_name, param_value in params.items():
                     self.I[param_name] = param_value
+                
                 # Temporarily set to training mode so noise is applied
-                self.train()
+                self.training = True
                 with torch.no_grad():
                     E = self.get_E()
                     P_test = self.project(self.X_test, E)
                     y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f"{level_name} Accuracy: {round(avg_accuracy, 4)}")
-                    self.results[f'{level_name} Accuracy'] = avg_accuracy 
+                    self.results[f'{level_name} Accuracy'] = avg_accuracy
                     # Save P_test averages for "No Noise" condition
                     if level_name == "No Noise":
                         self.log.info("Saving P_test averages for No Noise condition...")
@@ -1111,12 +1114,16 @@ class EncodingDesigner(nn.Module):
                                 self.log.warning("No valid cell types found for P_test averages")
                         except Exception as e:
                             self.log.error(f"Error saving P_test averages for No Noise condition: {e}")
-                # Restore original parameters
+                
+                # Restore original parameters and training state
                 for param_name, original_value in original_params.items():
                     self.I[param_name] = original_value
+                self.training = original_training_state
             except Exception as e:
                 self.log.error(f"Error during {level_name} accuracy calculation: {e}")
                 self.results[f'{level_name} Accuracy'] = np.nan
+                # Ensure training state is restored even if there's an error
+                self.training = original_training_state
         # Set back to eval mode after all noise evaluations
         self.eval()
         results_df = pd.DataFrame({
@@ -1563,7 +1570,8 @@ def sum_normalize_p_type(P_type_data):
 def bitwise_center_p_type(P_type_data):
     """Bitwise center P_type data by median."""
     P_type_bit_center = P_type_data.clone()
-    P_type_bit_center = P_type_bit_center - P_type_bit_center.median(dim=0, keepdim=True)
+    median_values = P_type_bit_center.median(dim=0, keepdim=True).values  # Extract values from named tuple
+    P_type_bit_center = P_type_bit_center - median_values
     return P_type_bit_center
 
 def bitwise_normalize_p_type(P_type_data):
