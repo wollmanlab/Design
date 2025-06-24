@@ -54,7 +54,6 @@ class EncodingDesigner(nn.Module):
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
             'input': './',  # Input directory path
-            'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
             'decoder_n_lyr': 0,  # Number of hidden layers in decoder
             'decoder_h_dim': 128,  # Hidden dimension size in decoder
             'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
@@ -107,23 +106,22 @@ class EncodingDesigner(nn.Module):
         self.best_iteration = -1
 
     def _setup_logging(self, user_parameters_path):
-        temp_output_dir = self.I['output']
         if user_parameters_path is not None:
             try:
                 df_temp = pd.read_csv(user_parameters_path, index_col=0, low_memory=False)
                 if 'values' in df_temp.columns:
                     loaded_params_temp = dict(zip(df_temp.index, df_temp['values']))
-                    temp_output_dir = loaded_params_temp.get('output', temp_output_dir)
+                    self.I['output'] = loaded_params_temp.get('output', self.I['output'])
             except (FileNotFoundError, Exception):
                 pass
-        if not os.path.exists(temp_output_dir):
-            os.makedirs(temp_output_dir)
+        if not os.path.exists(self.I['output']):
+            os.makedirs(self.I['output'])
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         logging.basicConfig(level=logging.INFO) 
         input_filename = os.path.basename(user_parameters_path) if user_parameters_path else "default"
         input_filename = os.path.splitext(input_filename)[0]  
-        self.log_file = os.path.join(temp_output_dir, f'log_{input_filename}.log')
+        self.log_file = os.path.join(self.I['output'], f'log_{input_filename}.log')
         if os.path.exists(self.log_file):
             os.remove(self.log_file)
         logging.basicConfig(
@@ -197,14 +195,13 @@ class EncodingDesigner(nn.Module):
         torch.set_num_threads(self.I['n_cpu'])
 
     def _setup_output_and_symlinks(self, user_parameters_path):
-        output_dir = self.I['output'] 
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-            self.log.info(f"Created output directory: {output_dir}")
+        if not os.path.exists(self.I['output']):
+            os.makedirs(self.I['output'])
+            self.log.info(f"Created output directory: {self.I['output']}")
         param_df = pd.DataFrame({
             'values': list(self.I.values())
         }, index=pd.Index(list(self.I.keys())))
-        param_df.to_csv(os.path.join(output_dir, 'used_user_parameters.csv'))
+        param_df.to_csv(os.path.join(self.I['output'], 'used_user_parameters.csv'))
         # Create symlinks for input files
         self.log.info("Creating symlinks for input files in output directory...")
         input_files_to_link = []
@@ -216,7 +213,7 @@ class EncodingDesigner(nn.Module):
         # Add user parameter file and used parameters file to symlinks
         if user_parameters_path is not None and isinstance(user_parameters_path, str):
             input_files_to_link.append(user_parameters_path)
-            input_files_to_link.append(os.path.join(output_dir, 'used_user_parameters.csv'))
+            input_files_to_link.append(os.path.join(self.I['output'], 'used_user_parameters.csv'))
         # Create symlinks
         linked_count = 0
         skipped_count = 0
@@ -229,7 +226,7 @@ class EncodingDesigner(nn.Module):
                     skipped_count += 1
                     continue
                 filename = os.path.basename(abs_input_path)
-                symlink_path = os.path.join(output_dir, filename)
+                symlink_path = os.path.join(self.I['output'], filename)
                 if os.path.lexists(symlink_path): 
                     if os.path.islink(symlink_path):
                         self.log.debug(f"Removing existing symlink: \n {symlink_path}")
@@ -486,16 +483,13 @@ class EncodingDesigner(nn.Module):
         self.X_test = self.X_test[:, gene_mask]
         self.constraints = self.constraints[gene_mask]
         self.genes = self.genes[gene_mask.cpu().numpy()]
-        # Update number of genes
         self.n_genes = top_n_actual
-        # Save gene importance scores and gene mask
-        output_dir = self.I['output']
         gene_importance_df = pd.DataFrame({
             'gene_name': self.genes,
             'importance_score': gene_importance_scores[gene_mask].cpu().numpy()
         })
-        gene_importance_path = os.path.join(output_dir, 'gene_importance_scores.csv')
-        gene_mask_path = os.path.join(output_dir, 'gene_mask.pt')
+        gene_importance_path = os.path.join(self.I['output'], 'gene_importance_scores.csv')
+        gene_mask_path = os.path.join(self.I['output'], 'gene_mask.pt')
         gene_importance_df.to_csv(gene_importance_path, index=False)
         torch.save(gene_mask.cpu(), gene_mask_path)
         self.log.info(f"Gene importance scores saved to {gene_importance_path}")
@@ -513,7 +507,7 @@ class EncodingDesigner(nn.Module):
         ax2.set_ylabel('Accuracy')
         ax2.grid(True)
         plt.tight_layout()
-        training_plots_path = os.path.join(output_dir, 'gene_importance_decoder_training.png')
+        training_plots_path = os.path.join(self.I['output'], 'gene_importance_decoder_training.png')
         plt.savefig(training_plots_path, dpi=300, bbox_inches='tight')
         plt.close()
         self.log.info(f"Training plots saved to {training_plots_path}")
@@ -608,10 +602,8 @@ class EncodingDesigner(nn.Module):
 
     def decode(self, P, y):
         if self.I['sum_norm'] != 0:
-            # Normalize P to have sum of 1
             P = P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
         if self.I['bit_norm'] != 0:
-            # Normalize P to have mean 0 and std 1
             P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
         y_predict = R.max(1)[1]
@@ -834,22 +826,18 @@ class EncodingDesigner(nn.Module):
         red_start = "\033[91m"; reset_color = "\033[0m"
         log_msg_header = f"--- Iteration: {iteration}/{self.I['n_iters']} Eval (Global Test Set) ---"
         self.log.info(log_msg_header)
-        if self.I['Verbose'] == 1: print(f"{red_start}{log_msg_header}{reset_color}")
         log_msg_lr = f"Current LR: {self.I['lr']:.6f}"
         self.log.info(log_msg_lr)
-        if self.I['Verbose'] == 1: print(log_msg_lr)
         train_loss_key = 'total_loss_train' 
         if train_loss_key in self.learning_stats[str(iteration)]:
             log_msg = f'{train_loss_key}: {round(self.learning_stats[str(iteration)][train_loss_key], 4)}'
             self.log.info(log_msg)
-            if self.I['Verbose'] == 1: print(log_msg)
         for name, item in test_stats.items():
             if isinstance(item, (float, int, np.number)) and not np.isnan(item):
                 log_msg = f'{name}: {round(float(item), 4)}'
             else:
                 log_msg = f'{name}: {item}'
             self.log.info(log_msg)
-            if self.I['Verbose'] == 1: print(log_msg)
         self.log.info('------------------')
         
         return current_time, iteration
@@ -880,9 +868,7 @@ class EncodingDesigner(nn.Module):
                 self.log.error(f"Failed to load best model state before saving: {e}. Saving the final iteration state instead.")
         else:
             self.log.warning("No best model state was saved during training. Saving the final iteration state.")
-        
-        output_dir = self.I['output']
-        final_model_path = os.path.join(output_dir, 'final_model_state.pt')
+        final_model_path = os.path.join(self.I['output'], 'final_model_state.pt')
         try:
             torch.save(self.state_dict(), final_model_path)
             self.log.info(f"Final model state dictionary saved to {final_model_path}")
@@ -902,14 +888,12 @@ class EncodingDesigner(nn.Module):
         red_start = "\033[91m"; reset_color = "\033[0m"
         log_prefix = f"--- Final Eval Stats (Global Test Set) at {now_str} ---"
         self.log.info(log_prefix)
-        if self.I['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
         for name, item in self.learning_stats[final_iter_key].items():
             if isinstance(item, (float, int, np.number)) and not np.isnan(item):
                 log_msg = f'{name}: {round(float(item), 4)}'
             else:
                 log_msg = f'{name}: {item}'
             self.log.info(log_msg)
-            if self.I['Verbose'] == 1: print(log_msg)
         self.log.info('------------------')
         self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
         self.eval() 
@@ -928,15 +912,15 @@ class EncodingDesigner(nn.Module):
                 E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
                 E_final_constrained = E_final_constrained.clamp(min=0)
             self.E = E_final_constrained.clone().detach() 
-            e_csv_path = os.path.join(output_dir, 'E_constrained.csv')
-            e_pt_path = os.path.join(output_dir, 'E_constrained.pt')
+            e_csv_path = os.path.join(self.I['output'], 'E_constrained.csv')
+            e_pt_path = os.path.join(self.I['output'], 'E_constrained.pt')
             pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
             torch.save(self.E.cpu(), e_pt_path)
             self.log.info(f"Final constrained E matrix saved to {e_csv_path} and {e_pt_path}")
             self.log.info(f"Final constrained probe count: {self.E.sum().item():.2f}")
         try:
             learning_df = pd.DataFrame.from_dict(self.learning_stats, orient='index')
-            learning_curve_path = os.path.join(output_dir, 'learning_curve.csv')
+            learning_curve_path = os.path.join(self.I['output'], 'learning_curve.csv')
             learning_df.to_csv(learning_curve_path)
             self.log.info(f"Learning curve data saved to {learning_curve_path}")
         except Exception as e:
@@ -957,21 +941,17 @@ class EncodingDesigner(nn.Module):
         start_time = time.time()
         last_report_time = start_time
         last_report_iteration = 0
-        n_iterations = self.I['n_iters']
-        report_rt = self.I['report_rt']
-        batch_size = self.I['batch_size']
-        n_train_samples = self.X_train.shape[0]
         try:
-            for iteration in range(n_iterations):
-                self._update_parameters_for_iteration(iteration, n_iterations)
+            for iteration in range(self.I['n_iters']):
+                self._update_parameters_for_iteration(iteration, self.I['n_iters'])
                 self.learning_stats[str(iteration)] = {}
                 if iteration == 0:
                     self._setup_optimizer()
                 for param_group in self.optimizer_gen.param_groups: 
                     param_group['lr'] = self.I['lr']
-                is_report_iter = (iteration % report_rt == 0) or (iteration == n_iterations - 1) 
+                is_report_iter = (iteration % self.I['report_rt'] == 0) or (iteration == self.I['n_iters'] - 1) 
                 self.train() 
-                X_batch, y_batch = self._get_training_batch(iteration, batch_size, n_train_samples)
+                X_batch, y_batch = self._get_training_batch(iteration, self.I['batch_size'], self.X_train.shape[0])
                 self.optimizer_gen.zero_grad() 
                 total_loss, batch_stats = self.calculate_loss(
                     X_batch, y_batch, iteration, suffix='_train'
@@ -983,7 +963,7 @@ class EncodingDesigner(nn.Module):
                 if not nan_detected:
                     self._apply_gradient_clipping()
                     self.optimizer_gen.step()
-                    delayed_perturbation_iter = self._handle_weight_perturbation(iteration, report_rt, delayed_perturbation_iter)
+                    delayed_perturbation_iter = self._handle_weight_perturbation(iteration, self.I['report_rt'], delayed_perturbation_iter)
                     self._update_best_model(iteration, total_loss)
                     self._save_model_checkpoint(iteration, is_report_iter)
                 else: 
@@ -1039,12 +1019,9 @@ class EncodingDesigner(nn.Module):
             self.log.warning("Could not calculate average P_type for evaluation stats.")
         self.log.info("--- Basic Evaluation Stats ---")
         for key, val in self.results.items():
-            if isinstance(val, (float, int)):
-                log_msg = f" {key}: {round(val, 4)}"
-            else:
-                log_msg = f" {key}: {val}"
+            if isinstance(val, (float, int)): log_msg = f" {key}: {round(val, 4)}"
+            else: log_msg = f" {key}: {val}"
             self.log.info(log_msg)
-            if self.I['Verbose'] == 1: print(log_msg)
         self.log.info("-----------------------------")
         noise_levels = {
             "No Noise": {
@@ -1153,14 +1130,6 @@ class EncodingDesigner(nn.Module):
         results_path = os.path.join(self.I['output'], 'Results.csv') 
         results_df.to_csv(results_path)
         self.log.info(f"Evaluation results saved to {results_path}")
-        if self.I['Verbose'] == 1:
-            print("--- Evaluation Summary ---")
-            for key, val in self.results.items():
-                if isinstance(val, (float, int, np.number)) and not np.isnan(val):
-                    print(f" {key}: {round(float(val), 4)}")
-                else:
-                    print(f" {key}: {val}")
-            print("-------------------------------------------------")
 
     def visualize(self, show_plots=False): 
         self.log.info("Starting visualization generation...")
@@ -1169,8 +1138,6 @@ class EncodingDesigner(nn.Module):
            self.y_reverse_label_map is None : 
             self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
             return
-        current_device = self.I['device']
-        output_dir = self.I['output']
         saved_plot_paths = []
         # Use get_E() to get proper encoding weights with sigmoid and constraints
         E = self.get_E()
@@ -1225,7 +1192,7 @@ class EncodingDesigner(nn.Module):
                     plt.setp(ax_corr.get_yticklabels(), rotation=0)
                     fig_corr.tight_layout()
                     plot_filename = f"type_correlation_heatmap_{global_fname_safe}.png"
-                    plot_path = os.path.join(output_dir, plot_filename)
+                    plot_path = os.path.join(self.I['output'], plot_filename)
                     fig_corr.savefig(plot_path, dpi=300, bbox_inches='tight')
                     saved_plot_paths.append(plot_path) 
                     self.log.info(f"Saved Type Correlation plot for {global_name_str} to {plot_path}")
@@ -1256,7 +1223,7 @@ class EncodingDesigner(nn.Module):
                     plt.setp(cluster_fig.ax_heatmap.get_xticklabels(), rotation=90) 
                     plt.setp(cluster_fig.ax_heatmap.get_yticklabels(), rotation=0) 
                     plot_filename = f"P_type_clustermap_{global_fname_safe}.png"
-                    plot_path = os.path.join(output_dir, plot_filename)
+                    plot_path = os.path.join(self.I['output'], plot_filename)
                     cluster_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
                     saved_plot_paths.append(plot_path) 
                     self.log.info(f"Saved P_type clustermap for {global_name_str} to {plot_path}")
@@ -1269,7 +1236,7 @@ class EncodingDesigner(nn.Module):
                 self.log.warning(f"Skipping P_type plot for {global_name_str}: No cell types present.")
             if n_types_present > 0 and n_bits >= 2:
                 plot_filename = f"projection_density_plot_{global_fname_safe}.png"
-                plot_path = os.path.join(output_dir, plot_filename)
+                plot_path = os.path.join(self.I['output'], plot_filename)
                 try:
                     y_vis_str_labels = np.array([self.y_reverse_label_map.get(int(idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
                     # Use the proper encoding weights for the projection density plot
@@ -1314,7 +1281,7 @@ class EncodingDesigner(nn.Module):
                     plt.setp(ax_cm.get_yticklabels(), rotation=0)
                     fig_cm.tight_layout()
                     plot_filename = f"confusion_matrix_test_{global_fname_safe}.png"
-                    plot_path = os.path.join(output_dir, plot_filename)
+                    plot_path = os.path.join(self.I['output'], plot_filename)
                     fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
                     saved_plot_paths.append(plot_path)
                     self.log.info(f"Saved Test Confusion Matrix for {global_name_str} to {plot_path}")
@@ -1345,7 +1312,7 @@ class EncodingDesigner(nn.Module):
                 plt.yscale('log')
             plt.legend()
             plt.tight_layout()
-            plt.savefig(os.path.join(output_dir, f"learning_curve_{parameter}.png"))
+            plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.png"))
             plt.close()
         self.log.info("Visualization generation finished.")
 

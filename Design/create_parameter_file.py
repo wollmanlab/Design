@@ -65,7 +65,6 @@ user_parameters = {
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
             'input': './',  # Input directory path
-            'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
             'decoder_n_lyr': 0,  # Number of hidden layers in decoder
             'decoder_h_dim': 64,  # Hidden dimension size in decoder
             'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
