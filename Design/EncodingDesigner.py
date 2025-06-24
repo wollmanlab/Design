@@ -1176,35 +1176,6 @@ class EncodingDesigner(nn.Module):
                 return
             P_type_global_present = P_type_global[valid_type_indices].cpu() 
             n_types_present = P_type_global_present.shape[0]
-            if n_types_present > 1:
-                P_type_centered = P_type_global_present - P_type_global_present.mean(dim=1, keepdim=True)
-                P_type_std = P_type_centered.std(dim=1, keepdim=True).clamp(min=1e-6)
-                P_type_norm = P_type_centered / P_type_std
-                correlation_matrix = (P_type_norm @ P_type_norm.T / n_bits).numpy() 
-                corr_df = pd.DataFrame(correlation_matrix, index=pd.Index(valid_type_labels), columns=pd.Index(valid_type_labels))
-                fig_corr = None 
-                try:
-                    fig_width = min(max(8, n_types_present / 1.5), 25)
-                    fig_height = min(max(6, n_types_present / 2), 25)
-                    fig_corr = plt.figure(figsize=(fig_width, fig_height))
-                    ax_corr = fig_corr.add_subplot(111) 
-                    sns.heatmap(corr_df, annot=False, cmap='vlag', fmt=".2f", vmin=-1, vmax=1, center=0, linewidths=.5, ax=ax_corr, cbar=True) 
-                    ax_corr.set_title(f"Type Correlation Matrix - {global_name_str}") 
-                    plt.setp(ax_corr.get_xticklabels(), rotation=45, ha='right')
-                    plt.setp(ax_corr.get_yticklabels(), rotation=0)
-                    fig_corr.tight_layout()
-                    plot_filename = f"type_correlation_heatmap_{global_fname_safe}.pdf"
-                    plot_path = os.path.join(self.I['output'], plot_filename)
-                    fig_corr.savefig(plot_path, dpi=300, bbox_inches='tight')
-                    saved_plot_paths.append(plot_path) 
-                    self.log.info(f"Saved Type Correlation plot for {global_name_str} to {plot_path}")
-                except Exception as e:
-                    self.log.error(f"Error generating Type Correlation heatmap for {global_name_str}: {e}")
-                finally:
-                    if fig_corr is not None:
-                        plt.close(fig_corr) 
-            else:
-                self.log.warning(f"Skipping correlation plot for {global_name_str}: Only {n_types_present} cell type(s) present.")
             if n_types_present > 0:
                 # Compute all normalization strategies once
                 normalization_strategies = [
@@ -1259,10 +1230,10 @@ class EncodingDesigner(nn.Module):
                 ]
                 
                 # Generate all P_type clustermaps with different normalization strategies
-                generate_p_type_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
+                plot_P_Type(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
                 
                 # Generate all type correlation clustermaps with different normalization strategies
-                generate_type_correlation_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
+                plot_P_Type_correlation(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
             else:
                 self.log.warning(f"Skipping P_type plot for {global_name_str}: No cell types present.")
             if n_types_present > 0 and n_bits >= 2:
@@ -1305,9 +1276,8 @@ class EncodingDesigner(nn.Module):
                     fig_cm = plt.figure(figsize=(fig_width, fig_height))
                     ax_cm = fig_cm.add_subplot(111)
                     sns.heatmap(cm_df, annot=False, cmap='jet', linewidths=0.1, ax=ax_cm, vmin=0, vmax=1) 
-                    ax_cm.set_xlabel('Predicted Label')
-                    ax_cm.set_ylabel('True Label')
-                    ax_cm.set_title(f'Confusion Matrix (Test Set) - {global_name_str}')
+                    ax_cm.set_xlabel('Predicted')
+                    ax_cm.set_ylabel('True')
                     plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
                     plt.setp(ax_cm.get_yticklabels(), rotation=0)
                     fig_cm.tight_layout()
@@ -1337,7 +1307,9 @@ class EncodingDesigner(nn.Module):
             plt.scatter(x,y1,label='Train',s=1, alpha=0.6, rasterized=True)
             plt.scatter(x,y2,label='Test',c='orange',s=1, alpha=0.6, rasterized=True)
             plt.xlabel('Epoch')
-            plt.ylabel(parameter)
+            # Format parameter name for better readability
+            param_display = parameter.replace('_', ' ').title()
+            plt.ylabel(param_display)
             plt.ylim(y_min,y_max)
             if parameter in ['total_loss','categorical_loss','probe_wt_loss','gene_constraint_loss','median brightness','n_probes']:
                 plt.yscale('log')
@@ -1487,43 +1459,49 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
     finally:
         plt.close(fig)
 
-def generate_p_type_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
-    """Generate P_type clustermaps with pre-computed normalization strategies."""
+def plot_P_Type(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
+    """Generate P_type heatmaps with pre-computed normalization strategies."""
     fig_width = min(max(6, n_bits / 1.5), 25)
     fig_height = min(max(6, len(valid_type_labels) / 2), 25)
     
     for strategy in normalization_strategies:
-        cluster_fig = None
+        heatmap_fig = None
         try:
-            p_type_df = pd.DataFrame(strategy['data'].numpy(),
-                                     index=pd.Index(valid_type_labels),
+            # Sort cell types alphabetically
+            sorted_indices = np.argsort(valid_type_labels)
+            sorted_labels = [valid_type_labels[i] for i in sorted_indices]
+            sorted_data = strategy['data'][sorted_indices]
+            
+            p_type_df = pd.DataFrame(sorted_data.numpy(),
+                                     index=pd.Index(sorted_labels),
                                      columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
             
-            cluster_fig = sns.clustermap(p_type_df,
-                                         cmap=strategy['cmap'],
-                                         figsize=(fig_width, fig_height),
-                                         linewidths=0.1,
-                                         dendrogram_ratio=(.2, .2),
-                                         center=strategy['center']
-                                         )
-            cluster_fig.fig.suptitle(f"{strategy['name']} P_type - {global_name_str}", y=1.02)
-            cluster_fig.ax_heatmap.set_xlabel("Projection Bit")
-            cluster_fig.ax_heatmap.set_ylabel("Cell Type (Clustered)")
-            plt.setp(cluster_fig.ax_heatmap.get_xticklabels(), rotation=90)
-            plt.setp(cluster_fig.ax_heatmap.get_yticklabels(), rotation=0)
+            heatmap_fig = plt.figure(figsize=(fig_width, fig_height))
+            ax_heatmap = heatmap_fig.add_subplot(111)
+            sns.heatmap(p_type_df, 
+                       cmap=strategy['cmap'],
+                       center=strategy['center'],
+                       linewidths=0.1,
+                       ax=ax_heatmap,
+                       cbar=True)
+            # ax_heatmap.set_title(f"{strategy['name']} P_type - {global_name_str}")
+            ax_heatmap.set_xlabel("Bit")
+            ax_heatmap.set_ylabel("Cell Type")
+            plt.setp(ax_heatmap.get_xticklabels(), rotation=90)
+            plt.setp(ax_heatmap.get_yticklabels(), rotation=0)
             
             plot_path = os.path.join(output_dir, strategy['filename'].replace('.png', '.pdf'))
-            cluster_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-            log.info(f"Saved {strategy['name']} P_type clustermap for {global_name_str} to {plot_path}")
+            heatmap_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+            log.info(f"Saved {strategy['name']} P_type heatmap for {global_name_str} to {plot_path}")
             
         except Exception as e:
-            log.error(f"Error generating {strategy['name']} P_type clustermap for {global_name_str}: {e}")
+            log.error(f"Error generating {strategy['name']} P_type heatmap for {global_name_str}: {e}")
         finally:
-            if cluster_fig is not None:
-                plt.close(cluster_fig.fig)
+            if heatmap_fig is not None:
+                plt.close(heatmap_fig)
 
-def generate_type_correlation_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
-    """Generate type-by-type correlation clustermaps with pre-computed normalization strategies."""
+def plot_P_Type_correlation(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
+    """Generate type-by-type correlation heatmaps with pre-computed normalization strategies."""
     fig_width = min(max(8, len(valid_type_labels) / 1.5), 25)
     fig_height = min(max(6, len(valid_type_labels) / 2), 25)
     
@@ -1537,25 +1515,32 @@ def generate_type_correlation_clustermaps(normalization_strategies, valid_type_l
             P_type_norm_corr = P_type_centered / P_type_std
             correlation_matrix = (P_type_norm_corr @ P_type_norm_corr.T / n_bits).numpy()
             
-            corr_df = pd.DataFrame(correlation_matrix, 
-                                  index=pd.Index(valid_type_labels), 
-                                  columns=pd.Index(valid_type_labels))
+            # Sort cell types alphabetically
+            sorted_indices = np.argsort(valid_type_labels)
+            sorted_labels = [valid_type_labels[i] for i in sorted_indices]
+            sorted_correlation_matrix = correlation_matrix[sorted_indices][:, sorted_indices]
+            
+            corr_df = pd.DataFrame(sorted_correlation_matrix, 
+                                  index=pd.Index(sorted_labels), 
+                                  columns=pd.Index(sorted_labels))
             
             corr_fig = plt.figure(figsize=(fig_width, fig_height))
             ax_corr = corr_fig.add_subplot(111)
             sns.heatmap(corr_df, annot=False, cmap='vlag', fmt=".2f", 
                        vmin=-1, vmax=1, center=0, linewidths=.5, ax=ax_corr, cbar=True)
-            ax_corr.set_title(f"Type Correlation Matrix - {strategy['name']} - {global_name_str}")
+            # ax_corr.set_title(f"Type Correlation Matrix - {strategy['name']} - {global_name_str}")
+            ax_corr.set_xlabel("Cell Type")
+            ax_corr.set_ylabel("Cell Type")
             plt.setp(ax_corr.get_xticklabels(), rotation=45, ha='right')
             plt.setp(ax_corr.get_yticklabels(), rotation=0)
             corr_fig.tight_layout()
             
             plot_path = os.path.join(output_dir, strategy['corr_filename'].replace('.png', '.pdf'))
             corr_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-            log.info(f"Saved {strategy['name']} type correlation clustermap for {global_name_str} to {plot_path}")
+            log.info(f"Saved {strategy['name']} type correlation heatmap for {global_name_str} to {plot_path}")
             
         except Exception as e:
-            log.error(f"Error generating {strategy['name']} type correlation clustermap for {global_name_str}: {e}")
+            log.error(f"Error generating {strategy['name']} type correlation heatmap for {global_name_str}: {e}")
         finally:
             if corr_fig is not None:
                 plt.close(corr_fig)
