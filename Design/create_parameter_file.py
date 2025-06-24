@@ -97,7 +97,7 @@ user_parameters = {
             'P_add_s': 0.0,  # Initial constant noise level (log10 scale)
             'P_add_e': 2.0,  # Final constant noise level (log10 scale)
             # Weight perturbation parameters
-            'E_perturb_rt': 250,  # How often to perturb weights (every N iterations)
+            'E_perturb_rt': 1000,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
             'E_init_min': 0.01,  # Minimum probe fraction for initialization
             'E_init_max': 0.25,  # Maximum probe fraction for initialization
