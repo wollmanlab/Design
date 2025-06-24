@@ -46,7 +46,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 25000,  # Total number of training iterations
+            'n_iters': 100000,  # Total number of training iterations
             'batch_size': 2500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
@@ -78,12 +78,12 @@ user_parameters = {
             'X_drp_s': 0.0,  # Initial proportion of genes to drop out
             'X_drp_e': 0.0,  # Final proportion of genes to drop out
             'X_noise_s': 0.0,  # Initial gene expression fold noise level
-            'X_noise_e': 0.5,  # Final gene expression fold noise level
+            'X_noise_e': 0.0,  # Final gene expression fold noise level
             # Weight-level noise parameters
             'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
-            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out
+            'E_drp_e': 0.0,  # Final proportion of encoding weights to drop out
             'E_noise_s': 0.0,  # Initial encoding weight fold noise level
-            'E_noise_e': 0.1,  # Final encoding weight fold noise level
+            'E_noise_e': 0.0,  # Final encoding weight fold noise level
             # Projection-level noise parameters
             'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
             'P_drp_e': 0.0,  # Final proportion of projection values to drop out
@@ -94,14 +94,14 @@ user_parameters = {
             'D_drp_e': 0.0,  # Final decoder dropout rate
             # Constant noise parameters
             'P_add_s': 0.0,  # Initial constant noise level (log10 scale)
-            'P_add_e': 2.0,  # Final constant noise level (log10 scale)
+            'P_add_e': 0.0,  # Final constant noise level (log10 scale)
             # Weight perturbation parameters
-            'E_perturb_rt': 1000,  # How often to perturb weights (every N iterations)
+            'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
             'E_init_min': 0.01,  # Minimum probe fraction for initialization
             'E_init_max': 0.25,  # Maximum probe fraction for initialization
             'E_perturb_min': 0.05,  # Minimum probe fraction for perturbation
-            'E_perturb_max': 0.5,  # Maximum probe fraction for perturbation
+            'E_perturb_max': 0.25,  # Maximum probe fraction for perturbation
             # Activation and normalization parameters
             'encoder_act':'tanh',  # Activation function for encoding weights
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
@@ -111,59 +111,84 @@ user_parameters = {
 
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
-parameter_variants = {
-    'n_iters':[10000],
-    'decoder_n_lyr':[0,1,2,3],
-    }
+parameter_variant_list = [{'n_iters':[500]}]
+# parameter_variant_list = [
+#     {
+#         'X_drp_e':[0.0,0.05,0.1,0.2,0.5],
+#     },
+#     {
+#         'X_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
+#     },
+#     {
+#         'E_drp_e':[0.0,0.05,0.1,0.2,0.5],
+#     },
+#     {
+#         'E_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
+#     },
+#     {
+#         'P_drp_e':[0.0,0.05,0.1,0.2,0.5],
+#     },
+#     {
+#         'P_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
+#     },
+#     {
+#         'P_add_e':[0.0,0.5,1.0,2.0,3.0,3.5,4.0],
+#     }
+# ]
 
-# Generate all parameter combinations
-param_names = list(parameter_variants.keys())
-param_values = list(parameter_variants.values())
 
-# Generate all combinations of parameter values
-combinations = list(itertools.product(*param_values))
-for i, combination in enumerate(combinations):
-    # Create a copy of default parameters
-    current_params = user_parameters.copy()
-    
-    # Update with current combination
-    param_desc_list = [] # Use a list to build description parts
-    for j, param_name in enumerate(param_names):
-        current_params[param_name] = combination[j]
-        # Sanitize parameter values for filename (e.g., replace dots with 'p')
-        value_str = str(combination[j]).replace('.', 'p')
-        param_desc_list.append(f"{param_name}_{value_str}")
-    
-    # Check if learning_rate_e is greater than learning_rate_s
-    if current_params['lr_e'] > current_params['lr_s']:
-        # If end is greater than start, make end equal to start
-        current_params['lr_e'] = current_params['lr_s']
-        # Add this adjustment to the parameter description
-        param_desc_list.append(f"lr_e_adjusted")
+total_combinations = []
+for parameter_variants in parameter_variant_list:
+    # Generate all parameter combinations
+    param_names = list(parameter_variants.keys())
+    param_values = list(parameter_variants.values())
 
-    # Create a unique identifier for the run based on combination and perhaps a timestamp or run_dir
-    # The 'output' directory will be specific to each run.
-    # We can base it on the param_desc_list and the main run_dir.
-    
-    run_specific_identifier = '_'.join(param_desc_list)
-    
-    # Create the base name for the parameter file and the corresponding output directory.
-    # This ensures consistency with how sub_multi_param_file_optimization.sh constructs paths.
-    param_file_name_base = f"params_{run_specific_identifier}" 
-    
-    # Update the 'output' path to be unique for this parameter combination.
-    # This path will be written into the CSV and is what EncodingDesigner.py will use.
-    # It should be: <base_dir>/design_results/params_<run_specific_identifier>
-    correct_output_dir = os.path.join(base_dir, 'design_results', param_file_name_base)
-    current_params['output'] = correct_output_dir
-    
-    # Create this directory. The .sh script might also try to create it (mkdir -p handles this).
-    os.makedirs(correct_output_dir, exist_ok=True)
+    # Generate all combinations of parameter values
+    combinations = list(itertools.product(*param_values))
+    total_combinations.extend(combinations)
+    for i, combination in enumerate(combinations):
+        # Create a copy of default parameters
+        current_params = user_parameters.copy()
+        
+        # Update with current combination
+        param_desc_list = [] # Use a list to build description parts
+        for j, param_name in enumerate(param_names):
+            current_params[param_name] = combination[j]
+            # Sanitize parameter values for filename (e.g., replace dots with 'p')
+            value_str = str(combination[j]).replace('.', 'p')
+            param_desc_list.append(f"{param_name}_{value_str}")
+        
+        # Check if learning_rate_e is greater than learning_rate_s
+        if current_params['lr_e'] > current_params['lr_s']:
+            # If end is greater than start, make end equal to start
+            current_params['lr_e'] = current_params['lr_s']
+            # Add this adjustment to the parameter description
+            param_desc_list.append(f"lr_e_adjusted")
 
-    # Define the full path for the CSV parameter file, which goes into 'params_files_to_scan'
-    fullfilepath = os.path.join(input_param_path, f"{param_file_name_base}.csv")
-    
-    # Save parameter file
-    pd.DataFrame(current_params.values(), index=pd.Index(current_params.keys()), columns=pd.Index(['values'])).to_csv(fullfilepath)
+        # Create a unique identifier for the run based on combination and perhaps a timestamp or run_dir
+        # The 'output' directory will be specific to each run.
+        # We can base it on the param_desc_list and the main run_dir.
+        
+        run_specific_identifier = '_'.join(param_desc_list)
+        
+        # Create the base name for the parameter file and the corresponding output directory.
+        # This ensures consistency with how sub_multi_param_file_optimization.sh constructs paths.
+        param_file_name_base = f"params_{run_specific_identifier}" 
+        
+        # Update the 'output' path to be unique for this parameter combination.
+        # This path will be written into the CSV and is what EncodingDesigner.py will use.
+        # It should be: <base_dir>/design_results/params_<run_specific_identifier>
+        correct_output_dir = os.path.join(base_dir, 'design_results', param_file_name_base)
+        current_params['output'] = correct_output_dir
+        
+        # Create this directory. The .sh script might also try to create it (mkdir -p handles this).
+        os.makedirs(correct_output_dir, exist_ok=True)
 
-print(f"Generated {len(combinations)} parameter files in {input_param_path}")
+        # Define the full path for the CSV parameter file, which goes into 'params_files_to_scan'
+        fullfilepath = os.path.join(input_param_path, f"{param_file_name_base}.csv")
+        
+        # Save parameter file
+        pd.DataFrame(current_params.values(), index=pd.Index(current_params.keys()), columns=pd.Index(['values'])).to_csv(fullfilepath)
+
+    print(f"Generated {len(combinations)} parameter files in {input_param_path}")
+print(f"Generated {len(total_combinations)} parameter files in {input_param_path}")
