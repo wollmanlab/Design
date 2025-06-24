@@ -133,7 +133,7 @@ class EncodingDesigner(nn.Module):
             os.remove(self.log_file)
         logging.basicConfig(
             filename=self.log_file, filemode='a',
-            format='%(asctime)s %(name)s %(levelname)s\n%(message)s',
+            format='          %(asctime)s %(name)s %(levelname)s\n%(message)s',
             datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
         self.log = logging.getLogger("Designer")
 
