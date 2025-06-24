@@ -1199,34 +1199,63 @@ class EncodingDesigner(nn.Module):
             else:
                 self.log.warning(f"Skipping correlation plot for {global_name_str}: Only {n_types_present} cell type(s) present.")
             if n_types_present > 0:
-                p_type_df = pd.DataFrame(P_type_global_present.clamp(min=1).log10().numpy(), 
-                                         index=pd.Index(valid_type_labels),
-                                         columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
-                cluster_fig = None 
-                try:
-                    fig_width = min(max(6, n_bits / 1.5), 25)
-                    fig_height = min(max(6, n_types_present / 2), 25)
-                    cluster_fig = sns.clustermap(p_type_df,
-                                                 cmap="inferno", 
-                                                 figsize=(fig_width, fig_height),
-                                                 linewidths=0.1,
-                                                 dendrogram_ratio=(.2, .2) 
-                                                 )
-                    cluster_fig.fig.suptitle(f"Average Projection (P_type) - {global_name_str}", y=1.02) 
-                    cluster_fig.ax_heatmap.set_xlabel("Projection Bit")
-                    cluster_fig.ax_heatmap.set_ylabel("Cell Type (Clustered)")
-                    plt.setp(cluster_fig.ax_heatmap.get_xticklabels(), rotation=90) 
-                    plt.setp(cluster_fig.ax_heatmap.get_yticklabels(), rotation=0) 
-                    plot_filename = f"P_type_clustermap_{global_fname_safe}.png"
-                    plot_path = os.path.join(self.I['output'], plot_filename)
-                    cluster_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-                    saved_plot_paths.append(plot_path) 
-                    self.log.info(f"Saved P_type clustermap for {global_name_str} to {plot_path}")
-                except Exception as e:
-                    self.log.error(f"Error generating P_type clustermap for {global_name_str}: {e}")
-                finally:
-                    if cluster_fig is not None:
-                        plt.close(cluster_fig.fig)
+                # Compute all normalization strategies once
+                normalization_strategies = [
+                    {
+                        'name': 'Raw',
+                        'data': P_type_global_present.clamp(min=1).log10(),
+                        'cmap': 'inferno',
+                        'center': None,
+                        'filename': f"P_type_clustermap_{global_fname_safe}.png",
+                        'corr_filename': f"type_correlation_raw_{global_fname_safe}.png"
+                    },
+                    {
+                        'name': 'Sum Norm',
+                        'data': sum_normalize_p_type(P_type_global_present).clamp(min=1).log10(),
+                        'cmap': 'inferno',
+                        'center': None,
+                        'filename': f"P_type_clustermap_sum_norm_{global_fname_safe}.png",
+                        'corr_filename': f"type_correlation_sum_norm_{global_fname_safe}.png"
+                    },
+                    {
+                        'name': 'Bit Center',
+                        'data': bitwise_center_p_type(P_type_global_present),
+                        'cmap': 'coolwarm',
+                        'center': 0,
+                        'filename': f"P_type_clustermap_bit_center_{global_fname_safe}.png",
+                        'corr_filename': f"type_correlation_bit_center_{global_fname_safe}.png"
+                    },
+                    {
+                        'name': 'Bit Z-score',
+                        'data': bitwise_normalize_p_type(P_type_global_present),
+                        'cmap': 'coolwarm',
+                        'center': 0,
+                        'filename': f"P_type_clustermap_bit_zscore_{global_fname_safe}.png",
+                        'corr_filename': f"type_correlation_bit_zscore_{global_fname_safe}.png"
+                    },
+                    {
+                        'name': 'Sum and Bit Center',
+                        'data': bitwise_center_p_type(sum_normalize_p_type(P_type_global_present)),
+                        'cmap': 'coolwarm',
+                        'center': 0,
+                        'filename': f"P_type_clustermap_sum_bit_center_{global_fname_safe}.png",
+                        'corr_filename': f"type_correlation_sum_bit_center_{global_fname_safe}.png"
+                    },
+                    {
+                        'name': 'Sum and Bit Z-score',
+                        'data': bitwise_normalize_p_type(sum_normalize_p_type(P_type_global_present)),
+                        'cmap': 'coolwarm',
+                        'center': 0,
+                        'filename': f"P_type_clustermap_sum_bit_zscore_{global_fname_safe}.png",
+                        'corr_filename': f"type_correlation_sum_bit_zscore_{global_fname_safe}.png"
+                    }
+                ]
+                
+                # Generate all P_type clustermaps with different normalization strategies
+                generate_p_type_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
+                
+                # Generate all type correlation clustermaps with different normalization strategies
+                generate_type_correlation_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
             else:
                 self.log.warning(f"Skipping P_type plot for {global_name_str}: No cell types present.")
             if n_types_present > 0 and n_bits >= 2:
@@ -1450,6 +1479,98 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
         logger.error(f"Failed to save plot {plot_path}: {e}")
     finally:
         plt.close(fig)
+
+def generate_p_type_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
+    """Generate P_type clustermaps with pre-computed normalization strategies."""
+    fig_width = min(max(6, n_bits / 1.5), 25)
+    fig_height = min(max(6, len(valid_type_labels) / 2), 25)
+    
+    for strategy in normalization_strategies:
+        cluster_fig = None
+        try:
+            p_type_df = pd.DataFrame(strategy['data'].numpy(),
+                                     index=pd.Index(valid_type_labels),
+                                     columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
+            
+            cluster_fig = sns.clustermap(p_type_df,
+                                         cmap=strategy['cmap'],
+                                         figsize=(fig_width, fig_height),
+                                         linewidths=0.1,
+                                         dendrogram_ratio=(.2, .2),
+                                         center=strategy['center']
+                                         )
+            cluster_fig.fig.suptitle(f"{strategy['name']} P_type - {global_name_str}", y=1.02)
+            cluster_fig.ax_heatmap.set_xlabel("Projection Bit")
+            cluster_fig.ax_heatmap.set_ylabel("Cell Type (Clustered)")
+            plt.setp(cluster_fig.ax_heatmap.get_xticklabels(), rotation=90)
+            plt.setp(cluster_fig.ax_heatmap.get_yticklabels(), rotation=0)
+            
+            plot_path = os.path.join(output_dir, strategy['filename'])
+            cluster_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+            log.info(f"Saved {strategy['name']} P_type clustermap for {global_name_str} to {plot_path}")
+            
+        except Exception as e:
+            log.error(f"Error generating {strategy['name']} P_type clustermap for {global_name_str}: {e}")
+        finally:
+            if cluster_fig is not None:
+                plt.close(cluster_fig.fig)
+
+def generate_type_correlation_clustermaps(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
+    """Generate type-by-type correlation clustermaps with pre-computed normalization strategies."""
+    fig_width = min(max(8, len(valid_type_labels) / 1.5), 25)
+    fig_height = min(max(6, len(valid_type_labels) / 2), 25)
+    
+    for strategy in normalization_strategies:
+        corr_fig = None
+        try:
+            # Calculate correlation matrix
+            P_type_norm = strategy['data']
+            P_type_centered = P_type_norm - P_type_norm.mean(dim=1, keepdim=True)
+            P_type_std = P_type_centered.std(dim=1, keepdim=True).clamp(min=1e-6)
+            P_type_norm_corr = P_type_centered / P_type_std
+            correlation_matrix = (P_type_norm_corr @ P_type_norm_corr.T / n_bits).numpy()
+            
+            corr_df = pd.DataFrame(correlation_matrix, 
+                                  index=pd.Index(valid_type_labels), 
+                                  columns=pd.Index(valid_type_labels))
+            
+            corr_fig = plt.figure(figsize=(fig_width, fig_height))
+            ax_corr = corr_fig.add_subplot(111)
+            sns.heatmap(corr_df, annot=False, cmap='vlag', fmt=".2f", 
+                       vmin=-1, vmax=1, center=0, linewidths=.5, ax=ax_corr, cbar=True)
+            ax_corr.set_title(f"Type Correlation Matrix - {strategy['name']} - {global_name_str}")
+            plt.setp(ax_corr.get_xticklabels(), rotation=45, ha='right')
+            plt.setp(ax_corr.get_yticklabels(), rotation=0)
+            corr_fig.tight_layout()
+            
+            plot_path = os.path.join(output_dir, strategy['corr_filename'])
+            corr_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+            log.info(f"Saved {strategy['name']} type correlation clustermap for {global_name_str} to {plot_path}")
+            
+        except Exception as e:
+            log.error(f"Error generating {strategy['name']} type correlation clustermap for {global_name_str}: {e}")
+        finally:
+            if corr_fig is not None:
+                plt.close(corr_fig)
+
+def sum_normalize_p_type(P_type_data):
+    """Sum normalize P_type data to average sum."""
+    P_type_sum_norm = P_type_data.clone()
+    avg_sum = P_type_sum_norm.sum(dim=1).mean()
+    P_type_sum_norm = P_type_sum_norm * (avg_sum / P_type_sum_norm.sum(dim=1, keepdim=True).clamp(min=1e-8))
+    return P_type_sum_norm
+
+def bitwise_center_p_type(P_type_data):
+    """Bitwise center P_type data by median."""
+    P_type_bit_center = P_type_data.clone()
+    P_type_bit_center = P_type_bit_center - P_type_bit_center.median(dim=0, keepdim=True)
+    return P_type_bit_center
+
+def bitwise_normalize_p_type(P_type_data):
+    """Bitwise z-score normalize P_type data."""
+    P_type_bit_norm = P_type_data.clone()
+    P_type_bit_norm = (P_type_bit_norm - P_type_bit_norm.mean(dim=0, keepdim=True)) / P_type_bit_norm.std(dim=0, keepdim=True).clamp(min=1e-8)
+    return P_type_bit_norm
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
