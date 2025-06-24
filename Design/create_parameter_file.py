@@ -76,19 +76,19 @@ user_parameters = {
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
             'X_drp_s': 0.0,  # Initial proportion of genes to drop out
-            'X_drp_e': 0.1,  # Final proportion of genes to drop out
+            'X_drp_e': 0.05,  # Final proportion of genes to drop out
             'X_noise_s': 0.0,  # Initial gene expression fold noise level
-            'X_noise_e': 0.1,  # Final gene expression fold noise level
+            'X_noise_e': 0.05,  # Final gene expression fold noise level
             # Weight-level noise parameters
             'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
-            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out
+            'E_drp_e': 0.05,  # Final proportion of encoding weights to drop out
             'E_noise_s': 0.0,  # Initial encoding weight fold noise level
-            'E_noise_e': 0.1,  # Final encoding weight fold noise level
+            'E_noise_e': 0.05,  # Final encoding weight fold noise level
             # Projection-level noise parameters
             'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
-            'P_drp_e': 0.1,  # Final proportion of projection values to drop out
+            'P_drp_e': 0.0,  # Final proportion of projection values to drop out
             'P_noise_s': 0.0,  # Initial projection fold noise level
-            'P_noise_e': 0.1,  # Final projection fold noise level
+            'P_noise_e': 0.05,  # Final projection fold noise level
             # Decoder-level noise parameters
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
@@ -121,6 +121,8 @@ parameter_variant_list = [
     }
 ]
 
+# add an option to have _s and _e be the same value
+same_se = False
 
 total_combinations = []
 for parameter_variants in parameter_variant_list:
@@ -138,10 +140,15 @@ for parameter_variants in parameter_variant_list:
         # Update with current combination
         param_desc_list = [] # Use a list to build description parts
         for j, param_name in enumerate(param_names):
-            current_params[param_name] = combination[j]
-            # Sanitize parameter values for filename (e.g., replace dots with 'p')
             value_str = str(combination[j]).replace('.', 'p')
-            param_desc_list.append(f"{param_name}_{value_str}")
+            if (same_se) & (param_name+'_s' in current_params.keys()):
+                current_params[param_name+'_s'] = combination[j]
+                current_params[param_name+'_e'] = combination[j]
+                param_desc_list.append(f"{param_name}_{value_str}_se")
+            else:
+                current_params[param_name] = combination[j]
+                param_desc_list.append(f"{param_name}_{value_str}")
+
         
         # Check if learning_rate_e is greater than learning_rate_s
         if current_params['lr_e'] > current_params['lr_s']:
