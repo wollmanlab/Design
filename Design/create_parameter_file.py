@@ -67,7 +67,7 @@ user_parameters = {
             'input': './',  # Input directory path
             'Verbose': 1,  # Verbosity level (0 = quiet, 1 = verbose)
             'decoder_n_lyr': 0,  # Number of hidden layers in decoder
-            'decoder_h_dim': 128,  # Hidden dimension size in decoder
+            'decoder_h_dim': 64,  # Hidden dimension size in decoder
             'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
             'constraints': 'constraints.csv',  # Path to gene constraints file
             'X_test': 'X_test.pt',  # Path to test features tensor
@@ -105,7 +105,7 @@ user_parameters = {
             'E_perturb_max': 0.5,  # Maximum probe fraction for perturbation
             # Activation and normalization parameters
             'encoder_act':'tanh',  # Activation function for encoding weights
-            'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
+            'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
             'bit_norm': 1,  # Whether to normalize projection by bit-wise statistics
         }
@@ -114,7 +114,7 @@ user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 parameter_variants = {
     'n_iters':[10000],
-    'top_n_genes':[1000, 2500,5000, 10000],
+    'decoder_n_lyr':[0,1,2,3],
     }
 
 # Generate all parameter combinations

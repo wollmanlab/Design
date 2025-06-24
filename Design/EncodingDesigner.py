@@ -473,6 +473,8 @@ class EncodingDesigner(nn.Module):
                 accuracies.append(accuracy.item())
             if (epoch + 1) % 50 == 0:
                 self.log.info(f"Gene importance decoder epoch {epoch+1}/1000, loss: {loss.item():.4f}, accuracy: {accuracy.item():.4f}")
+            if accuracy.item() > 0.99:
+                break
         # Extract gene importance scores from the trained weights
         with torch.no_grad():
             gene_importance_scores = torch.abs(decoder.weight).sum(dim=0)  # Sum across output classes
