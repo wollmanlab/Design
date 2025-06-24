@@ -111,31 +111,33 @@ user_parameters = {
 
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
+# For Testing
 parameter_variant_list = [{'n_iters':[500]}]
-# parameter_variant_list = [
-#     {
-#         'X_drp_e':[0.0,0.05,0.1,0.2,0.5],
-#     },
-#     {
-#         'X_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-#     },
-#     {
-#         'E_drp_e':[0.0,0.05,0.1,0.2,0.5],
-#     },
-#     {
-#         'E_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-#     },
-#     {
-#         'P_drp_e':[0.0,0.05,0.1,0.2,0.5],
-#     },
-#     {
-#         'P_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-#     },
-#     {
-#         'P_add_e':[0.0,0.5,1.0,2.0,3.0,3.5,4.0],
-#     }
-# ]
 
+
+parameter_variant_list = [
+    {
+        'X_drp_e':[0.0,0.05,0.1,0.2,0.5],
+    },
+    {
+        'X_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
+    },
+    {
+        'E_drp_e':[0.0,0.05,0.1,0.2,0.5],
+    },
+    {
+        'E_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
+    },
+    {
+        'P_drp_e':[0.0,0.05,0.1,0.2,0.5],
+    },
+    {
+        'P_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
+    },
+    {
+        'P_add_e':[0.0,0.5,1.0,2.0,3.0,3.5,4.0],
+    }
+]
 
 total_combinations = []
 for parameter_variants in parameter_variant_list:
