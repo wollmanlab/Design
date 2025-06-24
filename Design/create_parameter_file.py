@@ -76,19 +76,19 @@ user_parameters = {
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
             'X_drp_s': 0.0,  # Initial proportion of genes to drop out
-            'X_drp_e': 0.05,  # Final proportion of genes to drop out
+            'X_drp_e': 0.0,  # Final proportion of genes to drop out
             'X_noise_s': 0.0,  # Initial gene expression fold noise level
-            'X_noise_e': 0.05,  # Final gene expression fold noise level
+            'X_noise_e': 0.0,  # Final gene expression fold noise level
             # Weight-level noise parameters
             'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
-            'E_drp_e': 0.05,  # Final proportion of encoding weights to drop out
+            'E_drp_e': 0.0,  # Final proportion of encoding weights to drop out
             'E_noise_s': 0.0,  # Initial encoding weight fold noise level
-            'E_noise_e': 0.05,  # Final encoding weight fold noise level
+            'E_noise_e': 0.0,  # Final encoding weight fold noise level
             # Projection-level noise parameters
             'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
             'P_drp_e': 0.0,  # Final proportion of projection values to drop out
             'P_noise_s': 0.0,  # Initial projection fold noise level
-            'P_noise_e': 0.05,  # Final projection fold noise level
+            'P_noise_e': 0.0,  # Final projection fold noise level
             # Decoder-level noise parameters
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
@@ -116,13 +116,17 @@ parameter_variant_list = [{'n_iters':[500]}]
 
 
 parameter_variant_list = [
-    {
-        'replicate_count':[1,2,3,4,5,6,7,8,9,10]
-    }
+        {'X_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'X_noise':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'E_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'E_noise':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'P_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'P_noise':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'P_add':[0.0,1.0,2.0,2.5,3.0,3.5,4.0]},
 ]
 
 # add an option to have _s and _e be the same value
-same_se = False
+same_se = True
 
 total_combinations = []
 for parameter_variants in parameter_variant_list:
