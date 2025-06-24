@@ -954,8 +954,7 @@ class EncodingDesigner(nn.Module):
                 X_batch, y_batch = self._get_training_batch(iteration, self.I['batch_size'], self.X_train.shape[0])
                 self.optimizer_gen.zero_grad() 
                 total_loss, batch_stats = self.calculate_loss(
-                    X_batch, y_batch, iteration, suffix='_train'
-                )
+                    X_batch, y_batch, iteration, suffix='_train')
                 self.learning_stats[str(iteration)].update(batch_stats)
                 self.learning_stats[str(iteration)]['total_loss_train'] = total_loss.item()
                 total_loss.backward() 
@@ -1027,7 +1026,6 @@ class EncodingDesigner(nn.Module):
             "No Noise": {
                 'P_add': 0.0,
                 'E_noise': 0.0,
-                'E_noise': 0.0,
                 'P_noise': 0.0,
                 'X_drp': 0.0,
                 'P_drp': 0.0,
@@ -1035,30 +1033,27 @@ class EncodingDesigner(nn.Module):
             },
             "Low Noise": {
                 'P_add': 2.0,
-                'E_noise': 0.1,
                 'E_noise': 0.05,
                 'P_noise': 0.05,
-                'X_drp': 0.02,
-                'P_drp': 0.0,
-                'E_drp': 0.02
-            },
-            "Medium Noise": {
-                'P_add': 2.5,
-                'E_noise': 0.5,
-                'E_noise': 0.1,
-                'P_noise': 0.1,
                 'X_drp': 0.05,
                 'P_drp': 0.0,
                 'E_drp': 0.05
             },
-            "High Noise": {
-                'P_add': 3.0,
-                'E_noise': 1.0,
-                'E_noise': 0.2,
-                'P_noise': 0.2,
+            "Medium Noise": {
+                'P_add': 2.5,
+                'E_noise': 0.25,
+                'P_noise': 0.1,
                 'X_drp': 0.1,
                 'P_drp': 0.0,
                 'E_drp': 0.1
+            },
+            "High Noise": {
+                'P_add': 3.0,
+                'E_noise': 0.5,
+                'P_noise': 0.2,
+                'X_drp': 0.2,
+                'P_drp': 0.0,
+                'E_drp': 0.2
             }
         }
         self.eval()
