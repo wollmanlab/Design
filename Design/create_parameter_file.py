@@ -86,9 +86,9 @@ user_parameters = {
             'E_noise_e': 0.1,  # Final encoding weight fold noise level
             # Projection-level noise parameters
             'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
-            'P_drp_e': 0.0,  # Final proportion of projection values to drop out
+            'P_drp_e': 0.1,  # Final proportion of projection values to drop out
             'P_noise_s': 0.0,  # Initial projection fold noise level
-            'P_noise_e': 0.0,  # Final projection fold noise level
+            'P_noise_e': 0.1,  # Final projection fold noise level
             # Decoder-level noise parameters
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
