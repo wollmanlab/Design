@@ -708,19 +708,253 @@ class EncodingDesigner(nn.Module):
             total_loss = torch.tensor(total_loss)
         return total_loss, current_stats
 
+    def _update_parameters_for_iteration(self, iteration, n_iterations):
+        """Update parameters based on training progress."""
+        progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
+        parameters_to_update = [i.replace('_s', '') for i in self.I if i.endswith('_s')]
+        for param in parameters_to_update:
+            self.I[param] = (self.I[f'{param}_s'] + (self.I[f'{param}_e'] - self.I[f'{param}_s']) * progress)
+
+    def _setup_optimizer(self):
+        """Setup optimizer for training."""
+        if not self.is_initialized_from_file:
+            self.log.info("Model not initialized from file, using randomly initialized weights.")
+        else:
+            self.log.info("Using model loaded during initialization.")
+        self.to(self.I['device'])
+        optimizer_gen = torch.optim.Adam([
+            {'params': self.encoder.parameters(), 'lr': self.I['lr']},
+            {'params': self.decoder.parameters(), 'lr': self.I['lr']}
+        ])
+        self.optimizer_gen = optimizer_gen
+
+    def _get_training_batch(self, iteration, batch_size, n_train_samples):
+        """Get training batch for current iteration."""
+        if (batch_size > 0) and (batch_size < n_train_samples):
+            idxs = np.random.choice(n_train_samples, batch_size, replace=False)
+            X_batch = self.X_train[idxs]
+            y_batch = self.y_train[idxs]
+        else:  
+            X_batch = self.X_train
+            y_batch = self.y_train
+            if batch_size > 0:  
+                self.log.debug(f"Batch size {batch_size} >= dataset size {n_train_samples}. Using full dataset for iteration {iteration}.")
+        return X_batch, y_batch
+
+    def _check_gradient_health(self, iteration):
+        """Check for NaN or Inf values in gradients."""
+        nan_detected = False
+        for name, param in self.named_parameters():
+            if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
+                nan_detected = True
+                self.log.warning(f"NaNs or Infs detected in gradients of model parameter '{name}' at iteration {iteration}. Skipping step and attempting revert.")
+                self.optimizer_gen.zero_grad() 
+                break
+        return nan_detected
+
+    def _apply_gradient_clipping(self):
+        """Apply gradient clipping if enabled."""
+        max_norm_value = self.I.get('gradient_clip', 1.0) 
+        if max_norm_value > 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
+
+    def _handle_weight_perturbation(self, iteration, report_rt, delayed_perturbation_iter):
+        """Handle weight perturbation logic."""
+        if self.I['E_perturb_rt'] > 0:
+            if iteration % self.I['E_perturb_rt'] == 0:
+                next_test_iter = ((iteration // report_rt) + 1) * report_rt
+                if next_test_iter - iteration <= 50:
+                    self.log.info(f"Delaying weight perturbation from iteration {iteration} to after test at iteration {next_test_iter}")
+                    delayed_perturbation_iter = next_test_iter
+                else:
+                    self.perturb_E()
+        return delayed_perturbation_iter
+
+    def _update_best_model(self, iteration, total_loss):
+        """Update best model if current loss is better."""
+        current_loss_item = total_loss.item()
+        if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
+            self.best_loss = current_loss_item
+            self.best_model_state_dict = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
+            self.best_iteration = iteration
+            self.log.info(f"*** New best model found at iteration {iteration} (Train Loss: {self.best_loss:.4f}) ***")
+
+    def _save_model_checkpoint(self, iteration, is_report_iter):
+        """Save model checkpoint if needed."""
+        if is_report_iter or iteration == self.best_iteration:  
+            self.saved_models[iteration] = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
+            self.saved_optimizer_states[iteration] = self.optimizer_gen.state_dict()
+
+    def _revert_to_previous_state(self, iteration):
+        """Revert to previous model state when NaN/Inf detected."""
+        valid_iters = [k for k in self.saved_models if k < iteration]
+        if valid_iters:
+            revert_iter = max(valid_iters)
+            self.log.warning(f"Reverting model and optimizer to state from iteration {revert_iter}")
+            try:
+                self.load_state_dict(self.saved_models[revert_iter])
+                self.to(self.I['device'])
+                optimizer_gen = torch.optim.Adam([ # Re-init optimizer for the reverted state
+                    {'params': self.encoder.parameters(), 'lr': self.I['lr']},
+                    {'params': self.decoder.parameters(), 'lr': self.I['lr']}
+                ])
+                optimizer_gen.load_state_dict(self.saved_optimizer_states[revert_iter])
+                self.optimizer_gen = optimizer_gen
+                for state in self.optimizer_gen.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(self.I['device'])
+            except Exception as e:
+                self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
+                self.optimizer_gen = torch.optim.Adam([
+                    {'params': self.encoder.parameters(), 'lr': self.I['lr']},
+                    {'params': self.decoder.parameters(), 'lr': self.I['lr']}
+                ])
+            self.learning_stats[str(iteration)] = {} 
+            self.learning_stats[str(iteration)]['status'] = f'Reverted from NaN at {iteration}'
+            return True
+        else:
+            self.log.error(f"NaNs/Infs detected in gradients at iter {iteration}, but no previous state found. Stopping.")
+            raise ValueError("NaNs/Infs encountered and cannot revert.")
+
+    def _evaluate_on_test_set(self, iteration, last_report_time, last_report_iteration):
+        """Evaluate model on test set and log results."""
+        self.eval()
+        with torch.no_grad():
+            total_test_loss, test_stats = self.calculate_loss(
+                self.X_test, self.y_test, iteration, suffix='_test')
+            test_stats['total_loss_test'] = total_test_loss.item()
+            self.learning_stats[str(iteration)].update(test_stats)
+        current_time = time.time()
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elapsed_time = current_time - last_report_time
+        iterations_since_last = iteration - last_report_iteration + 1 
+        avg_iter_time = elapsed_time / iterations_since_last if iterations_since_last > 0 else 0
+        self.log.info(f"Avg time/iter since last report: {avg_iter_time:.4f} seconds")
+        red_start = "\033[91m"; reset_color = "\033[0m"
+        log_msg_header = f"--- Iteration: {iteration}/{self.I['n_iters']} Eval (Global Test Set) ---"
+        self.log.info(log_msg_header)
+        if self.I['Verbose'] == 1: print(f"{red_start}{log_msg_header}{reset_color}")
+        log_msg_lr = f"Current LR: {self.I['lr']:.6f}"
+        self.log.info(log_msg_lr)
+        if self.I['Verbose'] == 1: print(log_msg_lr)
+        train_loss_key = 'total_loss_train' 
+        if train_loss_key in self.learning_stats[str(iteration)]:
+            log_msg = f'{train_loss_key}: {round(self.learning_stats[str(iteration)][train_loss_key], 4)}'
+            self.log.info(log_msg)
+            if self.I['Verbose'] == 1: print(log_msg)
+        for name, item in test_stats.items():
+            if isinstance(item, (float, int, np.number)) and not np.isnan(item):
+                log_msg = f'{name}: {round(float(item), 4)}'
+            else:
+                log_msg = f'{name}: {item}'
+            self.log.info(log_msg)
+            if self.I['Verbose'] == 1: print(log_msg)
+        self.log.info('------------------')
+        
+        return current_time, iteration
+
+    def _cleanup_old_checkpoints(self, iteration):
+        """Remove old model checkpoints to save memory."""
+        if iteration > 20:
+            keys_to_delete = sorted([k for k in self.saved_models if k < iteration - 20 and k != 0 and k != self.best_iteration])
+            for key_to_del in keys_to_delete:
+                self.saved_models.pop(key_to_del, None)
+                self.saved_optimizer_states.pop(key_to_del, None)
+
+    def _save_final_model(self, start_time):
+        """Save final model and perform cleanup."""
+        if self.I['best_model'] == 0:
+            self.best_model_state_dict = None
+            self.log.info("Best model turned off. Saving the final iteration state.")
+        
+        if self.best_model_state_dict is not None:
+            self.log.info(f"Loading best model state from iteration {self.best_iteration} (Train Loss: {self.best_loss:.4f}) before final save.")
+            try:
+                missing_keys, unexpected_keys = self.load_state_dict(self.best_model_state_dict, strict=False)
+                if missing_keys: self.log.warning(f"Missing keys when loading best state_dict: {missing_keys}")
+                if unexpected_keys: self.log.warning(f"Unexpected keys when loading best state_dict: {unexpected_keys}")
+                self.to(self.I['device'])
+                self.log.info(f"Successfully loaded best model state for final saving.")
+            except Exception as e:
+                self.log.error(f"Failed to load best model state before saving: {e}. Saving the final iteration state instead.")
+        else:
+            self.log.warning("No best model state was saved during training. Saving the final iteration state.")
+        
+        output_dir = self.I['output']
+        final_model_path = os.path.join(output_dir, 'final_model_state.pt')
+        try:
+            torch.save(self.state_dict(), final_model_path)
+            self.log.info(f"Final model state dictionary saved to {final_model_path}")
+        except Exception as e:
+            self.log.error(f"Failed to save final model state: {e}")
+
+        self.eval()
+        final_iter_key = 'Final'
+        self.learning_stats[final_iter_key] = {}
+        with torch.no_grad():
+            total_final_loss, final_stats_dict = self.calculate_loss(
+                self.X_test, self.y_test, iteration="Final", suffix='_test'
+            )
+            self.learning_stats[final_iter_key].update(final_stats_dict)
+            self.learning_stats[final_iter_key]['total_loss_test_avg'] = total_final_loss.item()
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        red_start = "\033[91m"; reset_color = "\033[0m"
+        log_prefix = f"--- Final Eval Stats (Global Test Set) at {now_str} ---"
+        self.log.info(log_prefix)
+        if self.I['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
+        for name, item in self.learning_stats[final_iter_key].items():
+            if isinstance(item, (float, int, np.number)) and not np.isnan(item):
+                log_msg = f'{name}: {round(float(item), 4)}'
+            else:
+                log_msg = f'{name}: {item}'
+            self.log.info(log_msg)
+            if self.I['Verbose'] == 1: print(log_msg)
+        self.log.info('------------------')
+        self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
+        self.eval() 
+        with torch.no_grad():
+            E = self.get_E().detach().clone() 
+        self.log.info("Enforcing constraints on the final E matrix...")
+        if self.constraints is None:
+            self.log.error("Cannot enforce constraints: self.constraints is None.")
+            self.E = E 
+        else:
+            E_final_constrained = torch.clip(E.round(), 0, None)
+            T = self.constraints.clone().detach()
+            m = E_final_constrained.sum(1) > T
+            if m.any():
+                scaling_factors = (T[m] / E_final_constrained.sum(1)[m].clamp(min=1e-8)).unsqueeze(1)
+                E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
+                E_final_constrained = E_final_constrained.clamp(min=0)
+            self.E = E_final_constrained.clone().detach() 
+            e_csv_path = os.path.join(output_dir, 'E_constrained.csv')
+            e_pt_path = os.path.join(output_dir, 'E_constrained.pt')
+            pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
+            torch.save(self.E.cpu(), e_pt_path)
+            self.log.info(f"Final constrained E matrix saved to {e_csv_path} and {e_pt_path}")
+            self.log.info(f"Final constrained probe count: {self.E.sum().item():.2f}")
+        try:
+            learning_df = pd.DataFrame.from_dict(self.learning_stats, orient='index')
+            learning_curve_path = os.path.join(output_dir, 'learning_curve.csv')
+            learning_df.to_csv(learning_curve_path)
+            self.log.info(f"Learning curve data saved to {learning_curve_path}")
+        except Exception as e:
+            self.log.error(f"Failed to save learning curve: {e}")
+
     def fit(self):
         if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
             self.log.error("Model is not initialized. Call initialize() before fit().")
             raise RuntimeError("Model is not initialized. Call initialize() before fit().")
+        # Initialize training state variables
         self.learning_stats = {} 
         self.saved_models = {}
         self.saved_optimizer_states = {}
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
-        delayed_perturbation_iter = None  # Track if we need to do a delayed perturbation
+        delayed_perturbation_iter = None
         start_time = time.time()
-        current_device = self.I['device']
         last_report_time = start_time
         last_report_iteration = 0
         n_iterations = self.I['n_iters']
@@ -729,238 +963,42 @@ class EncodingDesigner(nn.Module):
         n_train_samples = self.X_train.shape[0]
         try:
             for iteration in range(n_iterations):
-                progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
-                parameters_to_update = [i.replace('_s', '') for i in self.I if i.endswith('_s')]
-                for param in parameters_to_update:
-                    self.I[param] = (self.I[f'{param}_s'] + (self.I[f'{param}_e'] - self.I[f'{param}_s']) * progress)
+                self._update_parameters_for_iteration(iteration, n_iterations)
                 self.learning_stats[str(iteration)] = {}
                 if iteration == 0:
-                    if not self.is_initialized_from_file:
-                        self.log.info("Model not initialized from file, using randomly initialized weights.")
-                    else:
-                        self.log.info("Using model loaded during initialization.")
-                    self.to(self.I['device'])
-                    optimizer_gen = torch.optim.Adam([
-                        {'params': self.encoder.parameters(), 'lr': self.I['lr']},
-                        {'params': self.decoder.parameters(), 'lr': self.I['lr']}
-                    ])
-                    self.optimizer_gen = optimizer_gen
-                for param_group in self.optimizer_gen.param_groups: param_group['lr'] = self.I['lr']
+                    self._setup_optimizer()
+                for param_group in self.optimizer_gen.param_groups: 
+                    param_group['lr'] = self.I['lr']
                 is_report_iter = (iteration % report_rt == 0) or (iteration == n_iterations - 1) 
                 self.train() 
-
-                if (batch_size > 0) and (batch_size < n_train_samples):
-                    idxs = np.random.choice(n_train_samples, batch_size, replace=False)
-                    X_batch = self.X_train[idxs]
-                    y_batch = self.y_train[idxs]
-                else:  
-                    X_batch = self.X_train
-                    y_batch = self.y_train
-                    if batch_size > 0:  
-                        self.log.debug(f"Batch size {batch_size} >= dataset size {n_train_samples}. Using full dataset for iteration {iteration}.")
-
+                X_batch, y_batch = self._get_training_batch(iteration, batch_size, n_train_samples)
                 self.optimizer_gen.zero_grad() 
-                
                 total_loss, batch_stats = self.calculate_loss(
                     X_batch, y_batch, iteration, suffix='_train'
                 )
                 self.learning_stats[str(iteration)].update(batch_stats)
                 self.learning_stats[str(iteration)]['total_loss_train'] = total_loss.item()
                 total_loss.backward() 
-
-                nan_detected = False
-                for name, param in self.named_parameters():
-                    if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
-                        nan_detected = True
-                        self.log.warning(f"NaNs or Infs detected in gradients of model parameter '{name}' at iteration {iteration}. Skipping step and attempting revert.")
-                        self.optimizer_gen.zero_grad() 
-                        break
-                
+                nan_detected = self._check_gradient_health(iteration)
                 if not nan_detected:
-                    # --- GRADIENT CLIPPING ---
-                    max_norm_value = self.I.get('gradient_clip', 1.0) 
-                    if max_norm_value > 0:
-                        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
-                    self.optimizer_gen.step()  
-                    # --- WEIGHT PERTURBATION ---
-                    if self.I['E_perturb_rt'] > 0:
-                        if iteration % self.I['E_perturb_rt'] == 0:
-                            # Check if we're within 50 iterations of the next test
-                            next_test_iter = ((iteration // report_rt) + 1) * report_rt
-                            if next_test_iter - iteration <= 50:
-                                # Delay perturbation until after the test
-                                self.log.info(f"Delaying weight perturbation from iteration {iteration} to after test at iteration {next_test_iter}")
-                                delayed_perturbation_iter = next_test_iter
-                            else:
-                                self.perturb_E()
-                    current_loss_item = total_loss.item()
-                    
-                    if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
-                        self.best_loss = current_loss_item
-                        self.best_model_state_dict = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
-                        self.best_iteration = iteration
-                        self.log.info(f"*** New best model found at iteration {iteration} (Train Loss: {self.best_loss:.4f}) ***")
-                    if is_report_iter or iteration == self.best_iteration:  
-                        self.saved_models[iteration] = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
-                        self.saved_optimizer_states[iteration] = self.optimizer_gen.state_dict()
+                    self._apply_gradient_clipping()
+                    self.optimizer_gen.step()
+                    delayed_perturbation_iter = self._handle_weight_perturbation(iteration, report_rt, delayed_perturbation_iter)
+                    self._update_best_model(iteration, total_loss)
+                    self._save_model_checkpoint(iteration, is_report_iter)
                 else: 
-                    valid_iters = [k for k in self.saved_models if k < iteration]
-                    if valid_iters:
-                        revert_iter = max(valid_iters)
-                        self.log.warning(f"Reverting model and optimizer to state from iteration {revert_iter}")
-                        try:
-                            self.load_state_dict(self.saved_models[revert_iter])
-                            self.to(self.I['device'])
-                            optimizer_gen = torch.optim.Adam([ # Re-init optimizer for the reverted state
-                                {'params': self.encoder.parameters(), 'lr': self.I['lr']},
-                                {'params': self.decoder.parameters(), 'lr': self.I['lr']}
-                            ])
-                            optimizer_gen.load_state_dict(self.saved_optimizer_states[revert_iter])
-                            self.optimizer_gen = optimizer_gen
-                            for state in self.optimizer_gen.state.values():
-                                for k, v in state.items():
-                                    if isinstance(v, torch.Tensor):
-                                        state[k] = v.to(self.I['device'])
-                        except Exception as e:
-                            self.log.error(f"Failed to load state from iter {revert_iter}: {e}. Optimizer state might be reset.")
-                            self.optimizer_gen = torch.optim.Adam([
-                                {'params': self.encoder.parameters(), 'lr': self.I['lr']},
-                                {'params': self.decoder.parameters(), 'lr': self.I['lr']}
-                            ])
-                        self.learning_stats[str(iteration)] = {} 
-                        self.learning_stats[str(iteration)]['status'] = f'Reverted from NaN at {iteration}'
-                    else:
-                        self.log.error(f"NaNs/Infs detected in gradients at iter {iteration}, but no previous state found. Stopping.")
-                        raise ValueError("NaNs/Infs encountered and cannot revert.")
-
+                    self._revert_to_previous_state(iteration)
                 if is_report_iter:
-                    self.eval()
-                    with torch.no_grad():
-                        total_test_loss, test_stats = self.calculate_loss(
-                            self.X_test, self.y_test, iteration, suffix='_test')
-                        test_stats['total_loss_test'] = total_test_loss.item()
-                        self.learning_stats[str(iteration)].update(test_stats)
-
-                    current_time = time.time()
-                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    elapsed_time = current_time - last_report_time
-                    iterations_since_last = iteration - last_report_iteration + 1 
-                    avg_iter_time = elapsed_time / iterations_since_last if iterations_since_last > 0 else 0
-                    self.log.info(f"Avg time/iter since last report: {avg_iter_time:.4f} seconds")
-                    last_report_time = current_time
-                    last_report_iteration = iteration
-                    red_start = "\033[91m"; reset_color = "\033[0m"
-                    log_msg_header = f"--- Iteration: {iteration}/{n_iterations} Eval (Global Test Set) ---"
-                    self.log.info(log_msg_header)
-                    if self.I['Verbose'] == 1: print(f"{red_start}{log_msg_header}{reset_color}")
-                    log_msg_lr = f"Current LR: {self.I['lr']:.6f}"
-                    self.log.info(log_msg_lr)
-                    if self.I['Verbose'] == 1: print(log_msg_lr)
-                    train_loss_key = 'total_loss_train' 
-                    if train_loss_key in self.learning_stats[str(iteration)]:
-                        log_msg = f'{train_loss_key}: {round(self.learning_stats[str(iteration)][train_loss_key], 4)}'
-                        self.log.info(log_msg)
-                        if self.I['Verbose'] == 1: print(log_msg)
-                    for name, item in test_stats.items():
-                        if isinstance(item, (float, int, np.number)) and not np.isnan(item):
-                            log_msg = f'{name}: {round(float(item), 4)}'
-                        else:
-                            log_msg = f'{name}: {item}'
-                        self.log.info(log_msg)
-                        if self.I['Verbose'] == 1: print(log_msg)
-                    self.log.info('------------------')
-
-                # Perform delayed perturbation if needed
+                    last_report_time, last_report_iteration = self._evaluate_on_test_set(iteration, last_report_time, last_report_iteration)
                 if delayed_perturbation_iter == iteration:
                     self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
                     self.perturb_E()
                     delayed_perturbation_iter = None
-
-                if iteration > 20:
-                    keys_to_delete = sorted([k for k in self.saved_models if k < iteration - 20 and k != 0 and k != self.best_iteration])
-                    for key_to_del in keys_to_delete:
-                        self.saved_models.pop(key_to_del, None)
-                        self.saved_optimizer_states.pop(key_to_del, None)
+                self._cleanup_old_checkpoints(iteration)
         except Exception as e:
             self.log.exception(f"Error during training loop at iteration {iteration}: {e}")
         finally:
-            if self.I['best_model'] ==0:
-                self.best_model_state_dict = None
-                self.log.info("Best model turned off. Saving the final iteration state.")
-            if self.best_model_state_dict is not None:
-                self.log.info(f"Loading best model state from iteration {self.best_iteration} (Train Loss: {self.best_loss:.4f}) before final save.")
-                try:
-                    missing_keys, unexpected_keys = self.load_state_dict(self.best_model_state_dict, strict=False)
-                    if missing_keys: self.log.warning(f"Missing keys when loading best state_dict: {missing_keys}")
-                    if unexpected_keys: self.log.warning(f"Unexpected keys when loading best state_dict: {unexpected_keys}")
-                    self.to(self.I['device'])
-                    self.log.info(f"Successfully loaded best model state for final saving.")
-                except Exception as e:
-                    self.log.error(f"Failed to load best model state before saving: {e}. Saving the final iteration state instead.")
-            else:
-                self.log.warning("No best model state was saved during training. Saving the final iteration state.")
-            output_dir = self.I['output']
-            final_model_path = os.path.join(output_dir, 'final_model_state.pt')
-            try:
-                torch.save(self.state_dict(), final_model_path)
-                self.log.info(f"Final model state dictionary saved to {final_model_path}")
-            except Exception as e:
-                self.log.error(f"Failed to save final model state: {e}")
-
-            self.eval()
-            final_iter_key = 'Final'
-            self.learning_stats[final_iter_key] = {}
-            with torch.no_grad():
-                total_final_loss, final_stats_dict = self.calculate_loss(
-                    self.X_test, self.y_test, iteration="Final", suffix='_test'
-                )
-                self.learning_stats[final_iter_key].update(final_stats_dict)
-                self.learning_stats[final_iter_key]['total_loss_test_avg'] = total_final_loss.item()
-
-            now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            red_start = "\033[91m"; reset_color = "\033[0m"
-            log_prefix = f"--- Final Eval Stats (Global Test Set) at {now_str} ---"
-            self.log.info(log_prefix)
-            if self.I['Verbose'] == 1: print(f"{red_start}{log_prefix}{reset_color}")
-            for name, item in self.learning_stats[final_iter_key].items():
-                if isinstance(item, (float, int, np.number)) and not np.isnan(item):
-                    log_msg = f'{name}: {round(float(item), 4)}'
-                else:
-                    log_msg = f'{name}: {item}'
-                self.log.info(log_msg)
-                if self.I['Verbose'] == 1: print(log_msg)
-            self.log.info('------------------')
-
-            self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
-            self.eval() 
-            with torch.no_grad():
-                E = self.get_E().detach().clone() 
-            self.log.info("Enforcing constraints on the final E matrix...")
-            if self.constraints is None:
-                self.log.error("Cannot enforce constraints: self.constraints is None.")
-                self.E = E 
-            else:
-                E_final_constrained = torch.clip(E.round(), 0, None)
-                T = self.constraints.clone().detach()
-                m = E_final_constrained.sum(1) > T
-                if m.any():
-                    scaling_factors = (T[m] / E_final_constrained.sum(1)[m].clamp(min=1e-8)).unsqueeze(1)
-                    E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
-                    E_final_constrained = E_final_constrained.clamp(min=0)
-                self.E = E_final_constrained.clone().detach() 
-                e_csv_path = os.path.join(output_dir, 'E_constrained.csv')
-                e_pt_path = os.path.join(output_dir, 'E_constrained.pt')
-                pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
-                torch.save(self.E.cpu(), e_pt_path)
-                self.log.info(f"Final constrained E matrix saved to {e_csv_path} and {e_pt_path}")
-                self.log.info(f"Final constrained probe count: {self.E.sum().item():.2f}")
-            try:
-                learning_df = pd.DataFrame.from_dict(self.learning_stats, orient='index')
-                learning_curve_path = os.path.join(output_dir, 'learning_curve.csv')
-                learning_df.to_csv(learning_curve_path)
-                self.log.info(f"Learning curve data saved to {learning_curve_path}")
-            except Exception as e:
-                self.log.error(f"Failed to save learning curve: {e}")
+            self._save_final_model(start_time)
 
     def evaluate(self):
         if self.encoder is None or self.decoder is None or \
@@ -969,7 +1007,6 @@ class EncodingDesigner(nn.Module):
             self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
             return
         self.results = {}
-        # Use get_E() to get proper encoding weights with sigmoid and constraints
         E = self.get_E()
         E_cpu = E.cpu().detach()
         self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
@@ -978,7 +1015,6 @@ class EncodingDesigner(nn.Module):
         y_global_train = self.y_train
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
-                # Use the E_wts we already calculated above
                 P_global = self.project(X_global_train, E) 
                 P_global_cpu = P_global.cpu()
                 P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
@@ -1010,9 +1046,6 @@ class EncodingDesigner(nn.Module):
             self.log.info(log_msg)
             if self.I['Verbose'] == 1: print(log_msg)
         self.log.info("-----------------------------")
-        # Test model robustness under different noise conditions
-        # We use the existing noise parameters in the model to simulate different noise levels
-        # This ensures complete compatibility with the training pipeline
         noise_levels = {
             "No Noise": {
                 'P_add': 0.0,
@@ -1065,7 +1098,6 @@ class EncodingDesigner(nn.Module):
                 # Temporarily set to training mode so noise is applied
                 self.train()
                 with torch.no_grad():
-                    # Use the existing pipeline: get_encoding_wts -> project -> decode
                     E = self.get_E()
                     P_test = self.project(self.X_test, E)
                     y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
@@ -1076,7 +1108,6 @@ class EncodingDesigner(nn.Module):
                     if level_name == "No Noise":
                         self.log.info("Saving P_test averages for No Noise condition...")
                         try:
-                            # Calculate cell type averages of P_test
                             P_test_cpu = P_test.cpu()
                             n_bits = P_test_cpu.shape[1]
                             P_type_test = torch.zeros((self.n_categories, n_bits), device='cpu')
@@ -1100,7 +1131,6 @@ class EncodingDesigner(nn.Module):
                                     index=pd.Index(valid_type_labels),
                                     columns=pd.Index([f"Bit_{b}" for b in range(n_bits)])
                                 )
-                                # Save to CSV
                                 p_type_path = os.path.join(self.I['output'], 'P_Type.csv')
                                 P_type_df.to_csv(p_type_path)
                                 self.log.info(f"P_test averages for No Noise condition saved to {p_type_path}")
@@ -1123,7 +1153,6 @@ class EncodingDesigner(nn.Module):
         results_path = os.path.join(self.I['output'], 'Results.csv') 
         results_df.to_csv(results_path)
         self.log.info(f"Evaluation results saved to {results_path}")
-
         if self.I['Verbose'] == 1:
             print("--- Evaluation Summary ---")
             for key, val in self.results.items():
@@ -1140,38 +1169,29 @@ class EncodingDesigner(nn.Module):
            self.y_reverse_label_map is None : 
             self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
             return
-
         current_device = self.I['device']
         output_dir = self.I['output']
         saved_plot_paths = []
-
         # Use get_E() to get proper encoding weights with sigmoid and constraints
         E = self.get_E()
         E = E.to(self.I['device'])
         self.eval()
-
         # Visualizations are now global
         global_name_str = "Global"
         global_fname_safe = sanitize_filename(global_name_str)
         self.log.info(f"Generating visualization for {global_name_str}...")
-
         X_data_vis = self.X_train # Use full training data
         y_data_vis = self.y_train # Mapped internal labels
-
         if X_data_vis.shape[0] == 0:
             self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
             return
-
         with torch.no_grad():
             P = self.project(X_data_vis, E)
-
             n_bits = P.shape[1]
             P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
             unique_y_indices_global = torch.unique(y_data_vis)
-
             valid_type_indices = []
             valid_type_labels = []
-
             for type_idx_tensor in unique_y_indices_global:
                 type_idx = type_idx_tensor.item() 
                 mask = (y_data_vis == type_idx_tensor)
@@ -1182,14 +1202,11 @@ class EncodingDesigner(nn.Module):
                         valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
                     else:
                         self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
-            
             if not valid_type_indices:
                 self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
                 return
-
             P_type_global_present = P_type_global[valid_type_indices].cpu() 
             n_types_present = P_type_global_present.shape[0]
-
             if n_types_present > 1:
                 P_type_centered = P_type_global_present - P_type_global_present.mean(dim=1, keepdim=True)
                 P_type_std = P_type_centered.std(dim=1, keepdim=True).clamp(min=1e-6)
@@ -1219,7 +1236,6 @@ class EncodingDesigner(nn.Module):
                         plt.close(fig_corr) 
             else:
                 self.log.warning(f"Skipping correlation plot for {global_name_str}: Only {n_types_present} cell type(s) present.")
-
             if n_types_present > 0:
                 p_type_df = pd.DataFrame(P_type_global_present.clamp(min=1).log10().numpy(), 
                                          index=pd.Index(valid_type_labels),
@@ -1251,7 +1267,6 @@ class EncodingDesigner(nn.Module):
                         plt.close(cluster_fig.fig)
             else:
                 self.log.warning(f"Skipping P_type plot for {global_name_str}: No cell types present.")
-
             if n_types_present > 0 and n_bits >= 2:
                 plot_filename = f"projection_density_plot_{global_fname_safe}.png"
                 plot_path = os.path.join(output_dir, plot_filename)
@@ -1270,23 +1285,18 @@ class EncodingDesigner(nn.Module):
                     self.log.error(f"Error generating projection space density plot for {global_name_str}: {str(e)}")
             elif n_bits < 2:
                 self.log.warning(f"Skipping projection space density plot for {global_name_str}: Requires at least 2 bits (found {n_bits}).")
-
             self.log.info(f"Generating confusion matrix for test data (Global)...")
             X_test_global = self.X_test
             y_test_global = self.y_test # True internal labels
-
-
             fig_cm = None 
             try:
                 with torch.no_grad():
                     P_test_tensor = self.project(X_test_global, E)
                     y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
-
                 y_true_np = y_test_global.cpu().numpy()
                 y_pred_np = y_pred_test.cpu().numpy()
                 present_labels_idx = np.unique(np.concatenate((y_true_np, y_pred_np)))
                 present_labels_str = [self.y_reverse_label_map.get(i, f"Type_{i}") for i in present_labels_idx]
-
                 if len(present_labels_idx) > 0: 
                     cm = confusion_matrix(y_true_np, y_pred_np, labels=present_labels_idx) 
                     cm_sum = cm.sum(axis=1, keepdims=True)
@@ -1315,7 +1325,6 @@ class EncodingDesigner(nn.Module):
             finally:
                 if fig_cm is not None:
                     plt.close(fig_cm) 
-
         learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
         unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
         unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
@@ -1338,7 +1347,6 @@ class EncodingDesigner(nn.Module):
             plt.tight_layout()
             plt.savefig(os.path.join(output_dir, f"learning_curve_{parameter}.png"))
             plt.close()
-
         self.log.info("Visualization generation finished.")
 
 
