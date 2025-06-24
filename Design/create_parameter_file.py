@@ -75,14 +75,14 @@ user_parameters = {
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
-            'X_drp_s': 0.1,  # Initial proportion of genes to drop out
+            'X_drp_s': 0.0,  # Initial proportion of genes to drop out
             'X_drp_e': 0.1,  # Final proportion of genes to drop out
-            'X_noise_s': 0.1,  # Initial gene expression fold noise level
+            'X_noise_s': 0.0,  # Initial gene expression fold noise level
             'X_noise_e': 0.1,  # Final gene expression fold noise level
             # Weight-level noise parameters
-            'E_drp_s': 0.1,  # Initial proportion of encoding weights to drop out
+            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
             'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out
-            'E_noise_s': 0.1,  # Initial encoding weight fold noise level
+            'E_noise_s': 0.0,  # Initial encoding weight fold noise level
             'E_noise_e': 0.1,  # Final encoding weight fold noise level
             # Projection-level noise parameters
             'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
