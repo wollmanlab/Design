@@ -1184,48 +1184,48 @@ class EncodingDesigner(nn.Module):
                         'data': P_type_global_present.clamp(min=1).log10(),
                         'cmap': 'inferno',
                         'center': None,
-                        'filename': f"P_type_clustermap_{global_fname_safe}.pdf",
-                        'corr_filename': f"type_correlation_raw_{global_fname_safe}.pdf"
+                        'filename': f"P_type_{global_fname_safe}.pdf",
+                        'corr_filename': f"P_type_correlation_raw_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Sum Norm',
                         'data': sum_normalize_p_type(P_type_global_present).clamp(min=1).log10(),
                         'cmap': 'inferno',
                         'center': None,
-                        'filename': f"P_type_clustermap_sum_norm_{global_fname_safe}.pdf",
-                        'corr_filename': f"type_correlation_sum_norm_{global_fname_safe}.pdf"
+                        'filename': f"P_type_sum_norm_{global_fname_safe}.pdf",
+                        'corr_filename': f"P_type_correlation_sum_norm_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Bit Center',
                         'data': bitwise_center_p_type(P_type_global_present),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_bit_center_{global_fname_safe}.pdf",
-                        'corr_filename': f"type_correlation_bit_center_{global_fname_safe}.pdf"
+                        'filename': f"P_type_bit_center_{global_fname_safe}.pdf",
+                        'corr_filename': f"P_type_correlation_bit_center_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Bit Z-score',
                         'data': bitwise_normalize_p_type(P_type_global_present),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_bit_zscore_{global_fname_safe}.pdf",
-                        'corr_filename': f"type_correlation_bit_zscore_{global_fname_safe}.pdf"
+                        'filename': f"P_type_bit_zscore_{global_fname_safe}.pdf",
+                        'corr_filename': f"P_type_correlation_bit_zscore_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Sum and Bit Center',
                         'data': bitwise_center_p_type(sum_normalize_p_type(P_type_global_present)),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_sum_bit_center_{global_fname_safe}.pdf",
-                        'corr_filename': f"type_correlation_sum_bit_center_{global_fname_safe}.pdf"
+                        'filename': f"P_type_sum_bit_center_{global_fname_safe}.pdf",
+                        'corr_filename': f"P_type_correlation_sum_bit_center_{global_fname_safe}.pdf"
                     },
                     {
                         'name': 'Sum and Bit Z-score',
                         'data': bitwise_normalize_p_type(sum_normalize_p_type(P_type_global_present)),
                         'cmap': 'coolwarm',
                         'center': 0,
-                        'filename': f"P_type_clustermap_sum_bit_zscore_{global_fname_safe}.pdf",
-                        'corr_filename': f"type_correlation_sum_bit_zscore_{global_fname_safe}.pdf"
+                        'filename': f"P_type_sum_bit_zscore_{global_fname_safe}.pdf",
+                        'corr_filename': f"P_type_correlation_sum_bit_zscore_{global_fname_safe}.pdf"
                     }
                 ]
                 
