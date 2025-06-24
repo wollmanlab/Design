@@ -75,15 +75,15 @@ user_parameters = {
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
-            'X_drp_s': 0.0,  # Initial proportion of genes to drop out
-            'X_drp_e': 0.0,  # Final proportion of genes to drop out
-            'X_noise_s': 0.0,  # Initial gene expression fold noise level
-            'X_noise_e': 0.0,  # Final gene expression fold noise level
+            'X_drp_s': 0.1,  # Initial proportion of genes to drop out
+            'X_drp_e': 0.1,  # Final proportion of genes to drop out
+            'X_noise_s': 0.1,  # Initial gene expression fold noise level
+            'X_noise_e': 0.1,  # Final gene expression fold noise level
             # Weight-level noise parameters
-            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
-            'E_drp_e': 0.0,  # Final proportion of encoding weights to drop out
-            'E_noise_s': 0.0,  # Initial encoding weight fold noise level
-            'E_noise_e': 0.0,  # Final encoding weight fold noise level
+            'E_drp_s': 0.1,  # Initial proportion of encoding weights to drop out
+            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out
+            'E_noise_s': 0.1,  # Initial encoding weight fold noise level
+            'E_noise_e': 0.1,  # Final encoding weight fold noise level
             # Projection-level noise parameters
             'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
             'P_drp_e': 0.0,  # Final proportion of projection values to drop out
@@ -93,8 +93,8 @@ user_parameters = {
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 0.0,  # Initial constant noise level (log10 scale)
-            'P_add_e': 0.0,  # Final constant noise level (log10 scale)
+            'P_add_s': 2.5,  # Initial constant noise level (log10 scale)
+            'P_add_e': 2.5,  # Final constant noise level (log10 scale)
             # Weight perturbation parameters
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
@@ -117,25 +117,10 @@ parameter_variant_list = [{'n_iters':[500]}]
 
 parameter_variant_list = [
     {
-        'X_drp_e':[0.0,0.05,0.1,0.2,0.5],
+        'P_drp_e':[0.0,0.05,0.1,0.2,0.5,1.0],
     },
     {
-        'X_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-    },
-    {
-        'E_drp_e':[0.0,0.05,0.1,0.2,0.5],
-    },
-    {
-        'E_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-    },
-    {
-        'P_drp_e':[0.0,0.05,0.1,0.2,0.5],
-    },
-    {
-        'P_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-    },
-    {
-        'P_add_e':[0.0,0.5,1.0,2.0,3.0,3.5,4.0],
+        'P_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0,2.0,3.0,3.5,4.0],
     }
 ]
 
