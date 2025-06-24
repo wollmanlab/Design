@@ -1074,7 +1074,7 @@ class EncodingDesigner(nn.Module):
                     P_test = self.project(self.X_test, E)
                     y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
                     avg_accuracy = accuracy_test.item()
-                    self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
+                    self.log.info(f"{level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
                     # Save P_test averages for "No Noise" condition
                     if level_name == "No Noise":
