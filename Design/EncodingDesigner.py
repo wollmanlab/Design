@@ -980,18 +980,14 @@ class EncodingDesigner(nn.Module):
            self.y_test is None : 
             self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
             return
-
         self.results = {}
-
         # Use get_E() to get proper encoding weights with sigmoid and constraints
         E = self.get_E()
         E_cpu = E.cpu().detach()
         self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
-
         all_P_type = []
         X_global_train = self.X_train 
         y_global_train = self.y_train
-
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
                 # Use the E_wts we already calculated above
@@ -1005,7 +1001,6 @@ class EncodingDesigner(nn.Module):
                     if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
                         P_type_global[type_idx] = P_global_cpu[type_mask].mean(dim=0)
                 all_P_type.append(P_type_global)
-
         if all_P_type:
             avg_P_type = torch.stack(all_P_type).mean(dim=0) 
             self.results['Minimum Signal (Avg P_type)'] = avg_P_type.min().item()
@@ -1018,7 +1013,6 @@ class EncodingDesigner(nn.Module):
                 self.results[f"Maximum Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].max().item()
         else:
             self.log.warning("Could not calculate average P_type for evaluation stats.")
-
         self.log.info("--- Basic Evaluation Stats ---")
         for key, val in self.results.items():
             if isinstance(val, (float, int)):
@@ -1028,7 +1022,6 @@ class EncodingDesigner(nn.Module):
             self.log.info(log_msg)
             if self.I['Verbose'] == 1: print(log_msg)
         self.log.info("-----------------------------")
-
         # Test model robustness under different noise conditions
         # We use the existing noise parameters in the model to simulate different noise levels
         # This ensures complete compatibility with the training pipeline
@@ -1078,11 +1071,11 @@ class EncodingDesigner(nn.Module):
                 original_params = {}
                 for param_name in params.keys():
                     original_params[param_name] = self.I[param_name]
-                
                 # Update parameters for this noise level
                 for param_name, param_value in params.items():
                     self.I[param_name] = param_value
-                
+                # Temporarily set to training mode so noise is applied
+                self.train()
                 with torch.no_grad():
                     # Use the existing pipeline: get_encoding_wts -> project -> decode
                     E = self.get_E()
@@ -1091,7 +1084,6 @@ class EncodingDesigner(nn.Module):
                     avg_accuracy = accuracy_test.item()
                     self.log.info(f" {level_name} Accuracy: {round(avg_accuracy, 4)}")
                     self.results[f'{level_name} Accuracy'] = avg_accuracy 
-                    
                     # Save P_test averages for "No Noise" condition
                     if level_name == "No Noise":
                         self.log.info("Saving P_test averages for No Noise condition...")
@@ -1101,10 +1093,8 @@ class EncodingDesigner(nn.Module):
                             n_bits = P_test_cpu.shape[1]
                             P_type_test = torch.zeros((self.n_categories, n_bits), device='cpu')
                             unique_y_test = torch.unique(self.y_test)
-                            
                             valid_type_indices = []
                             valid_type_labels = []
-                            
                             for type_idx_tensor in unique_y_test:
                                 type_idx = type_idx_tensor.item()
                                 type_mask = (self.y_test == type_idx_tensor)
@@ -1112,19 +1102,16 @@ class EncodingDesigner(nn.Module):
                                     P_type_test[type_idx] = P_test_cpu[type_mask].mean(dim=0)
                                     valid_type_indices.append(type_idx)
                                     valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
-                            
                             if valid_type_indices:
                                 # Create DataFrame with cell types as index and bits as columns
                                 # Apply log10 transformation and round to 3 decimal places
                                 P_type_log10 = torch.log10(P_type_test[valid_type_indices].clamp(min=1e-10))
                                 P_type_rounded = torch.round(P_type_log10 * 1000) / 1000  # Round to 3 decimal places
-                                
                                 P_type_df = pd.DataFrame(
                                     P_type_rounded.numpy(),
                                     index=pd.Index(valid_type_labels),
                                     columns=pd.Index([f"Bit_{b}" for b in range(n_bits)])
                                 )
-                                
                                 # Save to CSV
                                 p_type_path = os.path.join(self.I['output'], 'P_Type.csv')
                                 P_type_df.to_csv(p_type_path)
@@ -1132,18 +1119,16 @@ class EncodingDesigner(nn.Module):
                                 self.log.info(f"Saved data for {len(valid_type_indices)} cell types across {n_bits} bits")
                             else:
                                 self.log.warning("No valid cell types found for P_test averages")
-                                
                         except Exception as e:
                             self.log.error(f"Error saving P_test averages for No Noise condition: {e}")
-                
                 # Restore original parameters
                 for param_name, original_value in original_params.items():
                     self.I[param_name] = original_value
-                
             except Exception as e:
                 self.log.error(f"Error during {level_name} accuracy calculation: {e}")
                 self.results[f'{level_name} Accuracy'] = np.nan
-
+        # Set back to eval mode after all noise evaluations
+        self.eval()
         results_df = pd.DataFrame({
             'values': list(self.results.values())
         }, index=pd.Index(list(self.results.keys())))
