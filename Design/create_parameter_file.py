@@ -85,10 +85,10 @@ user_parameters = {
             'E_noise_s': 0.1,  # Initial encoding weight fold noise level
             'E_noise_e': 0.1,  # Final encoding weight fold noise level
             # Projection-level noise parameters
-            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
-            'P_drp_e': 0.0,  # Final proportion of projection values to drop out
-            'P_noise_s': 0.0,  # Initial projection fold noise level
-            'P_noise_e': 0.0,  # Final projection fold noise level
+            'P_drp_s': 0.1,  # Initial proportion of projection values to drop out
+            'P_drp_e': 0.1,  # Final proportion of projection values to drop out
+            'P_noise_s': 0.1,  # Initial projection fold noise level
+            'P_noise_e': 0.1,  # Final projection fold noise level
             # Decoder-level noise parameters
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
@@ -117,10 +117,7 @@ parameter_variant_list = [{'n_iters':[500]}]
 
 parameter_variant_list = [
     {
-        'P_drp_e':[0.0,0.05,0.1,0.2,0.5,1.0],
-    },
-    {
-        'P_noise_e':[0.0,0.05,0.1,0.2,0.5,1.0,2.0,3.0,3.5,4.0],
+        'replicate_count':[1,2,3,4,5,6,7,8,9,10]
     }
 ]
 
