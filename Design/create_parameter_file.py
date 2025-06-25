@@ -46,8 +46,8 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 100000,  # Total number of training iterations
-            'batch_size': 2500,  # Batch size for training (0 = use full dataset)
+            'n_iters': 25000,  # Total number of training iterations
+            'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
             'probe_wt': 1.0,  # Weight for probe count loss term
@@ -75,26 +75,26 @@ user_parameters = {
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
-            'X_drp_s': 0.0,  # Initial proportion of genes to drop out
-            'X_drp_e': 0.0,  # Final proportion of genes to drop out
-            'X_noise_s': 0.0,  # Initial gene expression fold noise level
-            'X_noise_e': 0.0,  # Final gene expression fold noise level
+            'X_drp_s': 0.0,  # Initial proportion of genes to drop out (randomly set to 0)
+            'X_drp_e': 0.0,  # Final proportion of genes to drop out (randomly set to 0)
+            'X_noise_s': 0.0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
+            'X_noise_e': 0.0,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
-            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
-            'E_drp_e': 0.0,  # Final proportion of encoding weights to drop out
-            'E_noise_s': 0.0,  # Initial encoding weight fold noise level
-            'E_noise_e': 0.0,  # Final encoding weight fold noise level
+            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_e': 0.0,  # Final proportion of encoding weights to drop out (randomly set to 0)
+            'E_noise_s': 0.0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
+            'E_noise_e': 0.0,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters
-            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
-            'P_drp_e': 0.0,  # Final proportion of projection values to drop out
-            'P_noise_s': 0.0,  # Initial projection fold noise level
-            'P_noise_e': 0.0,  # Final projection fold noise level
+            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out (randomly set to 0)
+            'P_drp_e': 0.0,  # Final proportion of projection values to drop out (randomly set to 0)
+            'P_noise_s': 0.0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
+            'P_noise_e': 0.0,  # Final projection measurement noise level (percentage accuracy error 0-1)
             # Decoder-level noise parameters
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 2.5,  # Initial constant noise level (log10 scale)
-            'P_add_e': 2.5,  # Final constant noise level (log10 scale)
+            'P_add_s': 2.5,  # Initial constant noise level (log10 scale, added to projections)
+            'P_add_e': 2.5,  # Final constant noise level (log10 scale, added to projections)
             # Weight perturbation parameters
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
@@ -106,7 +106,7 @@ user_parameters = {
             'encoder_act':'tanh',  # Activation function for encoding weights
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
-            'bit_norm': 1,  # Whether to normalize projection by bit-wise statistics
+            'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
         }
 
 user_parameters['input'] = input_dir
@@ -117,11 +117,11 @@ parameter_variant_list = [{'n_iters':[500]}]
 
 parameter_variant_list = [
         {'X_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
-        {'X_noise':[0.0,0.05,0.1,0.25,0.5,1.0]},
-        {'E_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
-        {'E_noise':[0.0,0.05,0.1,0.25,0.5,1.0]},
-        {'P_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
-        {'P_noise':[0.0,0.05,0.1,0.25,0.5,1.0]},
+        {'X_noise':[0.0,0.1,0.25,0.5,0.75,0.9]},
+        {'E_drp':[0.0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'E_noise':[0.0,0.05,0.1,0.25,0.5,0.9]},
+        {'P_drp':[0.0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'P_noise':[0.0,0.01,0.05,0.1,0.25,0.5]},
         {'P_add':[0.0,1.0,2.0,2.5,3.0,3.5,4.0]},
 ]
 

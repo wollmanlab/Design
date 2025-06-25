@@ -64,26 +64,26 @@ class EncodingDesigner(nn.Module):
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
-            'X_drp_s': 0.0,  # Initial proportion of genes to drop out
-            'X_drp_e': 0.1,  # Final proportion of genes to drop out
-            'X_noise_s': 0.0,  # Initial gene expression fold noise level
-            'X_noise_e': 0.5,  # Final gene expression fold noise level
+            'X_drp_s': 0.0,  # Initial proportion of genes to drop out (randomly set to 0)
+            'X_drp_e': 0.1,  # Final proportion of genes to drop out (randomly set to 0)
+            'X_noise_s': 0.0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
+            'X_noise_e': 0.5,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
-            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out
-            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out
-            'E_noise_s': 0.0,  # Initial encoding weight fold noise level
-            'E_noise_e': 0.1,  # Final encoding weight fold noise level
+            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out (randomly set to 0)
+            'E_noise_s': 0.0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
+            'E_noise_e': 0.1,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters
-            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out
-            'P_drp_e': 0.1,  # Final proportion of projection values to drop out
-            'P_noise_s': 0.0,  # Initial projection fold noise level
-            'P_noise_e': 0.1,  # Final projection fold noise level
+            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out (randomly set to 0)
+            'P_drp_e': 0.1,  # Final proportion of projection values to drop out (randomly set to 0)
+            'P_noise_s': 0.0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
+            'P_noise_e': 0.1,  # Final projection measurement noise level (percentage accuracy error 0-1)
             # Decoder-level noise parameters
             'D_drp_s': 0.1,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 1.0,  # Initial constant noise level (log10 scale)
-            'P_add_e': 3.0,  # Final constant noise level (log10 scale)
+            'P_add_s': 1.0,  # Initial constant noise level (log10 scale, added to projections)
+            'P_add_e': 3.0,  # Final constant noise level (log10 scale, added to projections)
             # Weight perturbation parameters
             'E_perturb_rt': 500,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
@@ -580,20 +580,24 @@ class EncodingDesigner(nn.Module):
         if self.training and self.I['E_drp'] > 0:
             E = E * (torch.rand_like(E) > self.I['E_drp']).float()
         if self.training and self.I['E_noise'] > 0:
-            fold = self.I['E_noise']
-            E = E * torch.exp(torch.rand_like(E) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
+            # Set a lower bound to the percent of probes that can bind
+            maximum_percent_decrease = self.I['E_noise']
+            min_val = 1-maximum_percent_decrease
+            E = E * ((1 - min_val) * torch.rand_like(E)) + min_val
         return E
 
     def project(self, X, E):
         if self.training and self.I['X_noise'] != 0:
-            fold = self.I['X_noise']
+            # Perturb X by a fold change of X_noise
+            fold = 1-self.I['X_noise']
             X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
         if self.training and self.I['X_drp'] != 0:
             X = X * (torch.rand_like(X) > self.I['X_drp']).float()
         P = X.mm(E)
         if self.training and self.I['P_noise'] > 0:
-            fold = self.I['P_noise']
-            P = P * torch.exp(torch.rand_like(P) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
+            # modify P by a percent change to account for measurement accuracy
+            max_accuracy = self.I['P_noise']
+            P = P * (2*torch.rand_like(P)-1)*max_accuracy
         if self.training and self.I['P_add'] != 0:
             P = P + torch.rand_like(P) * (10 ** self.I['P_add'])
         if self.training and self.I['P_drp'] > 0:
