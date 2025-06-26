@@ -46,7 +46,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 25000,  # Total number of training iterations
+            'n_iters': 50000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
@@ -93,8 +93,8 @@ user_parameters = {
             'D_drp_s': 0.0,  # Initial decoder dropout rate
             'D_drp_e': 0.0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 2.5,  # Initial constant noise level (log10 scale, added to projections)
-            'P_add_e': 2.5,  # Final constant noise level (log10 scale, added to projections)
+            'P_add_s': 0.0,  # Initial constant noise level (log10 scale, added to projections)
+            'P_add_e': 0.0,  # Final constant noise level (log10 scale, added to projections)
             # Weight perturbation parameters
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
@@ -111,10 +111,6 @@ user_parameters = {
 
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
-# For Testing
-parameter_variant_list = [{'n_iters':[500]}]
-
-
 parameter_variant_list = [
         {'X_drp':[0.0,0.05,0.1,0.25,0.5,1.0]},
         {'X_noise':[0.0,0.1,0.25,0.5,0.75,0.9]},
@@ -124,6 +120,8 @@ parameter_variant_list = [
         {'P_noise':[0.0,0.01,0.05,0.1,0.25,0.5]},
         {'P_add':[0.0,1.0,2.0,2.5,3.0,3.5,4.0]},
 ]
+# For testing
+# parameter_variant_list = [{'n_iters':[10000]}]
 
 # add an option to have _s and _e be the same value
 same_se = True

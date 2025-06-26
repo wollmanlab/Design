@@ -588,8 +588,7 @@ class EncodingDesigner(nn.Module):
 
     def project(self, X, E):
         if self.training and self.I['X_noise'] != 0:
-            # Perturb X by a fold change of X_noise
-            fold = 1-self.I['X_noise']
+            fold = 1 / (1 - self.I['X_noise'])
             X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
         if self.training and self.I['X_drp'] != 0:
             X = X * (torch.rand_like(X) > self.I['X_drp']).float()
@@ -597,9 +596,9 @@ class EncodingDesigner(nn.Module):
         if self.training and self.I['P_noise'] > 0:
             # modify P by a percent change to account for measurement accuracy
             max_accuracy = self.I['P_noise']
-            P = P * (2*torch.rand_like(P)-1)*max_accuracy
+            P = P + (P * ((2*torch.rand_like(P)-1)*max_accuracy))
         if self.training and self.I['P_add'] != 0:
-            P = P + torch.rand_like(P) * (10 ** self.I['P_add'])
+            P = P + (torch.rand_like(P) * (10 ** self.I['P_add']))
         if self.training and self.I['P_drp'] > 0:
             P = P * (torch.rand_like(P) > self.I['P_drp']).float()
         return P
@@ -646,8 +645,8 @@ class EncodingDesigner(nn.Module):
         max_p10, max_p50, max_p90 = bit_percentiles[max_range_idx]
         min_fold_change = bit_dynamic_ranges[min_range_idx]
         max_fold_change = bit_dynamic_ranges[max_range_idx]
-        current_stats['lowest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max(min_p10, 1)):.2f}, p50:{np.log10(max(min_p50, 1)):.2f}, p90:{np.log10(max(min_p90, 1)):.2f}, fold:{min_fold_change:.2f}"
-        current_stats['highest_dynamic_range_bit' + suffix] = f"p10:{np.log10(max(max_p10, 1)):.2f}, p50:{np.log10(max(max_p50, 1)):.2f}, p90:{np.log10(max(max_p90, 1)):.2f}, fold:{max_fold_change:.2f}"
+        current_stats['worst_bit' + suffix] = f"p10:{np.log10(max(min_p10, 1)):.2f}, p50:{np.log10(max(min_p50, 1)):.2f}, p90:{np.log10(max(min_p90, 1)):.2f}, fold:{min_fold_change:.2f}"
+        current_stats['best_bit' + suffix] = f"p10:{np.log10(max(max_p10, 1)):.2f}, p50:{np.log10(max(max_p50, 1)):.2f}, p90:{np.log10(max(max_p90, 1)):.2f}, fold:{max_fold_change:.2f}"
 
         # The model should not use more probes than self.I['n_probes']
         probe_count = E.sum()
@@ -1155,109 +1154,45 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"Generating visualization for {global_name_str}...")
         X_data_vis = self.X_train # Use full training data
         y_data_vis = self.y_train # Mapped internal labels
+        y_vis_str_labels = np.array([self.y_reverse_label_map.get(int
+                    (idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
         if X_data_vis.shape[0] == 0:
             self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
             return
         with torch.no_grad():
             P = self.project(X_data_vis, E)
-            n_bits = P.shape[1]
-            P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
-            unique_y_indices_global = torch.unique(y_data_vis)
-            valid_type_indices = []
-            valid_type_labels = []
-            for type_idx_tensor in unique_y_indices_global:
-                type_idx = type_idx_tensor.item() 
-                mask = (y_data_vis == type_idx_tensor)
-                if mask.sum() > 0:
-                    if 0 <= type_idx < self.n_categories:
-                        P_type_global[type_idx] = P[mask].mean(dim=0) 
-                        valid_type_indices.append(type_idx)
-                        valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
-                    else:
-                        self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
-            if not valid_type_indices:
-                self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
-                return
-            P_type_global_present = P_type_global[valid_type_indices].cpu() 
-            n_types_present = P_type_global_present.shape[0]
-            if n_types_present > 0:
-                # Compute all normalization strategies once
-                normalization_strategies = [
-                    {
-                        'name': 'Raw',
-                        'data': P_type_global_present.clamp(min=1).log10(),
-                        'cmap': 'inferno',
-                        'center': None,
-                        'filename': f"P_type_{global_fname_safe}.pdf",
-                        'corr_filename': f"P_type_correlation_raw_{global_fname_safe}.pdf"
-                    },
-                    {
-                        'name': 'Sum Norm',
-                        'data': sum_normalize_p_type(P_type_global_present).clamp(min=1).log10(),
-                        'cmap': 'inferno',
-                        'center': None,
-                        'filename': f"P_type_sum_norm_{global_fname_safe}.pdf",
-                        'corr_filename': f"P_type_correlation_sum_norm_{global_fname_safe}.pdf"
-                    },
-                    {
-                        'name': 'Bit Center',
-                        'data': bitwise_center_p_type(P_type_global_present),
-                        'cmap': 'coolwarm',
-                        'center': 0,
-                        'filename': f"P_type_bit_center_{global_fname_safe}.pdf",
-                        'corr_filename': f"P_type_correlation_bit_center_{global_fname_safe}.pdf"
-                    },
-                    {
-                        'name': 'Bit Z-score',
-                        'data': bitwise_normalize_p_type(P_type_global_present),
-                        'cmap': 'coolwarm',
-                        'center': 0,
-                        'filename': f"P_type_bit_zscore_{global_fname_safe}.pdf",
-                        'corr_filename': f"P_type_correlation_bit_zscore_{global_fname_safe}.pdf"
-                    },
-                    {
-                        'name': 'Sum and Bit Center',
-                        'data': bitwise_center_p_type(sum_normalize_p_type(P_type_global_present)),
-                        'cmap': 'coolwarm',
-                        'center': 0,
-                        'filename': f"P_type_sum_bit_center_{global_fname_safe}.pdf",
-                        'corr_filename': f"P_type_correlation_sum_bit_center_{global_fname_safe}.pdf"
-                    },
-                    {
-                        'name': 'Sum and Bit Z-score',
-                        'data': bitwise_normalize_p_type(sum_normalize_p_type(P_type_global_present)),
-                        'cmap': 'coolwarm',
-                        'center': 0,
-                        'filename': f"P_type_sum_bit_zscore_{global_fname_safe}.pdf",
-                        'corr_filename': f"P_type_correlation_sum_bit_zscore_{global_fname_safe}.pdf"
-                    }
-                ]
-                
-                # Generate all P_type clustermaps with different normalization strategies
-                plot_P_Type(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
-                
-                # Generate all type correlation clustermaps with different normalization strategies
-                plot_P_Type_correlation(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, self.I['output'], self.log)
-            else:
-                self.log.warning(f"Skipping P_type plot for {global_name_str}: No cell types present.")
-            if n_types_present > 0 and n_bits >= 2:
-                plot_filename = f"projection_density_plot_{global_fname_safe}.pdf"
-                plot_path = os.path.join(self.I['output'], plot_filename)
-                try:
-                    y_vis_str_labels = np.array([self.y_reverse_label_map.get(int(idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
-                    # Use the proper encoding weights for the projection density plot
-                    plot_projection_space_density(
-                        X_data_vis.cpu().numpy() @ E.cpu().numpy(), 
-                        y_vis_str_labels, 
-                        plot_path,
-                        sum_norm=False, 
-                        log=True
-                        )
-                    saved_plot_paths.append(plot_path)
-                except Exception as e:
-                    self.log.error(f"Error generating projection space density plot for {global_name_str}: {str(e)}")
-            elif n_bits < 2:
-                self.log.warning(f"Skipping projection space density plot for {global_name_str}: Requires at least 2 bits (found {n_bits}).")
+            for normalization_strategy in ['Raw', 'Sum Norm', 'Bit Center', 'Bit Z-score', 'Sum and Bit Center', 'Sum and Bit Z-score']:
+                P_norm = P.clone()
+                if 'Sum' in normalization_strategy:
+                    P_norm = sum_normalize_p_type(P_norm)
+                if 'Bit Center' in normalization_strategy:
+                    P_norm = bitwise_center_p_type(P_norm)
+                if 'Bit Z-score' in normalization_strategy:
+                    P_norm = bitwise_normalize_p_type(P_norm)
+                n_bits = P.shape[1]
+                P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
+                unique_y_indices_global = torch.unique(y_data_vis)
+                valid_type_indices = []
+                valid_type_labels = []
+                for type_idx_tensor in unique_y_indices_global:
+                    type_idx = type_idx_tensor.item() 
+                    mask = (y_data_vis == type_idx_tensor)
+                    if mask.sum() > 0:
+                        if 0 <= type_idx < self.n_categories:
+                            P_type_global[type_idx] = P_norm[mask].mean(dim=0) 
+                            valid_type_indices.append(type_idx)
+                            valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
+                        else:
+                            self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
+                if not valid_type_indices:
+                    self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
+                    return
+                P_type_global_present = P_type_global[valid_type_indices].cpu() 
+                n_types_present = P_type_global_present.shape[0]
+                if n_types_present > 0:
+                    plot_P_Type(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_{normalization_strategy}.pdf"), self.log)
+                    plot_P_Type_correlation(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_correlation_{normalization_strategy}.pdf"), self.log)
+                    plot_projection_space_density(P_norm.cpu().numpy(), y_vis_str_labels, os.path.join(self.I['output'], f"projection_density_{normalization_strategy}.pdf"), sum_norm=False, log=self.log, use_log10_scale=False)
             self.log.info(f"Generating confusion matrix for test data (Global)...")
             X_test_global = self.X_test
             y_test_global = self.y_test # True internal labels
@@ -1330,9 +1265,10 @@ def sanitize_filename(name):
     name = re.sub(r'[<>:"|?*]+', '', name)
     return name
 
-def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
-    logger = logging.getLogger("ProjectionPlotDensity")
-    logger.info(f"Generating projection space density plot: {plot_path}")
+def plot_projection_space_density(P,y_labels,plot_path,sum_norm=False,log=None,use_log10_scale=False):
+    if log is None:
+        log = logging.getLogger("ProjectionPlotDensity")
+    log.info(f"Generating projection space density plot: {plot_path}")
     if sum_norm:
         P = P * (np.clip(P.sum(1),1,None).mean() / (np.clip(P.sum(1),1,None)[:, None]))
     labels = np.array([f"Bit {str(bit)}" for bit in range(P.shape[1])])
@@ -1357,22 +1293,34 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
             feature_name2 = labels[feature_idx2]
             x = np.array(P[:, feature_idx1]).ravel()
             y = np.array(P[:, feature_idx2]).ravel()
-            x_pos = x[x > 0]
-            y_pos = y[y > 0]
-            if len(x_pos) > 1: vmin_x, vmax_x = np.percentile(x_pos, [0.1, 99.9])
-            elif len(x_pos) == 1: vmin_x, vmax_x = x_pos[0], x_pos[0]
-            else: vmin_x, vmax_x = 0, 0
-            if len(y_pos) > 1: vmin_y, vmax_y = np.percentile(y_pos, [0.1, 99.9])
-            elif len(y_pos) == 1: vmin_y, vmax_y = y_pos[0], y_pos[0]
-            else: vmin_y, vmax_y = 0, 0
+            
+            # Only filter positive values if using log10 scale
+            if use_log10_scale:
+                x_pos = x[x > 0]
+                y_pos = y[y > 0]
+                if len(x_pos) > 1: vmin_x, vmax_x = np.percentile(x_pos, [0.1, 99.9])
+                elif len(x_pos) == 1: vmin_x, vmax_x = x_pos[0], x_pos[0]
+                else: vmin_x, vmax_x = 0, 0
+                if len(y_pos) > 1: vmin_y, vmax_y = np.percentile(y_pos, [0.1, 99.9])
+                elif len(y_pos) == 1: vmin_y, vmax_y = y_pos[0], y_pos[0]
+                else: vmin_y, vmax_y = 0, 0
+            else:
+                # Use all values including negatives for linear scale
+                if len(x) > 1: vmin_x, vmax_x = np.percentile(x, [0.1, 99.9])
+                elif len(x) == 1: vmin_x, vmax_x = x[0], x[0]
+                else: vmin_x, vmax_x = 0, 0
+                if len(y) > 1: vmin_y, vmax_y = np.percentile(y, [0.1, 99.9])
+                elif len(y) == 1: vmin_y, vmax_y = y[0], y[0]
+                else: vmin_y, vmax_y = 0, 0
+            
             vmax_x = max(vmax_x, vmin_x)
             vmax_y = max(vmax_y, vmin_y)
             x = np.clip(x, vmin_x, vmax_x)
-            if log: x = np.log10(x + 1) 
+            if use_log10_scale: x = np.log10(x + 1) 
             x_min, x_max = x.min(), x.max()
             x_bins = np.linspace(x_min, x_max if x_max > x_min else x_max + 1, 100)
             y = np.clip(y, vmin_y, vmax_y)
-            if log: y = np.log10(y + 1) 
+            if use_log10_scale: y = np.log10(y + 1) 
             y_min, y_max = y.min(), y.max()
             y_bins = np.linspace(y_min, y_max if y_max > y_min else y_max + 1, 100)
             current_row_idx = plot_pair_idx
@@ -1393,12 +1341,12 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
             ax1.set_yticks(y_tick_labels_val)
             ax1.set_xticklabels(np.round(x_tick_labels_val, 1))
             ax1.set_yticklabels(np.round(y_tick_labels_val, 1))
-            if log:
-                ax1.set_xlabel(f"Bit {feature_name1} (log10)")
-                ax1.set_ylabel(f"Bit {feature_name2} (log10)")
+            if use_log10_scale:
+                ax1.set_xlabel(f"{feature_name1} (log10)")
+                ax1.set_ylabel(f"{feature_name2} (log10)")
             else:
-                ax1.set_xlabel(f"Bit {feature_name1}")
-                ax1.set_ylabel(f"Bit {feature_name2}")
+                ax1.set_xlabel(f"{feature_name1}")
+                ax1.set_ylabel(f"{feature_name2}")
             ax1.grid(False)
             ax2 = axes[current_row_idx, 1] 
             composite_img = np.zeros((len(y_bins)-1, len(x_bins)-1, 3))
@@ -1447,107 +1395,102 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=True,log=True):
             ax2.set_xticklabels(np.round(x_tick_labels_val, 1)) 
             ax2.set_yticks(y_tick_labels_val)
             ax2.set_yticklabels(np.round(y_tick_labels_val, 1)) 
-            if log:
-                ax2.set_xlabel(f"Bit {feature_name1} (log10)")
-                ax2.set_ylabel(f"Bit {feature_name2} (log10)")
+            if use_log10_scale:
+                ax2.set_xlabel(f"{feature_name1} (log10)")
+                ax2.set_ylabel(f"{feature_name2} (log10)")
             else:
-                ax2.set_xlabel(f"Bit {feature_name1}")
-                ax2.set_ylabel(f"Bit {feature_name2}")
+                ax2.set_xlabel(f"{feature_name1}")
+                ax2.set_ylabel(f"{feature_name2}")
             ax2.grid(False)
             plot_pair_idx += 1 
     try:
         plt.savefig(plot_path.replace('.png', '.pdf'), dpi=300, bbox_inches='tight')
-        logger.info(f"Saved projection space density plot to {plot_path.replace('.png', '.pdf')}")
+        log.info(f"Saved projection space density plot to {plot_path.replace('.png', '.pdf')}")
     except Exception as e:
-        logger.error(f"Failed to save plot {plot_path.replace('.png', '.pdf')}: {e}")
+        log.error(f"Failed to save plot {plot_path.replace('.png', '.pdf')}: {e}")
     finally:
         plt.close(fig)
 
-def plot_P_Type(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
-    """Generate P_type heatmaps with pre-computed normalization strategies."""
+def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
+    """Generate P_type heatmap."""
+    n_bits = P_type_data.shape[1]
     fig_width = min(max(6, n_bits / 1.5), 25)
     fig_height = min(max(6, len(valid_type_labels) / 2), 25)
     
-    for strategy in normalization_strategies:
-        heatmap_fig = None
-        try:
-            # Sort cell types alphabetically
-            sorted_indices = np.argsort(valid_type_labels)
-            sorted_labels = [valid_type_labels[i] for i in sorted_indices]
-            sorted_data = strategy['data'][sorted_indices]
-            
-            p_type_df = pd.DataFrame(sorted_data.numpy(),
-                                     index=pd.Index(sorted_labels),
-                                     columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
-            
-            heatmap_fig = plt.figure(figsize=(fig_width, fig_height))
-            ax_heatmap = heatmap_fig.add_subplot(111)
-            sns.heatmap(p_type_df, 
-                       cmap=strategy['cmap'],
-                       center=strategy['center'],
-                       linewidths=0.1,
-                       ax=ax_heatmap,
-                       cbar=True)
-            # ax_heatmap.set_title(f"{strategy['name']} P_type - {global_name_str}")
-            ax_heatmap.set_xlabel("Bit")
-            ax_heatmap.set_ylabel("Cell Type")
-            plt.setp(ax_heatmap.get_xticklabels(), rotation=90)
-            plt.setp(ax_heatmap.get_yticklabels(), rotation=0)
-            
-            plot_path = os.path.join(output_dir, strategy['filename'].replace('.png', '.pdf'))
-            heatmap_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-            log.info(f"Saved {strategy['name']} P_type heatmap for {global_name_str} to {plot_path}")
-            
-        except Exception as e:
-            log.error(f"Error generating {strategy['name']} P_type heatmap for {global_name_str}: {e}")
-        finally:
-            if heatmap_fig is not None:
-                plt.close(heatmap_fig)
+    heatmap_fig = None
+    try:
+        # Sort cell types alphabetically
+        sorted_indices = np.argsort(valid_type_labels)
+        sorted_labels = [valid_type_labels[i] for i in sorted_indices]
+        sorted_data = P_type_data[sorted_indices]
+        
+        p_type_df = pd.DataFrame(sorted_data.numpy(),
+                                 index=pd.Index(sorted_labels),
+                                 columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
+        
+        heatmap_fig = plt.figure(figsize=(fig_width, fig_height))
+        ax_heatmap = heatmap_fig.add_subplot(111)
+        sns.heatmap(p_type_df, 
+                   cmap='inferno',
+                   center=None,
+                   linewidths=0.1,
+                   ax=ax_heatmap,
+                   cbar=True)
+        ax_heatmap.set_xlabel("Bit")
+        ax_heatmap.set_ylabel("Cell Type")
+        plt.setp(ax_heatmap.get_xticklabels(), rotation=90)
+        plt.setp(ax_heatmap.get_yticklabels(), rotation=0)
+        
+        heatmap_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+        log.info(f"Saved P_type heatmap to {plot_path}")
+        
+    except Exception as e:
+        log.error(f"Error generating P_type heatmap: {e}")
+    finally:
+        if heatmap_fig is not None:
+            plt.close(heatmap_fig)
 
-def plot_P_Type_correlation(normalization_strategies, valid_type_labels, n_bits, global_name_str, global_fname_safe, output_dir, log):
-    """Generate type-by-type correlation heatmaps with pre-computed normalization strategies."""
+def plot_P_Type_correlation(P_type_data, valid_type_labels, plot_path, log):
+    """Generate type-by-type correlation heatmap."""
+    n_bits = P_type_data.shape[1]
     fig_width = min(max(8, len(valid_type_labels) / 1.5), 25)
     fig_height = min(max(6, len(valid_type_labels) / 2), 25)
     
-    for strategy in normalization_strategies:
-        corr_fig = None
-        try:
-            # Calculate correlation matrix
-            P_type_norm = strategy['data']
-            P_type_centered = P_type_norm - P_type_norm.mean(dim=1, keepdim=True)
-            P_type_std = P_type_centered.std(dim=1, keepdim=True).clamp(min=1e-6)
-            P_type_norm_corr = P_type_centered / P_type_std
-            correlation_matrix = (P_type_norm_corr @ P_type_norm_corr.T / n_bits).numpy()
-            
-            # Sort cell types alphabetically
-            sorted_indices = np.argsort(valid_type_labels)
-            sorted_labels = [valid_type_labels[i] for i in sorted_indices]
-            sorted_correlation_matrix = correlation_matrix[sorted_indices][:, sorted_indices]
-            
-            corr_df = pd.DataFrame(sorted_correlation_matrix, 
-                                  index=pd.Index(sorted_labels), 
-                                  columns=pd.Index(sorted_labels))
-            
-            corr_fig = plt.figure(figsize=(fig_width, fig_height))
-            ax_corr = corr_fig.add_subplot(111)
-            sns.heatmap(corr_df, annot=False, cmap='vlag', fmt=".2f", 
-                       vmin=-1, vmax=1, center=0, linewidths=.5, ax=ax_corr, cbar=True)
-            # ax_corr.set_title(f"Type Correlation Matrix - {strategy['name']} - {global_name_str}")
-            ax_corr.set_xlabel("Cell Type")
-            ax_corr.set_ylabel("Cell Type")
-            plt.setp(ax_corr.get_xticklabels(), rotation=45, ha='right')
-            plt.setp(ax_corr.get_yticklabels(), rotation=0)
-            corr_fig.tight_layout()
-            
-            plot_path = os.path.join(output_dir, strategy['corr_filename'].replace('.png', '.pdf'))
-            corr_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-            log.info(f"Saved {strategy['name']} type correlation heatmap for {global_name_str} to {plot_path}")
-            
-        except Exception as e:
-            log.error(f"Error generating {strategy['name']} type correlation heatmap for {global_name_str}: {e}")
-        finally:
-            if corr_fig is not None:
-                plt.close(corr_fig)
+    corr_fig = None
+    try:
+        # Calculate correlation matrix
+        P_type_centered = P_type_data - P_type_data.mean(dim=1, keepdim=True)
+        P_type_std = P_type_centered.std(dim=1, keepdim=True).clamp(min=1e-6)
+        P_type_norm_corr = P_type_centered / P_type_std
+        correlation_matrix = (P_type_norm_corr @ P_type_norm_corr.T / n_bits).numpy()
+        
+        # Sort cell types alphabetically
+        sorted_indices = np.argsort(valid_type_labels)
+        sorted_labels = [valid_type_labels[i] for i in sorted_indices]
+        sorted_correlation_matrix = correlation_matrix[sorted_indices][:, sorted_indices]
+        
+        corr_df = pd.DataFrame(sorted_correlation_matrix, 
+                              index=pd.Index(sorted_labels), 
+                              columns=pd.Index(sorted_labels))
+        
+        corr_fig = plt.figure(figsize=(fig_width, fig_height))
+        ax_corr = corr_fig.add_subplot(111)
+        sns.heatmap(corr_df, annot=False, cmap='vlag', fmt=".2f", 
+                   vmin=-1, vmax=1, center=0, linewidths=.5, ax=ax_corr, cbar=True)
+        ax_corr.set_xlabel("Cell Type")
+        ax_corr.set_ylabel("Cell Type")
+        plt.setp(ax_corr.get_xticklabels(), rotation=45, ha='right')
+        plt.setp(ax_corr.get_yticklabels(), rotation=0)
+        corr_fig.tight_layout()
+        
+        corr_fig.savefig(plot_path, dpi=300, bbox_inches='tight')
+        log.info(f"Saved type correlation heatmap to {plot_path}")
+        
+    except Exception as e:
+        log.error(f"Error generating type correlation heatmap: {e}")
+    finally:
+        if corr_fig is not None:
+            plt.close(corr_fig)
 
 def sum_normalize_p_type(P_type_data):
     """Sum normalize P_type data to average sum."""
