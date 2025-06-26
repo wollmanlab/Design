@@ -42,6 +42,9 @@ class EncodingDesigner(nn.Module):
             'probe_wt': 1.0,  # Weight for probe count loss term
             'gene_constraint_wt': 1.0,  # Weight for gene constraint violation penalty
             'brightness_wt':1.0,  # Weight for target brightness loss term
+            'separation_wt': 1.0,  # Weight for cell type separation loss term
+            'min_fold_change': 3.0,  # Minimum fold change required between cell type pairs
+            'separation_sample_size': 200,  # Number of cells to sample for separation loss calculation
             'gradient_clip': 1.0,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.005,  # Final learning rate (linear interpolation)
@@ -700,10 +703,21 @@ class EncodingDesigner(nn.Module):
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
-        # The model should have a median brightness atleast to the target brightness - use clean P
+        # The model should have a robust brightness at least to the target brightness - use clean P
         if self.I['brightness_wt'] != 0:
-            fold = ((10**self.I['brightness'])/(P_clean.median(0).values.min().clamp(min=1))).log2()
-            brightness_loss = self.I['brightness_wt']* F.relu(fold)
+            # For each bit, calculate robust brightness (40th-60th percentile average)
+            robust_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+            for bit_idx in range(P_clean.shape[1]):
+                bit_values = P_clean[:, bit_idx]
+                p40, p60 = torch.quantile(bit_values, torch.tensor([0.4, 0.6]))
+                mask = (bit_values >= p40) & (bit_values <= p60)
+                robust_brightness_per_bit[bit_idx] = bit_values[mask].mean()
+            
+            # Calculate relative brightness and loss
+            target_brightness = 10**self.I['brightness']
+            relative_brightness = target_brightness / robust_brightness_per_bit.clamp(min=1)
+            brightness_loss = self.I['brightness_wt'] * F.relu(relative_brightness - 1).mean()
+            
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
 
@@ -717,6 +731,46 @@ class EncodingDesigner(nn.Module):
             raw_losses['sparsity_loss'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
+
+        # Cell type separation loss to ensure meaningful differences between cell types - use clean P
+        if self.I['separation_wt'] != 0:
+            batch_categories = torch.unique(y)
+            if len(batch_categories) > self.I['separation_sample_size']:
+                    batch_categories = batch_categories[torch.randperm(len(batch_categories))[:self.I['separation_sample_size']]]
+            if len(batch_categories) ==1:
+                    P_data = None
+                    mask = None
+            P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
+            for i, type_idx in enumerate(batch_categories):
+                v = P_clean[y == type_idx].mean(dim=0)
+                v = v/v.sum().clamp(min=1e-8)
+                P_data[i] = v
+            mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
+            
+            # Common fold change calculation
+            if P_data is not None and mask is not None and mask.sum() > 0:
+                P_i = P_data.unsqueeze(1)
+                P_j = P_data.unsqueeze(0)
+                ratio_ij = P_i / P_j.clamp(min=1e-8)
+                ratio_ji = P_j / P_i.clamp(min=1e-8)
+                fold_changes = torch.maximum(ratio_ij, ratio_ji)
+                
+                fold_changes_masked = fold_changes[mask]
+                max_fold_changes = fold_changes_masked.max(dim=1)[0]
+                separation_loss = F.relu(self.I['min_fold_change'] - max_fold_changes).mean()
+                
+                current_stats['avg_min_fold_change' + suffix] = max_fold_changes.mean().item()
+                current_stats['min_fold_change' + suffix] = max_fold_changes.min().item()
+                current_stats['max_fold_change' + suffix] = max_fold_changes.max().item()
+            else:
+                separation_loss = torch.tensor(0.0, device=P_clean.device, requires_grad=True)
+                current_stats['avg_min_fold_change' + suffix] = 0.0
+                current_stats['min_fold_change' + suffix] = 0.0
+                current_stats['max_fold_change' + suffix] = 0.0
+            
+            separation_loss = self.I['separation_wt'] * separation_loss
+            raw_losses['separation_loss'] = separation_loss
+            current_stats['separation_loss' + suffix] = separation_loss.item()
 
         #total_loss is a tensor
         total_loss = sum(raw_losses.values()) # tensor not int
@@ -1295,6 +1349,31 @@ def sanitize_filename(name):
     name = re.sub(r'[<>:"|?*]+', '', name)
     return name
 
+def generate_intuitive_ticks(min_val, max_val, num_ticks=5):
+    """Generate intuitive tick values that are easy to read."""
+    if min_val == max_val:return np.array([min_val])
+    range_val = max_val - min_val
+    initial_step = range_val/num_ticks
+    potential_good_values = [1*10**i for i in np.arange(-10,10).astype(float)]
+    potential_good_values.extend([2*10**i for i in np.arange(-10,10).astype(float)])
+    potential_good_values.extend([2.5*10**i for i in np.arange(-10,10).astype(float)])
+    potential_good_values.extend([5*10**i for i in np.arange(-10,10).astype(float)])
+    potential_good_values = np.sort(np.unique(potential_good_values))
+    potential_step1 = potential_good_values[potential_good_values<initial_step][-1]
+    start_val = math.ceil(min_val/potential_step1) * potential_step1
+    potential_ticks1 = np.arange(start_val, max_val, potential_step1)
+    potential_step2 = potential_good_values[potential_good_values>initial_step][0]
+    start_val = math.ceil(min_val/potential_step2) * potential_step2
+    potential_ticks2 = np.arange(start_val, max_val, potential_step2)
+    # pick the one with the number of ticks closest to num_ticks
+    if (potential_ticks1.shape[0] - num_ticks) < (potential_ticks2.shape[0] - num_ticks):
+        ticks = potential_ticks1
+        step = potential_step1
+    else:
+        ticks = potential_ticks2
+        step = potential_step2
+    return ticks
+
 def plot_projection_space_density(P,y_labels,plot_path,sum_norm=False,log=None,use_log10_scale=False):
     if log is None:
         log = logging.getLogger("ProjectionPlotDensity")
@@ -1362,15 +1441,17 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=False,log=None,u
                 vmin_img, vmax_img = np.percentile(img_pos, [0.1, 99]) 
                 if vmin_img == vmax_img: vmax_img += 1e-6 
             else: vmin_img, vmax_img = 0, 1 
-            im1 = ax1.imshow(img.T, vmin=vmin_img, vmax=vmax_img, cmap='bwr', origin='lower', aspect='auto', interpolation='nearest',
+            im1 = ax1.imshow(img.T, vmin=vmin_img, vmax=vmax_img, cmap='coolwarm', origin='lower', aspect='auto', interpolation='nearest',
                            extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]], rasterized=True)
-            num_ticks = 5
-            x_tick_labels_val = np.linspace(x_bins[0], x_bins[-1], num=num_ticks)
-            y_tick_labels_val = np.linspace(y_bins[0], y_bins[-1], num=num_ticks)
-            ax1.set_xticks(x_tick_labels_val)
-            ax1.set_yticks(y_tick_labels_val)
-            ax1.set_xticklabels(np.round(x_tick_labels_val, 1))
-            ax1.set_yticklabels(np.round(y_tick_labels_val, 1))
+            
+            # Generate intuitive tick values
+            x_tick_values = generate_intuitive_ticks(x_bins[0], x_bins[-1], num_ticks=5)
+            y_tick_values = generate_intuitive_ticks(y_bins[0], y_bins[-1], num_ticks=5)
+            
+            ax1.set_xticks(x_tick_values)
+            ax1.set_yticks(y_tick_values)
+            ax1.set_xticklabels([f"{val:.1e}" for val in x_tick_values])
+            ax1.set_yticklabels([f"{val:.1e}" for val in y_tick_values])
             if use_log10_scale:
                 ax1.set_xlabel(f"{feature_name1} (log10)")
                 ax1.set_ylabel(f"{feature_name2} (log10)")
@@ -1421,10 +1502,10 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=False,log=None,u
             composite_img = np.clip(composite_img, 0, 1)
             ax2.imshow(composite_img, origin='lower', aspect='auto', interpolation='nearest',
                        extent=[x_bins[0], x_bins[-1], y_bins[0], y_bins[-1]], rasterized=True)
-            ax2.set_xticks(x_tick_labels_val)
-            ax2.set_xticklabels(np.round(x_tick_labels_val, 1)) 
-            ax2.set_yticks(y_tick_labels_val)
-            ax2.set_yticklabels(np.round(y_tick_labels_val, 1)) 
+            ax2.set_xticks(x_tick_values)
+            ax2.set_xticklabels([f"{val:.1e}" for val in x_tick_values])
+            ax2.set_yticks(y_tick_values)
+            ax2.set_yticklabels([f"{val:.1e}" for val in y_tick_values])
             if use_log10_scale:
                 ax2.set_xlabel(f"{feature_name1} (log10)")
                 ax2.set_ylabel(f"{feature_name2} (log10)")
@@ -1460,9 +1541,15 @@ def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
         
         heatmap_fig = plt.figure(figsize=(fig_width, fig_height))
         ax_heatmap = heatmap_fig.add_subplot(111)
+        if 'Bit' in plot_path:
+            center = 0
+            cmap = 'coolwarm'
+        else:
+            center = None
+            cmap = 'inferno'
         sns.heatmap(p_type_df, 
-                   cmap='inferno',
-                   center=None,
+                   cmap=cmap,
+                   center=center,
                    linewidths=0.1,
                    ax=ax_heatmap,
                    cbar=True)
@@ -1505,7 +1592,7 @@ def plot_P_Type_correlation(P_type_data, valid_type_labels, plot_path, log):
         
         corr_fig = plt.figure(figsize=(fig_width, fig_height))
         ax_corr = corr_fig.add_subplot(111)
-        sns.heatmap(corr_df, annot=False, cmap='vlag', fmt=".2f", 
+        sns.heatmap(corr_df, annot=False, cmap='coolwarm', fmt=".2f", 
                    vmin=-1, vmax=1, center=0, linewidths=.5, ax=ax_corr, cbar=True)
         ax_corr.set_xlabel("Cell Type")
         ax_corr.set_ylabel("Cell Type")
