@@ -415,7 +415,7 @@ class EncodingDesigner(nn.Module):
                 self.log.info("No gene mask file found. Using all genes.")
             self.eval() 
             with torch.no_grad():
-                final_E = self.get_E().detach().clone()
+                final_E = self.get_E_clean().detach().clone()
                 self.log.info("Enforcing constraints on loaded E matrix...")
                 if self.constraints is None:
                     self.log.error("Cannot enforce constraints: self.constraints is None.")
@@ -565,7 +565,8 @@ class EncodingDesigner(nn.Module):
             num_perturbed = mask.sum().item()
             self.log.info(f"Perturbed {num_perturbed} weights out of {self.encoder.weight.data.numel()} total weights ({num_perturbed/self.encoder.weight.data.numel()*100:.2f}%)")
 
-    def get_E(self):
+    def get_E_clean(self):
+        """Get encoding weights without noise/dropout for loss calculations."""
         if self.I['encoder_act'] == 'sigmoid':
             E = torch.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
         elif self.I['encoder_act'] == 'tanh':
@@ -577,6 +578,11 @@ class EncodingDesigner(nn.Module):
             E = torch.relu(self.encoder.weight) * self.constraints.unsqueeze(1)
         else:
             raise ValueError(f"Invalid activation function: {self.I['encoder_act']}")
+        return E
+
+    def get_E(self):
+        """Get encoding weights with noise/dropout for training."""
+        E = self.get_E_clean()
         if self.training and self.I['E_drp'] > 0:
             E = E * (torch.rand_like(E) > self.I['E_drp']).float()
         if self.training and self.I['E_noise'] > 0:
@@ -586,7 +592,13 @@ class EncodingDesigner(nn.Module):
             E = E * (((1 - min_val) * torch.rand_like(E)) + min_val)
         return E
 
+    def project_clean(self, X, E):
+        """Project data without noise/dropout for loss calculations."""
+        P = X.mm(E)
+        return P
+
     def project(self, X, E):
+        """Project data with noise/dropout for training."""
         if self.training and self.I['X_noise'] != 0:
             fold = 1 / (1 - self.I['X_noise'])
             X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
@@ -619,19 +631,28 @@ class EncodingDesigner(nn.Module):
         return y_predict, accuracy, categorical_loss
 
     def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
-        E = self.get_E()
-        P = self.project(X, E) 
-        y_predict, accuracy, raw_categorical_loss_component = self.decode(P, y)
+        # Get clean versions for loss calculations
+        E_clean = self.get_E_clean()
+        P_clean = self.project_clean(X, E_clean)
+        
+        # Get noisy versions for decoder training
+        E_noisy = self.get_E()
+        P_noisy = self.project(X, E_noisy)
+        
+        # Use noisy projections for decoder training
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(P_noisy, y)
+        
         raw_losses = {}
         current_stats = {}
         current_stats['accuracy' + suffix] = accuracy.item()
-        current_stats['median brightness' + suffix] = P.median().item()
-        # Calculate dynamic range utilization and median brightness for each bit
+        current_stats['median brightness' + suffix] = P_clean.median().item()  # Use clean for stats
+        
+        # Calculate dynamic range utilization and median brightness for each bit using clean data
         bit_dynamic_ranges = []
         bit_percentiles = []
         bit_medians = []
-        for bit_idx in range(P.shape[1]):
-            bit_values = P[:, bit_idx]
+        for bit_idx in range(P_clean.shape[1]):
+            bit_values = P_clean[:, bit_idx]
             p10, p50, p90 = torch.quantile(bit_values, torch.tensor([0.1, 0.5, 0.9]))
             fold_change = p90 / p10.clamp(min=1e-8)  # Avoid division by zero
             bit_dynamic_ranges.append(fold_change.item())
@@ -648,11 +669,11 @@ class EncodingDesigner(nn.Module):
         current_stats['worst_bit' + suffix] = f"p10:{np.log10(max(min_p10, 1)):.2f}, p50:{np.log10(max(min_p50, 1)):.2f}, p90:{np.log10(max(min_p90, 1)):.2f}, fold:{min_fold_change:.2f}"
         current_stats['best_bit' + suffix] = f"p10:{np.log10(max(max_p10, 1)):.2f}, p50:{np.log10(max(max_p50, 1)):.2f}, p90:{np.log10(max(max_p90, 1)):.2f}, fold:{max_fold_change:.2f}"
 
-        # The model should not use more probes than self.I['n_probes']
-        probe_count = E.sum()
+        # The model should not use more probes than self.I['n_probes'] - use clean E
+        probe_count = E_clean.sum()
         current_stats['n_probes' + suffix] = probe_count.item()
-        current_stats['total_n_genes' + suffix] = (E > 1).any(1).sum().item()
-        current_stats['median_probe_wt' + suffix] = E[E > 1].median().item() if (E > 1).any() else 0
+        current_stats['total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
+        current_stats['median_probe_wt' + suffix] = E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0
 
         # The model should not use more probes than self.I['n_probes']
         if self.I['probe_wt']!=0:
@@ -669,27 +690,27 @@ class EncodingDesigner(nn.Module):
             raw_losses['categorical_loss'] = categorical_loss_component
             current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
 
-        # The model should not use more probes than a gene can supply
+        # The model should not use more probes than a gene can supply - use clean E
         if self.I['gene_constraint_wt'] != 0:
             if self.constraints is None: raise RuntimeError("Constraints not initialized")
-            total_probes_per_gene = E.sum(1)
+            total_probes_per_gene = E_clean.sum(1)
             non_zero_constraints = self.constraints>0
             fold = total_probes_per_gene[non_zero_constraints] / self.constraints[non_zero_constraints]
             gene_constraint_loss = self.I['gene_constraint_wt']* F.relu(fold-1).mean()            
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
-        # The model should have a median brightness atleast to the target brightness
+        # The model should have a median brightness atleast to the target brightness - use clean P
         if self.I['brightness_wt'] != 0:
-            fold = ((10**self.I['brightness'])/(P.median(0).values.min().clamp(min=1))).log2()
+            fold = ((10**self.I['brightness'])/(P_clean.median(0).values.min().clamp(min=1))).log2()
             brightness_loss = self.I['brightness_wt']* F.relu(fold)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
 
-        # Target sparsity loss to encourage specific percentage of zeros
+        # Target sparsity loss to encourage specific percentage of zeros - use clean E
         if self.I['sparsity_wt'] != 0:
             sparsity_threshold = 1
-            sparsity_ratio = (E < sparsity_threshold).float().mean()
+            sparsity_ratio = (E_clean < sparsity_threshold).float().mean()
             target_sparsity = self.I['sparsity']
             difference = F.relu(target_sparsity - sparsity_ratio)
             sparsity_loss = self.I['sparsity_wt'] * difference
@@ -901,7 +922,7 @@ class EncodingDesigner(nn.Module):
         self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
         self.eval() 
         with torch.no_grad():
-            E = self.get_E().detach().clone() 
+            E = self.get_E_clean().detach().clone() 
         self.log.info("Enforcing constraints on the final E matrix...")
         if self.constraints is None:
             self.log.error("Cannot enforce constraints: self.constraints is None.")
@@ -989,7 +1010,8 @@ class EncodingDesigner(nn.Module):
             self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
             return
         self.results = {}
-        E = self.get_E()
+        # Use clean versions for evaluation stats to be consistent with loss calculations
+        E = self.get_E_clean()
         E_cpu = E.cpu().detach()
         self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
         all_P_type = []
@@ -997,7 +1019,7 @@ class EncodingDesigner(nn.Module):
         y_global_train = self.y_train
         if X_global_train.shape[0] > 0:
             with torch.no_grad():
-                P_global = self.project(X_global_train, E) 
+                P_global = self.project_clean(X_global_train, E) 
                 P_global_cpu = P_global.cpu()
                 P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
                 unique_y_global = torch.unique(y_global_train)
@@ -1009,14 +1031,18 @@ class EncodingDesigner(nn.Module):
                 all_P_type.append(P_type_global)
         if all_P_type:
             avg_P_type = torch.stack(all_P_type).mean(dim=0) 
-            self.results['Minimum Signal (Avg P_type)'] = avg_P_type.min().item()
-            self.results['Average Signal (Avg P_type)'] = avg_P_type.mean().item()
-            self.results['Maximum Signal (Avg P_type)'] = avg_P_type.max().item()
+            # Calculate percentiles efficiently
+            p10, p50, p90 = torch.quantile(avg_P_type, torch.tensor([0.1, 0.5, 0.9]))
+            self.results['10th Percentile Signal (Avg P_type)'] = p10.item()
+            self.results['50th Percentile Signal (Avg P_type)'] = p50.item()
+            self.results['90th Percentile Signal (Avg P_type)'] = p90.item()
             for bit in range(avg_P_type.shape[1]):
                 self.results[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
-                self.results[f"Minimum Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].min().item()
-                self.results[f"Average Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].mean().item()
-                self.results[f"Maximum Signal Bit {bit} (Avg P_type)"] = avg_P_type[:, bit].max().item()
+                # Calculate percentiles for each bit efficiently
+                bit_p10, bit_p50, bit_p90 = torch.quantile(avg_P_type[:, bit], torch.tensor([0.1, 0.5, 0.9]))
+                self.results[f"10th Percentile Signal Bit {bit} (Avg P_type)"] = bit_p10.item()
+                self.results[f"50th Percentile Signal Bit {bit} (Avg P_type)"] = bit_p50.item()
+                self.results[f"90th Percentile Signal Bit {bit} (Avg P_type)"] = bit_p90.item()
         else:
             self.log.warning("Could not calculate average P_type for evaluation stats.")
         self.log.info("--- Basic Evaluation Stats ---")
@@ -1148,8 +1174,8 @@ class EncodingDesigner(nn.Module):
             self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
             return
         saved_plot_paths = []
-        # Use get_E() to get proper encoding weights with sigmoid and constraints
-        E = self.get_E()
+        # Use clean versions for visualization to be consistent with loss calculations
+        E = self.get_E_clean()
         E = E.to(self.I['device'])
         self.eval()
         # Visualizations are now global
@@ -1164,7 +1190,7 @@ class EncodingDesigner(nn.Module):
             self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
             return
         with torch.no_grad():
-            P = self.project(X_data_vis, E)
+            P = self.project_clean(X_data_vis, E)
             for normalization_strategy in ['Raw', 'Sum Norm', 'Bit Center', 'Bit Z-score', 'Sum and Bit Center', 'Sum and Bit Z-score']:
                 P_norm = P.clone()
                 if 'Sum' in normalization_strategy:
@@ -1203,7 +1229,7 @@ class EncodingDesigner(nn.Module):
             fig_cm = None 
             try:
                 with torch.no_grad():
-                    P_test_tensor = self.project(X_test_global, E)
+                    P_test_tensor = self.project_clean(X_test_global, E)
                     y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
                 y_true_np = y_test_global.cpu().numpy()
                 y_pred_np = y_pred_test.cpu().numpy()
@@ -1235,7 +1261,7 @@ class EncodingDesigner(nn.Module):
                 self.log.error(f"Error generating Test Confusion Matrix for {global_name_str}: {e}")
             finally:
                 if fig_cm is not None:
-                    plt.close(fig_cm) 
+                    plt.close(fig_cm)
         learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
         unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
         unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
