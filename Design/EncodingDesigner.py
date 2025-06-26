@@ -126,7 +126,7 @@ class EncodingDesigner(nn.Module):
             os.remove(self.log_file)
         logging.basicConfig(
             filename=self.log_file, filemode='a',
-            format='%(message)s %(asctime)s %(name)s %(levelname)s',
+            format='%(message)s            |||| %(asctime)s %(name)s %(levelname)s',
             datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
         self.log = logging.getLogger("Designer")
 
@@ -583,7 +583,7 @@ class EncodingDesigner(nn.Module):
             # Set a lower bound to the percent of probes that can bind
             maximum_percent_decrease = self.I['E_noise']
             min_val = 1-maximum_percent_decrease
-            E = E * ((1 - min_val) * torch.rand_like(E)) + min_val
+            E = E * (((1 - min_val) * torch.rand_like(E)) + min_val)
         return E
 
     def project(self, X, E):
