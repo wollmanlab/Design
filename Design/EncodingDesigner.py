@@ -42,9 +42,10 @@ class EncodingDesigner(nn.Module):
             'probe_wt': 1.0,  # Weight for probe count loss term
             'gene_constraint_wt': 1.0,  # Weight for gene constraint violation penalty
             'brightness_wt':1.0,  # Weight for target brightness loss term
+            'dynamic_wt': 1.0,  # Weight for dynamic range loss terms
+            'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
             'separation_wt': 1.0,  # Weight for cell type separation loss term
-            'min_fold_change': 3.0,  # Minimum fold change required between cell type pairs
-            'separation_sample_size': 200,  # Number of cells to sample for separation loss calculation
+            'separation_fold': 3.0,  # Minimum fold change required between cell type pairs
             'gradient_clip': 1.0,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.005,  # Final learning rate (linear interpolation)
@@ -703,23 +704,54 @@ class EncodingDesigner(nn.Module):
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
 
-        # The model should have a robust brightness at least to the target brightness - use clean P
-        if self.I['brightness_wt'] != 0:
-            # For each bit, calculate robust brightness (40th-60th percentile average)
+        # The model should have a robust brightness and dynamic range - use clean P
+        if self.I['brightness_wt'] != 0 or self.I['dynamic_wt'] != 0:
+            # For each bit, calculate robust brightness and dynamic range metrics
             robust_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+            lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+            upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+            
             for bit_idx in range(P_clean.shape[1]):
                 bit_values = P_clean[:, bit_idx]
-                p40, p60 = torch.quantile(bit_values, torch.tensor([0.4, 0.6]))
-                mask = (bit_values >= p40) & (bit_values <= p60)
-                robust_brightness_per_bit[bit_idx] = bit_values[mask].mean()
+                
+                # Calculate all percentiles at once for efficiency
+                percentiles = torch.quantile(bit_values, torch.tensor([0.05, 0.25, 0.4, 0.6, 0.75, 0.95]))
+                p5, p25, p40, p60, p75, p95 = percentiles
+                
+                # Calculate median brightness (40th-60th percentile average)
+                mask_median = (bit_values >= p40) & (bit_values <= p60)
+                robust_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
+                
+                # Calculate lower brightness (5th-25th percentile average)
+                mask_lower = (bit_values >= p5) & (bit_values <= p25)
+                lower_brightness_per_bit[bit_idx] = bit_values[mask_lower].mean()
+                
+                # Calculate upper brightness (75th-95th percentile average)
+                mask_upper = (bit_values >= p75) & (bit_values <= p95)
+                upper_brightness_per_bit[bit_idx] = bit_values[mask_upper].mean()
             
-            # Calculate relative brightness and loss
-            target_brightness = 10**self.I['brightness']
-            relative_brightness = target_brightness / robust_brightness_per_bit.clamp(min=1)
-            brightness_loss = self.I['brightness_wt'] * F.relu(relative_brightness - 1).mean()
+            # 1. Median brightness loss (existing functionality)
+            if self.I['brightness_wt'] != 0:
+                target_brightness = 10**self.I['brightness']
+                relative_brightness = target_brightness / robust_brightness_per_bit.clamp(min=1)
+                brightness_loss = self.I['brightness_wt'] * F.relu(relative_brightness - 1).mean()
+                raw_losses['brightness_loss'] = brightness_loss
+                current_stats['brightness_loss' + suffix] = brightness_loss.item()
             
-            raw_losses['brightness_loss'] = brightness_loss
-            current_stats['brightness_loss' + suffix] = brightness_loss.item()
+            # 2. Lower dynamic range loss (median / lower)
+            if self.I['dynamic_wt'] != 0:
+                lower_fold_change = robust_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+                lower_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - lower_fold_change).mean()
+                raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
+                current_stats['lower_dynamic_loss' + suffix] = lower_dynamic_loss.item()
+                current_stats['avg_lower_fold_change' + suffix] = lower_fold_change.mean().item()
+                
+                # 3. Upper dynamic range loss (upper / median)
+                upper_fold_change = upper_brightness_per_bit / robust_brightness_per_bit.clamp(min=1e-8)
+                upper_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - upper_fold_change).mean()
+                raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
+                current_stats['upper_dynamic_loss' + suffix] = upper_dynamic_loss.item()
+                current_stats['avg_upper_fold_change' + suffix] = upper_fold_change.mean().item()
 
         # Target sparsity loss to encourage specific percentage of zeros - use clean E
         if self.I['sparsity_wt'] != 0:
@@ -735,42 +767,27 @@ class EncodingDesigner(nn.Module):
         # Cell type separation loss to ensure meaningful differences between cell types - use clean P
         if self.I['separation_wt'] != 0:
             batch_categories = torch.unique(y)
-            if len(batch_categories) > self.I['separation_sample_size']:
-                    batch_categories = batch_categories[torch.randperm(len(batch_categories))[:self.I['separation_sample_size']]]
-            if len(batch_categories) ==1:
-                    P_data = None
-                    mask = None
-            P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
-            for i, type_idx in enumerate(batch_categories):
-                v = P_clean[y == type_idx].mean(dim=0)
-                v = v/v.sum().clamp(min=1e-8)
-                P_data[i] = v
-            mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
-            
-            # Common fold change calculation
-            if P_data is not None and mask is not None and mask.sum() > 0:
+            if len(batch_categories) > 1:
+                P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
+                for i, type_idx in enumerate(batch_categories):
+                    v = P_clean[y == type_idx].mean(dim=0)
+                    v = v/v.sum().clamp(min=1e-8)
+                    P_data[i] = v
+                mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
                 P_i = P_data.unsqueeze(1)
                 P_j = P_data.unsqueeze(0)
                 ratio_ij = P_i / P_j.clamp(min=1e-8)
                 ratio_ji = P_j / P_i.clamp(min=1e-8)
                 fold_changes = torch.maximum(ratio_ij, ratio_ji)
-                
                 fold_changes_masked = fold_changes[mask]
                 max_fold_changes = fold_changes_masked.max(dim=1)[0]
-                separation_loss = F.relu(self.I['min_fold_change'] - max_fold_changes).mean()
-                
-                current_stats['avg_min_fold_change' + suffix] = max_fold_changes.mean().item()
-                current_stats['min_fold_change' + suffix] = max_fold_changes.min().item()
-                current_stats['max_fold_change' + suffix] = max_fold_changes.max().item()
-            else:
-                separation_loss = torch.tensor(0.0, device=P_clean.device, requires_grad=True)
-                current_stats['avg_min_fold_change' + suffix] = 0.0
-                current_stats['min_fold_change' + suffix] = 0.0
-                current_stats['max_fold_change' + suffix] = 0.0
-            
-            separation_loss = self.I['separation_wt'] * separation_loss
-            raw_losses['separation_loss'] = separation_loss
-            current_stats['separation_loss' + suffix] = separation_loss.item()
+                separation_loss = F.relu(self.I['separation_fold'] - max_fold_changes).mean()
+                current_stats['avg_separation_fold_change' + suffix] = max_fold_changes.mean().item()
+                current_stats['min_separation_fold_change' + suffix] = max_fold_changes.min().item()
+                current_stats['max_separation_fold_change' + suffix] = max_fold_changes.max().item()
+                separation_loss = self.I['separation_wt'] * separation_loss
+                raw_losses['separation_loss'] = separation_loss
+                current_stats['separation_loss' + suffix] = separation_loss.item()
 
         #total_loss is a tensor
         total_loss = sum(raw_losses.values()) # tensor not int
@@ -1334,8 +1351,6 @@ class EncodingDesigner(nn.Module):
             param_display = parameter.replace('_', ' ').title()
             plt.ylabel(param_display)
             plt.ylim(y_min,y_max)
-            if parameter in ['total_loss','categorical_loss','probe_wt_loss','gene_constraint_loss','median brightness','n_probes']:
-                plt.yscale('log')
             plt.legend()
             plt.tight_layout()
             plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.pdf"), dpi=300, bbox_inches='tight')

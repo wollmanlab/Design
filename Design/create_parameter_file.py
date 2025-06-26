@@ -53,8 +53,10 @@ user_parameters = {
             'probe_wt': 1.0,  # Weight for probe count loss term
             'gene_constraint_wt': 1.0,  # Weight for gene constraint violation penalty
             'brightness_wt':1.0,  # Weight for target brightness loss term
+            'dynamic_wt': 1.0,  # Weight for dynamic range loss terms
+            'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
             'separation_wt': 1.0,  # Weight for cell type separation loss term
-            'min_fold_change': 3.0,  # Minimum fold change required between cell type pairs
+            'separation_fold': 3.0,  # Minimum fold change required between cell type pairs
             'gradient_clip': 1.0,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.05,  # Final learning rate (linear interpolation)
@@ -109,7 +111,6 @@ user_parameters = {
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'separation_sample_size': 200,  # Number of cells to sample for separation loss calculation
         }
 
 user_parameters['input'] = input_dir
