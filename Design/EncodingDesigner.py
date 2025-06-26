@@ -1030,6 +1030,7 @@ class EncodingDesigner(nn.Module):
                 'P_add': 0.0,
                 'E_noise': 0.0,
                 'P_noise': 0.0,
+                'X_noise': 0.0,
                 'X_drp': 0.0,
                 'P_drp': 0.0,
                 'E_drp': 0.0
@@ -1039,6 +1040,7 @@ class EncodingDesigner(nn.Module):
                 'E_noise': 0.05,
                 'P_noise': 0.05,
                 'X_drp': 0.05,
+                'X_noise': 0.05,
                 'P_drp': 0.0,
                 'E_drp': 0.05
             },
@@ -1047,6 +1049,7 @@ class EncodingDesigner(nn.Module):
                 'E_noise': 0.25,
                 'P_noise': 0.1,
                 'X_drp': 0.1,
+                'X_noise': 0.1,
                 'P_drp': 0.0,
                 'E_drp': 0.1
             },
@@ -1054,6 +1057,7 @@ class EncodingDesigner(nn.Module):
                 'P_add': 3.0,
                 'E_noise': 0.5,
                 'P_noise': 0.2,
+                'X_noise': 0.2,
                 'X_drp': 0.2,
                 'P_drp': 0.0,
                 'E_drp': 0.2
