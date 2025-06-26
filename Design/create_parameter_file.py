@@ -135,7 +135,7 @@ parameter_variant_list = [
 {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
     ]
 # For testing
-parameter_variant_list = [{'n_iters':[5000]}]
+# parameter_variant_list = [{'n_iters':[5000]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
