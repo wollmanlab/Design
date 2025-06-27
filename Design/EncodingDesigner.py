@@ -28,6 +28,7 @@ try:
 except ImportError:
     _IPYTHON_AVAILABLE = False
 
+
 class EncodingDesigner(nn.Module):
     def __init__(self, user_parameters_path: Optional[str] = None):
         super().__init__() 
@@ -653,8 +654,8 @@ class EncodingDesigner(nn.Module):
 
         # The model should not use more probes than self.I['n_probes']
         if self.I['probe_wt']!=0:
-            fold = (E_clean.sum()/self.I['n_probes'])
-            probe_wt_loss = self.I['probe_wt'] * F.relu(fold-1).clamp(min=0,max=5)
+            fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
+            probe_wt_loss = swish(fold)
             raw_losses['probe_wt_loss'] = probe_wt_loss
             current_stats['probe_wt_loss' + suffix] = probe_wt_loss.item()
             current_stats['E_n_probes' + suffix] = E_clean.sum().item()
@@ -664,14 +665,17 @@ class EncodingDesigner(nn.Module):
             if self.constraints is None: raise RuntimeError("Constraints not initialized")
             total_probes_per_gene = E_clean.sum(1)
             non_zero_constraints = self.constraints>0
-            fold = total_probes_per_gene[non_zero_constraints] / self.constraints[non_zero_constraints]
-            gene_constraint_loss = self.I['gene_constraint_wt']* F.relu(fold-1).mean()            
+            total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
+            constraints = self.constraints[non_zero_constraints].clamp(min=1)
+            difference = total_probes_per_gene-constraints
+            fold = (difference)/constraints
+            gene_constraint_loss = swish(fold).mean()
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
             current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
             current_stats['E_median_wt' + suffix] = E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0
-            current_stats['n_genes_over_constraint' + suffix] = (fold > 1).sum().item()
-            current_stats['fold_over_constraint' + suffix] = fold[fold > 1].mean().item() if (fold > 1).any() else 0
+            current_stats['n_genes_over_constraint' + suffix] = (difference >= 1).sum().item()
+            current_stats['avg_over_constraint' + suffix] = difference[difference >= 1].mean().item() if (fold > 1).any() else 0
 
         # The model should have a robust brightness and dynamic range
         median_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
@@ -700,37 +704,41 @@ class EncodingDesigner(nn.Module):
         current_stats['E_worst_bit' + suffix] = f"lower:{np.log10(max(min_lower, 1)):.2f}, median:{np.log10(max(min_median, 1)):.2f}, upper:{np.log10(max(min_upper, 1)):.2f}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
         current_stats['E_best_bit' + suffix] = f"lower:{np.log10(max(max_lower, 1)):.2f}, median:{np.log10(max(max_median, 1)):.2f}, upper:{np.log10(max(max_upper, 1)):.2f}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
         
-        # Median brightness loss
+        # --- Brightness loss ---
         if self.I['brightness_wt'] != 0:
-            relative_brightness = 10**self.I['brightness'] / median_brightness_per_bit.clamp(min=1)
-            brightness_loss = self.I['brightness_wt'] * F.relu(relative_brightness - 1).mean()
+            target_brightness = 10**self.I['brightness']
+            median_brightness = median_brightness_per_bit.clamp(min=1)
+            fold = (median_brightness - target_brightness) / target_brightness
+            brightness_loss = self.I['brightness_wt'] * swish(-fold).mean()
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = brightness_loss.item()
-        
-        # Dynamic range loss
+
+        # --- Dynamic range loss (lower and upper) ---
         if self.I['dynamic_wt'] != 0:
+            # Lower dynamic range
             lower_fold_change = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            lower_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - lower_fold_change).mean()
+            fold = (lower_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
+            lower_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
             raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
             current_stats['lower_dynamic_loss' + suffix] = lower_dynamic_loss.item()
-
+            # Upper dynamic range
             upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
-            upper_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - upper_fold_change).mean()
+            fold = (upper_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
+            upper_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
             raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
             current_stats['upper_dynamic_loss' + suffix] = upper_dynamic_loss.item()
 
-        # Target sparsity loss to encourage specific percentage of zeros - use clean E
+        # --- Sparsity loss ---
         if self.I['sparsity_wt'] != 0:
             sparsity_threshold = 1
             sparsity_ratio = (E_clean < sparsity_threshold).float().mean()
-            target_sparsity = self.I['sparsity']
-            difference = F.relu(target_sparsity - sparsity_ratio)
-            sparsity_loss = self.I['sparsity_wt'] * difference
+            fold = (sparsity_ratio - self.I['sparsity']) / self.I['sparsity']
+            sparsity_loss = self.I['sparsity_wt'] * swish(-fold)
             raw_losses['sparsity_loss'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
             current_stats['sparsity' + suffix] = sparsity_ratio.item()
 
-        # Cell type separation loss to ensure meaningful differences between cell types - use clean P
+        # --- Cell type separation loss ---
         if self.I['separation_wt'] != 0:
             batch_categories = torch.unique(y)
             if len(batch_categories) > 1:
@@ -747,11 +755,11 @@ class EncodingDesigner(nn.Module):
                 fold_changes = torch.maximum(ratio_ij, ratio_ji)
                 fold_changes_masked = fold_changes[mask]
                 max_fold_changes = fold_changes_masked.max(dim=1)[0]
-                separation_loss = F.relu(self.I['separation_fold'] - max_fold_changes).mean()
+                fold = (max_fold_changes - self.I['separation_fold']) / self.I['separation_fold']
+                separation_loss = self.I['separation_wt'] * swish(-fold).mean()
                 worst_fold_change = max_fold_changes.min().item()
                 p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
                 best_fold_change = max_fold_changes.max().item()
-                separation_loss = self.I['separation_wt'] * separation_loss
                 raw_losses['separation_loss'] = separation_loss
                 current_stats['separation_loss' + suffix] = separation_loss.item()
                 current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
@@ -1355,6 +1363,21 @@ class EncodingDesigner(nn.Module):
             plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.pdf"), dpi=300, bbox_inches='tight')
             plt.close()
         self.log.info("Visualization generation finished.")
+
+# Helper function for smooth, non-negative penalty
+def swish(fold, scale=3.0, shift=-1.278, offset=0.278):
+    """
+    Smooth, non-negative penalty function for soft constraints.
+    Args:
+        fold: Tensor of normalized constraint violations (e.g., (value - bound) / bound)
+        scale: Controls sharpness of penalty ramp-up
+        shift: Shifts minimum to zero (default -1.278 for Swish)
+        offset: Makes minimum value zero (default 0.278 for Swish)
+    Returns:
+        penalty: Tensor of penalties, minimum at fold=0, non-negative
+    """
+    z = scale * fold + shift
+    return z * torch.sigmoid(z) + offset
 
 def sanitize_filename(name):
     """Removes or replaces characters invalid for filenames."""

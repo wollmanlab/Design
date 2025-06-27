@@ -104,7 +104,7 @@ user_parameters = {
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
             'E_init_min': 0.01,  # Minimum probe fraction for initialization
-            'E_init_max': 0.25,  # Maximum probe fraction for initialization
+            'E_init_max': 0.05,  # Maximum probe fraction for initialization
             'E_perturb_min': 0.05,  # Minimum probe fraction for perturbation
             'E_perturb_max': 0.25,  # Maximum probe fraction for perturbation
             # Activation and normalization parameters
@@ -138,7 +138,7 @@ parameter_variant_list = [
 # For testing
 parameter_variant_list = [{
     'n_iters':[10000],
-    'P_scaling':[1],'bit_norm':[0,1]}]
+    'P_scaling':[1,5,10,25]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
