@@ -124,18 +124,18 @@ user_parameters['input'] = input_dir
 #         {'P_noise':[0.0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
 #         {'P_add':[0.0,1.0,2.0,2.5,3.0,3.5,4.0]},
 # ]
-parameter_variant_list = [
-# Best parameter values for highest No Noise Accuracy:
-{'X_drp': [0.1], 'X_noise': [0.5], 'E_drp': [0.1], 'E_noise': [0.0], 'P_drp': [0.0], 'P_noise': [0.05], 'P_add': [2.5]},
-# Best parameter values for highest Low Noise Accuracy:
-{'X_drp': [0.1], 'X_noise': [0.75], 'E_drp': [0.1], 'E_noise': [0.75], 'P_drp': [0.0], 'P_noise': [0.1], 'P_add': [2.5]},
-# Best parameter values for highest Medium Noise Accuracy:
-{'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.25], 'E_noise': [0.9], 'P_drp': [0.0], 'P_noise': [0.1], 'P_add': [2.5]},
-# Best parameter values for highest High Noise Accuracy:
-{'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
-    ]
+# parameter_variant_list = [
+# # Best parameter values for highest No Noise Accuracy:
+# {'X_drp': [0.1], 'X_noise': [0.5], 'E_drp': [0.1], 'E_noise': [0.0], 'P_drp': [0.0], 'P_noise': [0.05], 'P_add': [2.5]},
+# # Best parameter values for highest Low Noise Accuracy:
+# {'X_drp': [0.1], 'X_noise': [0.75], 'E_drp': [0.1], 'E_noise': [0.75], 'P_drp': [0.0], 'P_noise': [0.1], 'P_add': [2.5]},
+# # Best parameter values for highest Medium Noise Accuracy:
+# {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.25], 'E_noise': [0.9], 'P_drp': [0.0], 'P_noise': [0.1], 'P_add': [2.5]},
+# # Best parameter values for highest High Noise Accuracy:
+# {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
+#     ]
 # For testing
-# parameter_variant_list = [{'n_iters':[5000]}]
+parameter_variant_list = [{'n_iters':[10000],'E_perturb_rt':[0,500]}]
 
 # add an option to have _s and _e be the same value
 same_se = True

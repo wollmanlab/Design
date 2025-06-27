@@ -1104,16 +1104,16 @@ class EncodingDesigner(nn.Module):
             avg_P_type = torch.stack(all_P_type).mean(dim=0) 
             # Calculate percentiles efficiently
             p10, p50, p90 = torch.quantile(avg_P_type, torch.tensor([0.1, 0.5, 0.9]))
-            self.results['10th Percentile Signal (Avg P_type)'] = p10.item()
-            self.results['50th Percentile Signal (Avg P_type)'] = p50.item()
-            self.results['90th Percentile Signal (Avg P_type)'] = p90.item()
+            self.results['10th Percentile Signal'] = p10.item()
+            self.results['50th Percentile Signal'] = p50.item()
+            self.results['90th Percentile Signal'] = p90.item()
             for bit in range(avg_P_type.shape[1]):
                 self.results[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
                 # Calculate percentiles for each bit efficiently
                 bit_p10, bit_p50, bit_p90 = torch.quantile(avg_P_type[:, bit], torch.tensor([0.1, 0.5, 0.9]))
-                self.results[f"10th Percentile Signal Bit {bit} (Avg P_type)"] = bit_p10.item()
-                self.results[f"50th Percentile Signal Bit {bit} (Avg P_type)"] = bit_p50.item()
-                self.results[f"90th Percentile Signal Bit {bit} (Avg P_type)"] = bit_p90.item()
+                self.results[f"10th Percentile Signal Bit {bit}"] = bit_p10.item()
+                self.results[f"50th Percentile Signal Bit {bit}"] = bit_p50.item()
+                self.results[f"90th Percentile Signal Bit {bit}"] = bit_p90.item()
         else:
             self.log.warning("Could not calculate average P_type for evaluation stats.")
         self.log.info("--- Basic Evaluation Stats ---")
