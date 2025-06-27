@@ -56,7 +56,7 @@ user_parameters = {
             'dynamic_wt': 1,  # Weight for dynamic range loss terms
             'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
             'separation_wt': 1,  # Weight for cell type separation loss term
-            'separation_fold': 3.0,  # Minimum fold change required between cell type pairs
+            'separation_fold': 2.0,  # Minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.05,  # Final learning rate (linear interpolation)
@@ -79,7 +79,7 @@ user_parameters = {
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             'decoder_importance_wt': 1,  # Weight for decoder weight balance
-            'decoder_weight_fold': 0.5,  # Target fold change for decoder weight balance
+            'decoder_weight_fold': 1.0,  # Target fold change for decoder weight balance
             # Gene-level noise parameters
             'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
             'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
@@ -117,15 +117,15 @@ user_parameters = {
 
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
-# parameter_variant_list = [
-#         {'X_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'X_noise':[0,0.1,0.25,0.5,0.75,0.9]},
-#         {'E_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'E_noise':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_noise':[0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_add':[0,1,2.0,2.5,3.0,3.5,4.0]},
-# ]
+parameter_variant_list = [
+        {'X_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'X_noise':[0,0.1,0.25,0.5,0.75,0.9]},
+        {'E_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'E_noise':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'P_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'P_noise':[0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'P_add':[0,1,2.0,2.5,3.0,3.5,4.0]},
+]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
 # {'X_drp': [0.1], 'X_noise': [0.5], 'E_drp': [0.1], 'E_noise': [0.0], 'P_drp': [0.0], 'P_noise': [0.05], 'P_add': [2.5]},
@@ -137,11 +137,11 @@ user_parameters['input'] = input_dir
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-parameter_variant_list = [{
-    'n_iters':[50000],
-    'dynamic_fold':[1,1.5,2],
-    'separation_fold':[1.0,2.0],
-    'decoder_weight_fold':[0.5,1.0,2.0]}]
+# parameter_variant_list = [{
+#     'n_iters':[50000],
+#     'dynamic_fold':[1,1.5,2],
+#     'separation_fold':[1.0,2.0],
+#     'decoder_weight_fold':[0.5,1.0,2.0]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
