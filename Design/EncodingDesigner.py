@@ -628,7 +628,7 @@ class EncodingDesigner(nn.Module):
             P = self.I['P_scaling'] * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
             # P = (P - P.mean(1).unsqueeze(1)) / P.std(1).unsqueeze(1).clamp(min=1e-8)
         if self.I['bit_norm'] != 0:
-            P = (P - P.mean(0).unsqueeze(1)) / P.std(0).unsqueeze(1).clamp(min=1e-8)
+            P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
