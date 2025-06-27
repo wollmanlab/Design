@@ -623,7 +623,7 @@ class EncodingDesigner(nn.Module):
 
     def decode(self, P, y):
         if self.I['sum_norm'] != 0:
-            P = 100 * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
+            P = 10 * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
         if self.I['bit_norm'] != 0:
             P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
