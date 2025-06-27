@@ -67,6 +67,7 @@ class EncodingDesigner(nn.Module):
             'X_train': 'X_train.pt',  # Path to training features tensor
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
+            'P_scaling': 24,  # Scaling factor for sum normalization (defaults to n_bit)
             # Gene-level noise parameters
             'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
             'X_drp_e': 0.1,  # Final proportion of genes to drop out (randomly set to 0)
@@ -100,8 +101,6 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'decoder_importance_wt': 0.1,  # Weight for decoder weight balance loss
-            'decoder_weight_fold': 0.5,  # Target fold change for decoder weight balance
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -623,7 +622,7 @@ class EncodingDesigner(nn.Module):
 
     def decode(self, P, y):
         if self.I['sum_norm'] != 0:
-            P = P.shape[1] * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
+            P = self.I['P_scaling'] * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
         if self.I['bit_norm'] != 0:
             P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
@@ -640,90 +639,21 @@ class EncodingDesigner(nn.Module):
         # Get clean versions for loss calculations
         E_clean = self.get_E_clean()
         P_clean = self.project_clean(X, E_clean)
-        
         # Get noisy versions for decoder training
         E_noisy = self.get_E()
         P_noisy = self.project(X, E_noisy)
-        
         # Use noisy projections for decoder training
         y_predict, accuracy, raw_categorical_loss_component = self.decode(P_noisy, y)
-        
         raw_losses = {}
         current_stats = {}
-        current_stats['accuracy' + suffix] = accuracy.item()
-        current_stats['median brightness' + suffix] = P_clean.median().item()  # Use clean for stats
-        
-        # Calculate dynamic range utilization and median brightness for each bit using clean data
-        bit_dynamic_ranges = []
-        bit_percentiles = []
-        bit_medians = []
-        for bit_idx in range(P_clean.shape[1]):
-            bit_values = P_clean[:, bit_idx]
-            p10, p50, p90 = torch.quantile(bit_values, torch.tensor([0.1, 0.5, 0.9]))
-            fold_change = p90 / p10.clamp(min=1e-8)  # Avoid division by zero
-            bit_dynamic_ranges.append(fold_change.item())
-            bit_percentiles.append((p10.item(), p50.item(), p90.item()))
-            bit_medians.append(p50.item())
-        current_stats['lowest bit median brightness' + suffix] = f"{np.log10(max(min(bit_medians), 1)):.2f}"
-        current_stats['highest bit median brightness' + suffix] = f"{np.log10(max(max(bit_medians), 1)):.2f}"
-        min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
-        max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
-        min_p10, min_p50, min_p90 = bit_percentiles[min_range_idx]
-        max_p10, max_p50, max_p90 = bit_percentiles[max_range_idx]
-        min_fold_change = bit_dynamic_ranges[min_range_idx]
-        max_fold_change = bit_dynamic_ranges[max_range_idx]
-        current_stats['worst_bit' + suffix] = f"p10:{np.log10(max(min_p10, 1)):.2f}, p50:{np.log10(max(min_p50, 1)):.2f}, p90:{np.log10(max(min_p90, 1)):.2f}, fold:{min_fold_change:.2f}"
-        current_stats['best_bit' + suffix] = f"p10:{np.log10(max(max_p10, 1)):.2f}, p50:{np.log10(max(max_p50, 1)):.2f}, p90:{np.log10(max(max_p90, 1)):.2f}, fold:{max_fold_change:.2f}"
-
-        # The model should not use more probes than self.I['n_probes'] - use clean E
-        probe_count = E_clean.sum()
-        current_stats['n_probes' + suffix] = probe_count.item()
-        current_stats['total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
-        current_stats['median_probe_wt' + suffix] = E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0
 
         # The model should not use more probes than self.I['n_probes']
         if self.I['probe_wt']!=0:
-            #bounded in case probe is very off especially in the beginning
-            fold = (probe_count/self.I['n_probes'])
+            fold = (E_clean.sum()/self.I['n_probes'])
             probe_wt_loss = self.I['probe_wt'] * F.relu(fold-1).clamp(min=0,max=5)
             raw_losses['probe_wt_loss'] = probe_wt_loss
             current_stats['probe_wt_loss' + suffix] = probe_wt_loss.item()
-
-        # The model should accurately decode cell type labels
-        if self.I['categorical_wt'] != 0:
-            # bound this in case of very wrong prediction
-            categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component.clamp(min=0,max=15)
-            raw_losses['categorical_loss'] = categorical_loss_component
-            current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
-
-        # Decoder weight balance loss to prevent bit dominance/neglect
-        if self.I['decoder_importance_wt'] != 0:
-            for module in self.decoder:
-                if isinstance(module, nn.Linear):
-                    decoder_weights = module.weight
-                    current_stats['Average Decoder Weight' + suffix] = decoder_weights.mean().item()
-                    current_stats['Average Abs Decoder Weight' + suffix] = torch.abs(decoder_weights).mean().item()
-                    current_stats['Standard Deviation Decoder Weight' + suffix] = decoder_weights.std().item()
-                    bit_contributions = torch.abs(decoder_weights).sum(dim=0)  # Sum across cell types, shape: (n_bits,)
-                    current_stats['Average Decoder Abs Bit Sum' + suffix] = bit_contributions.mean().item()
-                    current_stats['Standard Deviation Decoder Abs Bit Sum' + suffix] = bit_contributions.std().item()
-                    bit_percentages = bit_contributions / bit_contributions.sum()
-                    current_stats['Average Decoder Abs Bit Sum Percentage' + suffix] = bit_percentages.mean().item()
-                    current_stats['Standard Deviation Decoder Abs Bit Sum Percentage' + suffix] = bit_percentages.std().item()
-                    n_input_bits = decoder_weights.shape[1]  # Number of input features to this layer
-                    target_percentage = 1.0 / n_input_bits
-                    fold_changes = (bit_percentages - target_percentage) / target_percentage  # Shape: (n_bits,)
-                    current_stats['n_input_bits' + suffix] = n_input_bits
-                    current_stats['avg_bit_importance_fold_change' + suffix] = torch.abs(fold_changes).mean().item()
-                    current_stats['n_bits_over_important' + suffix] = (fold_changes > self.I['decoder_weight_fold']).sum().item()
-                    current_stats['n_bits_under_important' + suffix] = (fold_changes < -1*self.I['decoder_weight_fold']).sum().item()
-                    lower_decoder_loss = self.I['decoder_importance_wt'] * F.relu((-1*fold_changes) - self.I['decoder_weight_fold']).mean()
-                    raw_losses['lower_decoder_loss'] = lower_decoder_loss
-                    current_stats['lower_decoder_loss' + suffix] = lower_decoder_loss.item()
-                    upper_decoder_loss = self.I['decoder_importance_wt'] * F.relu(fold_changes - self.I['decoder_weight_fold']).mean()
-                    raw_losses['upper_decoder_loss'] = upper_decoder_loss
-                    current_stats['upper_decoder_loss' + suffix] = upper_decoder_loss.item()
-                    break
+            current_stats['E_n_probes' + suffix] = E_clean.sum().item()
 
         # The model should not use more probes than a gene can supply - use clean E
         if self.I['gene_constraint_wt'] != 0:
@@ -734,55 +664,56 @@ class EncodingDesigner(nn.Module):
             gene_constraint_loss = self.I['gene_constraint_wt']* F.relu(fold-1).mean()            
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
+            current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
+            current_stats['E_median_wt' + suffix] = E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0
+            current_stats['n_genes_over_constraint' + suffix] = (fold > 1).sum().item()
+            current_stats['fold_over_constraint' + suffix] = fold[fold > 1].mean().item() if (fold > 1).any() else 0
 
-        # The model should have a robust brightness and dynamic range - use clean P
-        if self.I['brightness_wt'] != 0 or self.I['dynamic_wt'] != 0:
-            # For each bit, calculate robust brightness and dynamic range metrics
-            robust_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-            lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-            upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-            
-            for bit_idx in range(P_clean.shape[1]):
-                bit_values = P_clean[:, bit_idx]
-                
-                # Calculate all percentiles at once for efficiency
-                percentiles = torch.quantile(bit_values, torch.tensor([0.05, 0.25, 0.4, 0.6, 0.75, 0.95]))
-                p5, p25, p40, p60, p75, p95 = percentiles
-                
-                # Calculate median brightness (40th-60th percentile average)
-                mask_median = (bit_values >= p40) & (bit_values <= p60)
-                robust_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
-                
-                # Calculate lower brightness (5th-25th percentile average)
-                mask_lower = (bit_values >= p5) & (bit_values <= p25)
-                lower_brightness_per_bit[bit_idx] = bit_values[mask_lower].mean()
-                
-                # Calculate upper brightness (75th-95th percentile average)
-                mask_upper = (bit_values >= p75) & (bit_values <= p95)
-                upper_brightness_per_bit[bit_idx] = bit_values[mask_upper].mean()
-            
-            # 1. Median brightness loss (existing functionality)
-            if self.I['brightness_wt'] != 0:
-                target_brightness = 10**self.I['brightness']
-                relative_brightness = target_brightness / robust_brightness_per_bit.clamp(min=1)
-                brightness_loss = self.I['brightness_wt'] * F.relu(relative_brightness - 1).mean()
-                raw_losses['brightness_loss'] = brightness_loss
-                current_stats['brightness_loss' + suffix] = brightness_loss.item()
-            
-            # 2. Lower dynamic range loss (median / lower)
-            if self.I['dynamic_wt'] != 0:
-                lower_fold_change = robust_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-                lower_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - lower_fold_change).mean()
-                raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
-                current_stats['lower_dynamic_loss' + suffix] = lower_dynamic_loss.item()
-                current_stats['avg_lower_fold_change' + suffix] = lower_fold_change.mean().item()
-                
-                # 3. Upper dynamic range loss (upper / median)
-                upper_fold_change = upper_brightness_per_bit / robust_brightness_per_bit.clamp(min=1e-8)
-                upper_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - upper_fold_change).mean()
-                raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
-                current_stats['upper_dynamic_loss' + suffix] = upper_dynamic_loss.item()
-                current_stats['avg_upper_fold_change' + suffix] = upper_fold_change.mean().item()
+        # The model should have a robust brightness and dynamic range
+        median_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        bit_dynamic_ranges = []
+        bit_percentiles = []
+        bit_medians = []
+        for bit_idx in range(P_clean.shape[1]):
+            bit_values = P_clean[:, bit_idx]
+            p5, p10, p25, p40, p50, p60, p75, p90, p95 = torch.quantile(bit_values, torch.tensor([0.05, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 0.95]))
+            mask_median = (bit_values >= p40) & (bit_values <= p60)
+            median_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
+            mask_lower = (bit_values >= p5) & (bit_values <= p25)
+            lower_brightness_per_bit[bit_idx] = bit_values[mask_lower].mean()
+            mask_upper = (bit_values >= p75) & (bit_values <= p95)
+            upper_brightness_per_bit[bit_idx] = bit_values[mask_upper].mean()
+            fold_change = upper_brightness_per_bit[bit_idx] / lower_brightness_per_bit[bit_idx].clamp(min=1e-8)
+            bit_dynamic_ranges.append(fold_change.item())
+            bit_percentiles.append((lower_brightness_per_bit[bit_idx].item(), median_brightness_per_bit[bit_idx].item(), upper_brightness_per_bit[bit_idx].item()))
+            bit_medians.append(median_brightness_per_bit[bit_idx].item())
+        min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
+        max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
+        min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
+        max_lower, max_median, max_upper = bit_percentiles[max_range_idx]
+        current_stats['E_worst_bit' + suffix] = f"lower:{np.log10(max(min_lower, 1)):.2f}, median:{np.log10(max(min_median, 1)):.2f}, upper:{np.log10(max(min_upper, 1)):.2f}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
+        current_stats['E_best_bit' + suffix] = f"lower:{np.log10(max(max_lower, 1)):.2f}, median:{np.log10(max(max_median, 1)):.2f}, upper:{np.log10(max(max_upper, 1)):.2f}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
+        
+        # Median brightness loss
+        if self.I['brightness_wt'] != 0:
+            relative_brightness = 10**self.I['brightness'] / median_brightness_per_bit.clamp(min=1)
+            brightness_loss = self.I['brightness_wt'] * F.relu(relative_brightness - 1).mean()
+            raw_losses['brightness_loss'] = brightness_loss
+            current_stats['brightness_loss' + suffix] = brightness_loss.item()
+        
+        # Dynamic range loss
+        if self.I['dynamic_wt'] != 0:
+            lower_fold_change = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+            lower_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - lower_fold_change).mean()
+            raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
+            current_stats['lower_dynamic_loss' + suffix] = lower_dynamic_loss.item()
+
+            upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
+            upper_dynamic_loss = self.I['dynamic_wt'] * F.relu(self.I['dynamic_fold'] - upper_fold_change).mean()
+            raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
+            current_stats['upper_dynamic_loss' + suffix] = upper_dynamic_loss.item()
 
         # Target sparsity loss to encourage specific percentage of zeros - use clean E
         if self.I['sparsity_wt'] != 0:
@@ -793,7 +724,7 @@ class EncodingDesigner(nn.Module):
             sparsity_loss = self.I['sparsity_wt'] * difference
             raw_losses['sparsity_loss'] = sparsity_loss
             current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
-            current_stats['current_sparsity_ratio' + suffix] = sparsity_ratio.item()
+            current_stats['sparsity' + suffix] = sparsity_ratio.item()
 
         # Cell type separation loss to ensure meaningful differences between cell types - use clean P
         if self.I['separation_wt'] != 0:
@@ -813,13 +744,21 @@ class EncodingDesigner(nn.Module):
                 fold_changes_masked = fold_changes[mask]
                 max_fold_changes = fold_changes_masked.max(dim=1)[0]
                 separation_loss = F.relu(self.I['separation_fold'] - max_fold_changes).mean()
-                current_stats['avg_separation_fold_change' + suffix] = max_fold_changes.mean().item()
-                current_stats['min_separation_fold_change' + suffix] = max_fold_changes.min().item()
-                current_stats['max_separation_fold_change' + suffix] = max_fold_changes.max().item()
+                worst_fold_change = max_fold_changes.min().item()
+                p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
+                best_fold_change = max_fold_changes.max().item()
                 separation_loss = self.I['separation_wt'] * separation_loss
                 raw_losses['separation_loss'] = separation_loss
                 current_stats['separation_loss' + suffix] = separation_loss.item()
+                current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
 
+        # The model should accurately decode cell type labels
+        if self.I['categorical_wt'] != 0:
+            categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component.clamp(min=0,max=15)
+            raw_losses['categorical_loss'] = categorical_loss_component
+            current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
+
+        current_stats['accuracy' + suffix] = accuracy.item() # last for readability
         #total_loss is a tensor
         total_loss = sum(raw_losses.values()) # tensor not int
         if isinstance(total_loss, int):

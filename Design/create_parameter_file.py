@@ -78,8 +78,7 @@ user_parameters = {
             'X_train': 'X_train.pt',  # Path to training features tensor
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
-            'decoder_importance_wt': 1,  # Weight for decoder weight balance
-            'decoder_weight_fold': 1.0,  # Target fold change for decoder weight balance
+            'P_scaling': 24,  # Scaling factor for sum normalization (defaults to n_bit)
             # Gene-level noise parameters
             'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
             'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
@@ -137,11 +136,9 @@ parameter_variant_list = [
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-# parameter_variant_list = [{
-#     'n_iters':[50000],
-#     'dynamic_fold':[1,1.5,2],
-#     'separation_fold':[1.0,2.0],
-#     'decoder_weight_fold':[0.5,1.0,2.0]}]
+parameter_variant_list = [{
+    'n_iters':[10000],
+    'P_scaling':[1,5,10,20,50,100]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
