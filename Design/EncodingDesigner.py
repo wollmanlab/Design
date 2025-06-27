@@ -39,20 +39,20 @@ class EncodingDesigner(nn.Module):
             'batch_size': 1000,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
-            'probe_wt': 1.0,  # Weight for probe count loss term
-            'gene_constraint_wt': 1.0,  # Weight for gene constraint violation penalty
-            'brightness_wt':1.0,  # Weight for target brightness loss term
-            'dynamic_wt': 1.0,  # Weight for dynamic range loss terms
+            'probe_wt': 1,  # Weight for probe count loss term
+            'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
+            'brightness_wt':1,  # Weight for target brightness loss term
+            'dynamic_wt': 1,  # Weight for dynamic range loss terms
             'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
-            'separation_wt': 1.0,  # Weight for cell type separation loss term
+            'separation_wt': 1,  # Weight for cell type separation loss term
             'separation_fold': 3.0,  # Minimum fold change required between cell type pairs
-            'gradient_clip': 1.0,  # Maximum gradient norm for clipping
+            'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.005,  # Final learning rate (linear interpolation)
             'report_rt': 250,  # How often to report training progress
             'sparsity': 0.8,  # Target sparsity ratio (fraction of zeros)
-            'sparsity_wt': 0.0,  # Weight for sparsity loss term
-            'categorical_wt': 1.0,  # Weight for categorical classification loss
+            'sparsity_wt': 0,  # Weight for sparsity loss term
+            'categorical_wt': 1,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -68,25 +68,25 @@ class EncodingDesigner(nn.Module):
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             # Gene-level noise parameters
-            'X_drp_s': 0.0,  # Initial proportion of genes to drop out (randomly set to 0)
+            'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
             'X_drp_e': 0.1,  # Final proportion of genes to drop out (randomly set to 0)
-            'X_noise_s': 0.0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
+            'X_noise_s': 0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             'X_noise_e': 0.5,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
-            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_s': 0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
             'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out (randomly set to 0)
-            'E_noise_s': 0.0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
+            'E_noise_s': 0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
             'E_noise_e': 0.1,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters
-            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out (randomly set to 0)
+            'P_drp_s': 0,  # Initial proportion of projection values to drop out (randomly set to 0)
             'P_drp_e': 0.1,  # Final proportion of projection values to drop out (randomly set to 0)
-            'P_noise_s': 0.0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
+            'P_noise_s': 0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
             'P_noise_e': 0.1,  # Final projection measurement noise level (percentage accuracy error 0-1)
             # Decoder-level noise parameters
             'D_drp_s': 0.1,  # Initial decoder dropout rate
-            'D_drp_e': 0.0,  # Final decoder dropout rate
+            'D_drp_e': 0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 1.0,  # Initial constant noise level (log10 scale, added to projections)
+            'P_add_s': 1,  # Initial constant noise level (log10 scale, added to projections)
             'P_add_e': 3.0,  # Final constant noise level (log10 scale, added to projections)
             # Weight perturbation parameters
             'E_perturb_rt': 500,  # How often to perturb weights (every N iterations)
@@ -100,6 +100,8 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
+            'decoder_importance_wt': 0.1,  # Weight for decoder weight balance loss
+            'decoder_weight_fold': 0.5,  # Target fold change for decoder weight balance
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -621,7 +623,7 @@ class EncodingDesigner(nn.Module):
 
     def decode(self, P, y):
         if self.I['sum_norm'] != 0:
-            P = P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
+            P = 100 * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
         if self.I['bit_norm'] != 0:
             P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
         R = self.decoder(P) 
@@ -631,7 +633,7 @@ class EncodingDesigner(nn.Module):
             loss_fn = nn.CrossEntropyLoss(label_smoothing=self.I['label_smoothing']) 
             categorical_loss = loss_fn(R, y)
         else:
-            categorical_loss = torch.tensor(0.0, device=R.device, requires_grad=True)
+            categorical_loss = torch.tensor(0, device=R.device, requires_grad=True)
         return y_predict, accuracy, categorical_loss
 
     def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
@@ -693,6 +695,35 @@ class EncodingDesigner(nn.Module):
             categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component.clamp(min=0,max=15)
             raw_losses['categorical_loss'] = categorical_loss_component
             current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
+
+        # Decoder weight balance loss to prevent bit dominance/neglect
+        if self.I['decoder_importance_wt'] != 0:
+            for module in self.decoder:
+                if isinstance(module, nn.Linear):
+                    decoder_weights = module.weight
+                    current_stats['Average Decoder Weight' + suffix] = decoder_weights.mean().item()
+                    current_stats['Average Abs Decoder Weight' + suffix] = torch.abs(decoder_weights).mean().item()
+                    current_stats['Standard Deviation Decoder Weight' + suffix] = decoder_weights.std().item()
+                    bit_contributions = torch.abs(decoder_weights).sum(dim=0)  # Sum across cell types, shape: (n_bits,)
+                    current_stats['Average Decoder Abs Bit Sum' + suffix] = bit_contributions.mean().item()
+                    current_stats['Standard Deviation Decoder Abs Bit Sum' + suffix] = bit_contributions.std().item()
+                    bit_percentages = bit_contributions / bit_contributions.sum()
+                    current_stats['Average Decoder Abs Bit Sum Percentage' + suffix] = bit_percentages.mean().item()
+                    current_stats['Standard Deviation Decoder Abs Bit Sum Percentage' + suffix] = bit_percentages.std().item()
+                    n_input_bits = decoder_weights.shape[1]  # Number of input features to this layer
+                    target_percentage = 1.0 / n_input_bits
+                    fold_changes = (bit_percentages - target_percentage) / target_percentage  # Shape: (n_bits,)
+                    current_stats['n_input_bits' + suffix] = n_input_bits
+                    current_stats['avg_bit_importance_fold_change' + suffix] = torch.abs(fold_changes).mean().item()
+                    current_stats['n_bits_over_important' + suffix] = (fold_changes > self.I['decoder_weight_fold']).sum().item()
+                    current_stats['n_bits_under_important' + suffix] = (fold_changes < -1*self.I['decoder_weight_fold']).sum().item()
+                    lower_decoder_loss = self.I['decoder_importance_wt'] * F.relu((-1*fold_changes) - self.I['decoder_weight_fold']).mean()
+                    raw_losses['lower_decoder_loss'] = lower_decoder_loss
+                    current_stats['lower_decoder_loss' + suffix] = lower_decoder_loss.item()
+                    upper_decoder_loss = self.I['decoder_importance_wt'] * F.relu(fold_changes - self.I['decoder_weight_fold']).mean()
+                    raw_losses['upper_decoder_loss'] = upper_decoder_loss
+                    current_stats['upper_decoder_loss' + suffix] = upper_decoder_loss.item()
+                    break
 
         # The model should not use more probes than a gene can supply - use clean E
         if self.I['gene_constraint_wt'] != 0:
@@ -1124,12 +1155,12 @@ class EncodingDesigner(nn.Module):
         self.log.info("-----------------------------")
         noise_levels = {
             "No Noise": {
-                'P_add': 0.0,
-                'E_noise': 0.0,
-                'P_noise': 0.0,
-                'X_noise': 0.0,
-                'X_drp': 0.0,
-                'P_drp': 0.0,
+                'P_add': 0,
+                'E_noise': 0,
+                'P_noise': 0,
+                'X_noise': 0,
+                'X_drp': 0,
+                'P_drp': 0,
                 'E_drp': 0.0
             },
             "Low Noise": {
@@ -1138,7 +1169,7 @@ class EncodingDesigner(nn.Module):
                 'P_noise': 0.05,
                 'X_drp': 0.05,
                 'X_noise': 0.05,
-                'P_drp': 0.0,
+                'P_drp': 0,
                 'E_drp': 0.05
             },
             "Medium Noise": {
@@ -1147,7 +1178,7 @@ class EncodingDesigner(nn.Module):
                 'P_noise': 0.1,
                 'X_drp': 0.1,
                 'X_noise': 0.1,
-                'P_drp': 0.0,
+                'P_drp': 0,
                 'E_drp': 0.1
             },
             "High Noise": {
@@ -1156,7 +1187,7 @@ class EncodingDesigner(nn.Module):
                 'P_noise': 0.2,
                 'X_noise': 0.2,
                 'X_drp': 0.2,
-                'P_drp': 0.0,
+                'P_drp': 0,
                 'E_drp': 0.2
             }
         }
@@ -1549,7 +1580,7 @@ def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
         sorted_indices = np.argsort(valid_type_labels)
         sorted_labels = [valid_type_labels[i] for i in sorted_indices]
         sorted_data = P_type_data[sorted_indices]
-        
+        vmin, vmax = torch.quantile(sorted_data, torch.tensor([0.01, 0.99])).tolist()
         p_type_df = pd.DataFrame(sorted_data.numpy(),
                                  index=pd.Index(sorted_labels),
                                  columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
@@ -1565,6 +1596,8 @@ def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
         sns.heatmap(p_type_df, 
                    cmap=cmap,
                    center=center,
+                   vmin=vmin,
+                   vmax=vmax,
                    linewidths=0.1,
                    ax=ax_heatmap,
                    cbar=True)

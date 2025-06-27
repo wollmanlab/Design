@@ -50,20 +50,20 @@ user_parameters = {
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
-            'probe_wt': 1.0,  # Weight for probe count loss term
-            'gene_constraint_wt': 1.0,  # Weight for gene constraint violation penalty
-            'brightness_wt':1.0,  # Weight for target brightness loss term
-            'dynamic_wt': 1.0,  # Weight for dynamic range loss terms
+            'probe_wt': 1,  # Weight for probe count loss term
+            'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
+            'brightness_wt':1,  # Weight for target brightness loss term
+            'dynamic_wt': 1,  # Weight for dynamic range loss terms
             'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
-            'separation_wt': 1.0,  # Weight for cell type separation loss term
+            'separation_wt': 1,  # Weight for cell type separation loss term
             'separation_fold': 3.0,  # Minimum fold change required between cell type pairs
-            'gradient_clip': 1.0,  # Maximum gradient norm for clipping
+            'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.05,  # Final learning rate (linear interpolation)
             'report_rt': 100,  # How often to report training progress
             'sparsity': 0.95,  # Target sparsity ratio (fraction of zeros)
-            'sparsity_wt': 0.0,  # Weight for sparsity loss term
-            'categorical_wt': 1.0,  # Weight for categorical classification loss
+            'sparsity_wt': 0,  # Weight for sparsity loss term
+            'categorical_wt': 1,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -78,27 +78,29 @@ user_parameters = {
             'X_train': 'X_train.pt',  # Path to training features tensor
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
+            'decoder_importance_wt': 1,  # Weight for decoder weight balance
+            'decoder_weight_fold': 0.5,  # Target fold change for decoder weight balance
             # Gene-level noise parameters
-            'X_drp_s': 0.0,  # Initial proportion of genes to drop out (randomly set to 0)
-            'X_drp_e': 0.0,  # Final proportion of genes to drop out (randomly set to 0)
-            'X_noise_s': 0.0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
-            'X_noise_e': 0.0,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
+            'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
+            'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
+            'X_noise_s': 0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
+            'X_noise_e': 0,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
-            'E_drp_s': 0.0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
-            'E_drp_e': 0.0,  # Final proportion of encoding weights to drop out (randomly set to 0)
-            'E_noise_s': 0.0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
-            'E_noise_e': 0.0,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
+            'E_drp_s': 0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_e': 0,  # Final proportion of encoding weights to drop out (randomly set to 0)
+            'E_noise_s': 0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
+            'E_noise_e': 0,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters
-            'P_drp_s': 0.0,  # Initial proportion of projection values to drop out (randomly set to 0)
-            'P_drp_e': 0.0,  # Final proportion of projection values to drop out (randomly set to 0)
-            'P_noise_s': 0.0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
-            'P_noise_e': 0.0,  # Final projection measurement noise level (percentage accuracy error 0-1)
+            'P_drp_s': 0,  # Initial proportion of projection values to drop out (randomly set to 0)
+            'P_drp_e': 0,  # Final proportion of projection values to drop out (randomly set to 0)
+            'P_noise_s': 0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
+            'P_noise_e': 0,  # Final projection measurement noise level (percentage accuracy error 0-1)
             # Decoder-level noise parameters
-            'D_drp_s': 0.0,  # Initial decoder dropout rate
-            'D_drp_e': 0.0,  # Final decoder dropout rate
+            'D_drp_s': 0,  # Initial decoder dropout rate
+            'D_drp_e': 0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 0.0,  # Initial constant noise level (log10 scale, added to projections)
-            'P_add_e': 0.0,  # Final constant noise level (log10 scale, added to projections)
+            'P_add_s': 0,  # Initial constant noise level (log10 scale, added to projections)
+            'P_add_e': 0,  # Final constant noise level (log10 scale, added to projections)
             # Weight perturbation parameters
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
@@ -116,13 +118,13 @@ user_parameters = {
 user_parameters['input'] = input_dir
 # Define parameter variants - parameters to vary and their possible values
 # parameter_variant_list = [
-#         {'X_drp':[0.0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'X_noise':[0.0,0.1,0.25,0.5,0.75,0.9]},
-#         {'E_drp':[0.0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'E_noise':[0.0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_drp':[0.0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_noise':[0.0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_add':[0.0,1.0,2.0,2.5,3.0,3.5,4.0]},
+#         {'X_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+#         {'X_noise':[0,0.1,0.25,0.5,0.75,0.9]},
+#         {'E_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+#         {'E_noise':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+#         {'P_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+#         {'P_noise':[0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
+#         {'P_add':[0,1,2.0,2.5,3.0,3.5,4.0]},
 # ]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
@@ -135,7 +137,11 @@ user_parameters['input'] = input_dir
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-parameter_variant_list = [{'n_iters':[10000],'E_perturb_rt':[0,500]}]
+parameter_variant_list = [{
+    'n_iters':[50000],
+    'dynamic_fold':[1,1.5,2],
+    'separation_fold':[1.0,2.0],
+    'decoder_weight_fold':[0.5,1.0,2.0]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
