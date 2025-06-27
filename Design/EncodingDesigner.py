@@ -1364,6 +1364,39 @@ class EncodingDesigner(nn.Module):
             plt.close()
         self.log.info("Visualization generation finished.")
 
+        E = self.get_E_clean()
+        E = E.to(self.I['device'])
+        self.eval()
+        # --- Visualization: Constraints vs Probes per Gene ---
+        try:
+            probes_per_gene = E.sum(dim=1).cpu().numpy()
+            constraints = self.constraints.cpu().numpy()
+            plt.figure(figsize=(6, 4))
+            plt.scatter(constraints, probes_per_gene, s=2, alpha=0.5)
+            plt.xlabel('Constraint (max probes per gene)')
+            plt.ylabel('Probes per gene (E_clean)')
+            plt.title('Constraints vs Probes per Gene')
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.I['output'], 'constraints_vs_probes_per_gene.pdf'), dpi=200)
+            plt.close()
+        except Exception as e:
+            self.log.error(f"Failed to plot constraints vs probes per gene: {e}")
+
+        # --- Visualization: Clustermap of E_clean (genes clustered, no labels/dendrogram) ---
+        try:
+            import seaborn as sns
+            E_clean_np = E.cpu().numpy()
+            # Cluster only genes (rows), do not show labels or dendrogram
+            cg = sns.clustermap(E_clean_np, row_cluster=True, col_cluster=False,
+                                yticklabels=False, xticklabels=False, dendrogram_ratio=(0, 0),
+                                figsize=(8, 8), cmap='inferno')
+            cg.ax_row_dendrogram.set_visible(False)
+            cg.ax_col_dendrogram.set_visible(False)
+            plt.savefig(os.path.join(self.I['output'], 'E_clean_clustermap.pdf'), dpi=200, bbox_inches='tight')
+            plt.close()
+        except Exception as e:
+            self.log.error(f"Failed to plot E_clean clustermap: {e}")
+
 # Helper function for smooth, non-negative penalty
 def swish(fold, scale=3.0, shift=-1.278, offset=0.278):
     """
