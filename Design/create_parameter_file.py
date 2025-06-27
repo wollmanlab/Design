@@ -138,7 +138,7 @@ parameter_variant_list = [
 # For testing
 parameter_variant_list = [{
     'n_iters':[10000],
-    'P_scaling':[1,5,10,20,50,100]}]
+    'P_scaling':[1],'bit_norm':[0,1]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
