@@ -109,6 +109,9 @@ class EncodingDesigner(nn.Module):
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
+        # Weight tracking for change calculation
+        self.prev_encoder_weights = None
+        self.prev_decoder_weights = None
 
     def _setup_logging(self, user_parameters_path):
         if user_parameters_path is not None:
@@ -759,6 +762,31 @@ class EncodingDesigner(nn.Module):
             current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
 
         current_stats['accuracy' + suffix] = accuracy.item() # last for readability
+        
+        # Calculate weight changes
+        current_stats['E_change' + suffix] = 0.0
+        if self.prev_encoder_weights is not None:
+            current_weights = self.encoder.weight.data
+            prev_weights = self.prev_encoder_weights
+            non_zero_mask = (current_weights != 0) & (prev_weights != 0)
+            if non_zero_mask.any():
+                pct_changes = torch.abs((current_weights[non_zero_mask] - prev_weights[non_zero_mask]) / prev_weights[non_zero_mask])
+                current_stats['E_change' + suffix] = pct_changes.mean()
+        self.prev_encoder_weights = self.encoder.weight.data.clone().detach()
+            
+        module = self.decoder[0]
+        current_stats['D_change' + suffix] = 0.0
+        if (self.prev_decoder_weights is not None) and (isinstance(module, nn.Linear)):
+
+            current_weights = module.weight.data
+            prev_weights = self.prev_decoder_weights
+            non_zero_mask = (current_weights != 0) & (prev_weights != 0)
+            if non_zero_mask.any():
+                pct_changes = torch.abs((current_weights[non_zero_mask] - prev_weights[non_zero_mask]) / prev_weights[non_zero_mask])
+                current_stats['D_change' + suffix] = pct_changes.mean()
+        if isinstance(module, nn.Linear):
+            self.prev_decoder_weights = module.weight.data.clone().detach()
+        
         #total_loss is a tensor
         total_loss = sum(raw_losses.values()) # tensor not int
         if isinstance(total_loss, int):
