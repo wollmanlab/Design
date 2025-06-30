@@ -78,7 +78,7 @@ user_parameters = {
             'X_train': 'X_train.pt',  # Path to training features tensor
             'y_train': 'y_train.pt',  # Path to training labels tensor
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
-            'P_scaling': 24,  # Scaling factor for sum normalization (defaults to n_bit)
+            'P_scaling': 5,  # Scaling factor for sum normalization (defaults to n_bit)
             # Gene-level noise parameters
             'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
             'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
@@ -112,6 +112,7 @@ user_parameters = {
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
+            'adam_beta1': 0.5,  # Adam optimizer beta1 (momentum) parameter
         }
 
 user_parameters['input'] = input_dir
@@ -124,6 +125,7 @@ parameter_variant_list = [
         {'P_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
         {'P_noise':[0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
         {'P_add':[0,1,2.0,2.5,3.0,3.5,4.0]},
+        {'n_bit':[6,12,24,48,96]},
 ]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
@@ -136,9 +138,9 @@ parameter_variant_list = [
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-parameter_variant_list = [{
-    'n_iters':[10000],
-    'P_scaling':[1,5,10,25]}]
+# parameter_variant_list = [{
+#     'n_iters':[5000],
+#     'adam_beta1':[0.9,0.75,0.5,0.25],'gene_constraint_wt':[0.1,1.0]}]
 
 # add an option to have _s and _e be the same value
 same_se = True

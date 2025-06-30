@@ -102,6 +102,7 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
+            'adam_beta1': 0.9,  # Adam optimizer beta1 (momentum) parameter
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -113,6 +114,762 @@ class EncodingDesigner(nn.Module):
         # Weight tracking for change calculation
         self.prev_encoder_weights = None
         self.prev_decoder_weights = None
+
+    def initialize(self):
+        self.log.info("--- Starting Initialization ---")
+        try:
+            self.log.info("Loading Gene Constraints")
+            self._load_constraints()
+            self._load_data()
+            if self.I['top_n_genes'] > 0 and self.I['top_n_genes'] < self.n_genes:
+                self.train_gene_importance_decoder()
+            self._initialize_encoder()
+            self._initialize_decoder()
+            self._load_pretrained_model()
+            self.log.info("--- Initialization Complete ---")
+            return True
+
+        except FileNotFoundError as e:
+            self.log.error(f"Initialization failed: Input file not found. {e}")
+            return False
+        except KeyError as e:
+            self.log.error(f"Initialization failed: Missing expected column or key. {e}")
+            return False
+        except ValueError as e:
+            self.log.error(f"Initialization failed: Data validation error. {e}")
+            return False
+        except Exception as e:
+            self.log.exception(f"An unexpected error occurred during initialization: {e}")
+            return False
+
+    def get_E_clean(self):
+        """Get encoding weights without noise/dropout for loss calculations."""
+        if self.I['encoder_act'] == 'sigmoid':
+            E = torch.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
+        elif self.I['encoder_act'] == 'tanh':
+            # modified tanh activation function (torch.tanh(x)+1)/2
+            E = ((torch.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
+        elif self.I['encoder_act'] == 'linear':
+            E = self.encoder.weight * self.constraints.unsqueeze(1)
+        elif self.I['encoder_act'] == 'relu':
+            E = torch.relu(self.encoder.weight) * self.constraints.unsqueeze(1)
+        else:
+            raise ValueError(f"Invalid activation function: {self.I['encoder_act']}")
+        return E
+
+    def get_E(self):
+        """Get encoding weights with noise/dropout for training."""
+        E = self.get_E_clean()
+        if self.training and self.I['E_drp'] > 0:
+            E = E * (torch.rand_like(E) > self.I['E_drp']).float()
+        if self.training and self.I['E_noise'] > 0:
+            # Set a lower bound to the percent of probes that can bind
+            maximum_percent_decrease = self.I['E_noise']
+            min_val = 1-maximum_percent_decrease
+            E = E * (((1 - min_val) * torch.rand_like(E)) + min_val)
+        return E
+
+    def project_clean(self, X, E):
+        """Project data without noise/dropout for loss calculations."""
+        P = X.mm(E)
+        return P
+
+    def project(self, X, E):
+        """Project data with noise/dropout for training."""
+        if self.training and self.I['X_noise'] != 0:
+            fold = 1 / (1 - self.I['X_noise'])
+            X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
+        if self.training and self.I['X_drp'] != 0:
+            X = X * (torch.rand_like(X) > self.I['X_drp']).float()
+        P = X.mm(E)
+        if self.training and self.I['P_noise'] > 0:
+            # modify P by a percent change to account for measurement accuracy
+            max_accuracy = self.I['P_noise']
+            P = P + (P * ((2*torch.rand_like(P)-1)*max_accuracy))
+        if self.training and self.I['P_add'] != 0:
+            P = P + (torch.rand_like(P) * (10 ** self.I['P_add']))
+        if self.training and self.I['P_drp'] > 0:
+            P = P * (torch.rand_like(P) > self.I['P_drp']).float()
+        return P
+
+    def decode(self, P, y):
+        if self.I['sum_norm'] != 0:
+            P = self.I['P_scaling'] * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
+            # P = (P - P.mean(1).unsqueeze(1)) / P.std(1).unsqueeze(1).clamp(min=1e-8)
+        if self.I['bit_norm'] != 0:
+            P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
+        R = self.decoder(P) 
+        y_predict = R.max(1)[1]
+        accuracy = (y_predict == y).float().mean()
+        if self.I['categorical_wt'] != 0:
+            loss_fn = nn.CrossEntropyLoss(label_smoothing=self.I['label_smoothing']) 
+            categorical_loss = loss_fn(R, y)
+        else:
+            categorical_loss = torch.tensor(0, device=R.device, requires_grad=True)
+        return y_predict, accuracy, categorical_loss
+
+    def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
+        # Get clean versions for loss calculations
+        E_clean = self.get_E_clean()
+        P_clean = self.project_clean(X, E_clean)
+        # Get noisy versions for decoder training
+        E_noisy = self.get_E()
+        P_noisy = self.project(X, E_noisy)
+        # Use noisy projections for decoder training
+        y_predict, accuracy, raw_categorical_loss_component = self.decode(P_noisy, y)
+        raw_losses = {}
+        current_stats = {}
+
+        # --- Probe count loss ---
+        if self.I['probe_wt']!=0:
+            fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
+            probe_wt_loss = swish(fold)
+            raw_losses['probe_wt_loss'] = probe_wt_loss
+            current_stats['probe_wt_loss' + suffix] = round(probe_wt_loss.item(), 4)
+            current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
+
+        # --- Gene constraint loss ---
+        if self.I['gene_constraint_wt'] != 0:
+            if self.constraints is None: raise RuntimeError("Constraints not initialized")
+            total_probes_per_gene = E_clean.sum(1)
+            non_zero_constraints = self.constraints>0
+            total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
+            constraints = self.constraints[non_zero_constraints].clamp(min=1)
+            difference = total_probes_per_gene-constraints
+            gene_constraint_loss = (F.relu(difference).sum()+1).log2()
+            violations = difference>0
+            # if violations.sum() > 0:
+            #     # average_violation = difference[violations].mean()
+            #     gene_constraint_loss = self.I['gene_constraint_wt'] * violations.sum()
+            
+            raw_losses['gene_constraint_loss'] = gene_constraint_loss
+            current_stats['gene_constraint_loss' + suffix] = round(gene_constraint_loss.item(), 4)
+            current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
+            current_stats['E_median_wt' + suffix] = round(E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0, 4)
+            current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
+            current_stats['avg_over_constraint' + suffix] = round(difference[violations].mean().item(), 4) if violations.any() else 0
+            current_stats['max_over_constraint' + suffix] = round(difference.max().item(), 4) if difference.numel() > 0 else 0
+            current_stats['total_violation_probes' + suffix] = round(difference[violations].sum().item(), 4)
+
+        # --- Sparsity loss ---
+        if self.I['sparsity_wt'] != 0:
+            sparsity_threshold = 1
+            sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
+            fold = (sparsity_ratio - self.I['sparsity']) / self.I['sparsity']
+            sparsity_loss = self.I['sparsity_wt'] * swish(-fold)
+            raw_losses['sparsity_loss'] = sparsity_loss
+            current_stats['sparsity_loss' + suffix] = round(sparsity_loss.item(), 4)
+            current_stats['sparsity' + suffix] = round(sparsity_ratio.item(), 4)
+
+        # The model should have a robust brightness and dynamic range
+        # use sum normalized for this 
+        median_val = P_clean.sum(1).clamp(min=1e-8).median()
+        P_clean_sum_norm = median_val * P_clean / P_clean.sum(1).unsqueeze(1).clamp(min=1e-8)
+        median_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        bit_dynamic_ranges = []
+        bit_percentiles = []
+        bit_medians = []
+        for bit_idx in range(P_clean.shape[1]):
+            bit_values = P_clean_sum_norm[:, bit_idx]
+            p5, p10, p25, p40, p50, p60, p75, p90, p95 = torch.quantile(bit_values, torch.tensor([0.05, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 0.95]))
+            mask_median = (bit_values >= p40) & (bit_values <= p60)
+            median_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
+            mask_lower = (bit_values >= p5) & (bit_values <= p25)
+            lower_brightness_per_bit[bit_idx] = bit_values[mask_lower].mean()
+            mask_upper = (bit_values >= p75) & (bit_values <= p95)
+            upper_brightness_per_bit[bit_idx] = bit_values[mask_upper].mean()
+            fold_change = upper_brightness_per_bit[bit_idx] / lower_brightness_per_bit[bit_idx].clamp(min=1e-8)
+            bit_dynamic_ranges.append(fold_change.item())
+            bit_percentiles.append((lower_brightness_per_bit[bit_idx].item(), median_brightness_per_bit[bit_idx].item(), upper_brightness_per_bit[bit_idx].item()))
+            bit_medians.append(median_brightness_per_bit[bit_idx].item())
+        min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
+        max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
+        min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
+        max_lower, max_median, max_upper = bit_percentiles[max_range_idx]
+        current_stats['E_worst_bit' + suffix] = f"lower:{np.log10(max(min_lower, 1)):.2f}, median:{np.log10(max(min_median, 1)):.2f}, upper:{np.log10(max(min_upper, 1)):.2f}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
+        current_stats['E_best_bit' + suffix] = f"lower:{np.log10(max(max_lower, 1)):.2f}, median:{np.log10(max(max_median, 1)):.2f}, upper:{np.log10(max(max_upper, 1)):.2f}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
+        
+        # --- Brightness loss ---
+        if self.I['brightness_wt'] != 0:
+            target_brightness = 10**self.I['brightness']
+            median_brightness = median_brightness_per_bit.clamp(min=1)
+            fold = (median_brightness - target_brightness) / target_brightness
+            brightness_loss = self.I['brightness_wt'] * swish(-fold).mean()
+            raw_losses['brightness_loss'] = brightness_loss
+            current_stats['brightness_loss' + suffix] = round(brightness_loss.item(), 4)
+
+        # --- Dynamic range loss (lower and upper) ---
+        if self.I['dynamic_wt'] != 0:
+            # Lower dynamic range
+            lower_fold_change = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+            fold = (lower_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
+            lower_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
+            raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
+            current_stats['lower_dynamic_loss' + suffix] = round(lower_dynamic_loss.item(), 4)
+            # Upper dynamic range
+            upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
+            fold = (upper_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
+            upper_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
+            raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
+            current_stats['upper_dynamic_loss' + suffix] = round(upper_dynamic_loss.item(), 4)
+
+        # --- Cell type separation loss ---
+        if self.I['separation_wt'] != 0:
+            batch_categories = torch.unique(y)
+            if len(batch_categories) > 1:
+                P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
+                for i, type_idx in enumerate(batch_categories):
+                    v = P_clean_sum_norm[y == type_idx].mean(dim=0)
+                    v = v/v.sum().clamp(min=1e-8)
+                    P_data[i] = v
+                mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
+                P_i = P_data.unsqueeze(1)
+                P_j = P_data.unsqueeze(0)
+                ratio_ij = P_i / P_j.clamp(min=1e-8)
+                ratio_ji = P_j / P_i.clamp(min=1e-8)
+                fold_changes = torch.maximum(ratio_ij, ratio_ji)
+                fold_changes_masked = fold_changes[mask]
+                max_fold_changes = fold_changes_masked.max(dim=1)[0]
+                fold = (max_fold_changes - self.I['separation_fold']) / self.I['separation_fold']
+                separation_loss = self.I['separation_wt'] * swish(-fold).mean()
+                worst_fold_change = max_fold_changes.min().item()
+                p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
+                best_fold_change = max_fold_changes.max().item()
+                raw_losses['separation_loss'] = separation_loss
+                current_stats['separation_loss' + suffix] = round(separation_loss.item(), 4)
+                current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
+
+        # The model should accurately decode cell type labels
+        if self.I['categorical_wt'] != 0:
+            categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component#.clamp(min=0,max=15)
+            raw_losses['categorical_loss'] = categorical_loss_component
+            current_stats['categorical_loss' + suffix] = round(categorical_loss_component.item(), 4)
+
+        current_stats['accuracy' + suffix] = round(accuracy.item(), 4) # last for readability
+        
+        # Calculate weight changes
+        current_stats['E_change' + suffix] = 0.0
+        if self.prev_encoder_weights is not None:
+            current_weights = self.encoder.weight.data
+            prev_weights = self.prev_encoder_weights
+            non_zero_mask = (current_weights != 0) & (prev_weights != 0)
+            if non_zero_mask.any():
+                pct_changes = torch.abs((current_weights[non_zero_mask] - prev_weights[non_zero_mask]) / prev_weights[non_zero_mask])
+                current_stats['E_change' + suffix] = round(pct_changes.mean().item(), 4)
+        self.prev_encoder_weights = self.encoder.weight.data.clone().detach()
+            
+        module = self.decoder[0]
+        current_stats['D_change' + suffix] = 0.0
+        if (self.prev_decoder_weights is not None) and (isinstance(module, nn.Linear)):
+
+            current_weights = module.weight.data
+            prev_weights = self.prev_decoder_weights
+            non_zero_mask = (current_weights != 0) & (prev_weights != 0)
+            if non_zero_mask.any():
+                pct_changes = torch.abs((current_weights[non_zero_mask] - prev_weights[non_zero_mask]) / prev_weights[non_zero_mask])
+                current_stats['D_change' + suffix] = round(pct_changes.mean().item(), 4)
+        if isinstance(module, nn.Linear):
+            self.prev_decoder_weights = module.weight.data.clone().detach()
+        
+        #total_loss is a tensor
+        total_loss = sum(raw_losses.values()) # tensor not int
+        if isinstance(total_loss, int):
+            total_loss = torch.tensor(total_loss)
+            current_stats['total_loss' + suffix] = round(total_loss.item(), 4)
+        return total_loss, current_stats
+
+    def train_gene_importance_decoder(self):
+        """Train a simple linear decoder from genes to cell types to identify important genes."""
+        self.log.info("Training gene importance decoder...")
+        device = self.X_train.device
+        n_genes = self.X_train.shape[1]
+        n_categories = len(torch.unique(self.y_train))
+        # Create simple linear decoder: genes -> cell types
+        decoder = nn.Linear(n_genes, n_categories).to(device)
+        optimizer = torch.optim.Adam(decoder.parameters(), lr=0.01)
+        criterion = nn.CrossEntropyLoss()
+        # Track training metrics
+        losses = []
+        accuracies = []
+        # Training loop
+        for epoch in range(500):  # Hardcoded 100 epochs
+            decoder.train()
+            optimizer.zero_grad()
+            outputs = decoder(self.X_train)
+            loss = criterion(outputs, self.y_train)
+            loss.backward()
+            optimizer.step()
+            # Calculate accuracy
+            with torch.no_grad():
+                predictions = outputs.argmax(dim=1)
+                accuracy = (predictions == self.y_train).float().mean()
+                losses.append(loss.item())
+                accuracies.append(accuracy.item())
+            if (epoch + 1) % 50 == 0:
+                self.log.info(f"Gene importance decoder epoch {epoch+1}/1000, loss: {loss.item():.4f}, accuracy: {accuracy.item():.4f}")
+            if accuracy.item() > 0.99:
+                break
+        # Extract gene importance scores from the trained weights
+        with torch.no_grad():
+            gene_importance_scores = torch.abs(decoder.weight).sum(dim=0)  # Sum across output classes
+        self.log.info(f"Gene importance decoder training complete. Score range: [{gene_importance_scores.min().item():.4f}, {gene_importance_scores.max().item():.4f}]")
+        # Find top genes
+        top_n = min(self.I['top_n_genes'], 100)
+        self.log.info(f"Top {top_n} genes by importance score:")
+        # Filter genes based on importance scores
+        top_n_actual = self.I['top_n_genes']
+        top_gene_indices = torch.argsort(gene_importance_scores, descending=True)[:top_n_actual]
+        gene_mask = torch.zeros(n_genes, dtype=torch.bool, device=device)
+        gene_mask[top_gene_indices] = True
+        # Filter data matrices
+        self.X_train = self.X_train[:, gene_mask]
+        self.X_test = self.X_test[:, gene_mask]
+        self.constraints = self.constraints[gene_mask]
+        self.genes = self.genes[gene_mask.cpu().numpy()]
+        self.n_genes = top_n_actual
+        gene_importance_df = pd.DataFrame({
+            'gene_name': self.genes,
+            'importance_score': gene_importance_scores[gene_mask].cpu().numpy()
+        })
+        gene_importance_path = os.path.join(self.I['output'], 'gene_importance_scores.csv')
+        gene_mask_path = os.path.join(self.I['output'], 'gene_mask.pt')
+        gene_importance_df.to_csv(gene_importance_path, index=False)
+        torch.save(gene_mask.cpu(), gene_mask_path)
+        self.log.info(f"Gene importance scores saved to {gene_importance_path}")
+        self.log.info(f"Gene mask saved to {gene_mask_path}")
+        # Create training plots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        ax1.plot(losses)
+        ax1.set_title('Gene Importance Decoder Training Loss')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Loss')
+        ax1.grid(True)
+        ax2.plot(accuracies)
+        ax2.set_title('Gene Importance Decoder Training Accuracy')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Accuracy')
+        ax2.grid(True)
+        plt.tight_layout()
+        training_plots_path = os.path.join(self.I['output'], 'gene_importance_decoder_training.pdf')
+        plt.savefig(training_plots_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        self.log.info(f"Training plots saved to {training_plots_path}")
+        self.log.info(f"Gene filtering complete: {self.n_genes} genes retained")
+        return gene_importance_scores
+
+    def perturb_E(self):
+        with torch.no_grad():
+            mask = (torch.rand_like(self.encoder.weight.data) < self.I['E_perb_prct']).float()
+            random_wts = torch.rand_like(self.encoder.weight.data)
+            min_value = torch.tensor(self.I['E_perturb_min'], 
+                                    dtype=random_wts.dtype, device=random_wts.device)
+            max_value = torch.tensor(self.I['E_perturb_max'], 
+                                    dtype=random_wts.dtype, device=random_wts.device)
+            post_activation_wts = min_value + (max_value - min_value) * random_wts
+            if self.I['encoder_act'] == 'sigmoid':
+                new_wts = torch.logit(post_activation_wts)
+            elif self.I['encoder_act'] == 'tanh':
+                # modified tanh activation function (torch.tanh(x)+1)/2
+                new_wts = torch.arctanh(2 * post_activation_wts - 1)
+            elif self.I['encoder_act'] == 'linear':
+                new_wts = post_activation_wts
+            elif self.I['encoder_act'] == 'relu':
+                new_wts = torch.abs(post_activation_wts)
+            else:
+                raise ValueError(f"Invalid activation function: {self.I['encoder_act']}")
+            self.encoder.weight.data = self.encoder.weight.data * (1 - mask) + new_wts * mask
+            num_perturbed = mask.sum().item()
+            self.log.info(f"Perturbed {num_perturbed} weights out of {self.encoder.weight.data.numel()} total weights ({num_perturbed/self.encoder.weight.data.numel()*100:.2f}%)")
+
+    def fit(self):
+        if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
+            self.log.error("Model is not initialized. Call initialize() before fit().")
+            raise RuntimeError("Model is not initialized. Call initialize() before fit().")
+        # Initialize training state variables
+        self.learning_stats = {} 
+        self.saved_models = {}
+        self.saved_optimizer_states = {}
+        self.best_loss = float('inf')
+        self.best_model_state_dict = None
+        self.best_iteration = -1
+        delayed_perturbation_iter = None
+        start_time = time.time()
+        last_report_time = start_time
+        last_report_iteration = 0
+        try:
+            for iteration in range(self.I['n_iters']):
+                self._update_parameters_for_iteration(iteration, self.I['n_iters'])
+                self.learning_stats[str(iteration)] = {}
+                if iteration == 0:
+                    self._setup_optimizer()
+                for param_group in self.optimizer_gen.param_groups: 
+                    param_group['lr'] = self.I['lr']
+                is_report_iter = (iteration % self.I['report_rt'] == 0) or (iteration == self.I['n_iters'] - 1) 
+                self.train() 
+                X_batch, y_batch = self._get_training_batch(iteration, self.I['batch_size'], self.X_train.shape[0])
+                self.optimizer_gen.zero_grad() 
+                total_loss, batch_stats = self.calculate_loss(
+                    X_batch, y_batch, iteration, suffix='_train')
+                self.learning_stats[str(iteration)].update(batch_stats)
+                self.learning_stats[str(iteration)]['total_loss_train'] = total_loss.item()
+                total_loss.backward() 
+                nan_detected = self._check_gradient_health(iteration)
+                if not nan_detected:
+                    self._apply_gradient_clipping()
+                    self.optimizer_gen.step()
+                    delayed_perturbation_iter = self._handle_weight_perturbation(iteration, self.I['report_rt'], delayed_perturbation_iter)
+                    self._update_best_model(iteration, total_loss)
+                    self._save_model_checkpoint(iteration, is_report_iter)
+                else: 
+                    self._revert_to_previous_state(iteration)
+                if is_report_iter:
+                    last_report_time, last_report_iteration = self._evaluate_on_test_set(iteration, last_report_time, last_report_iteration)
+                if delayed_perturbation_iter == iteration:
+                    self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
+                    self.perturb_E()
+                    delayed_perturbation_iter = None
+                self._cleanup_old_checkpoints(iteration)
+        except Exception as e:
+            self.log.exception(f"Error during training loop at iteration {iteration}: {e}")
+        finally:
+            self._save_final_model(start_time)
+
+    def evaluate(self):
+        if self.encoder is None or self.decoder is None or \
+           self.X_train is None or self.X_test is None or self.y_train is None or \
+           self.y_test is None : 
+            self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
+            return
+        self.results = {}
+        # Use clean versions for evaluation stats to be consistent with loss calculations
+        E = self.get_E_clean()
+        E_cpu = E.cpu().detach()
+        self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
+        all_P_type = []
+        X_global_train = self.X_train 
+        y_global_train = self.y_train
+        if X_global_train.shape[0] > 0:
+            with torch.no_grad():
+                P_global = self.project_clean(X_global_train, E) 
+                P_global_cpu = P_global.cpu()
+                P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
+                unique_y_global = torch.unique(y_global_train)
+                for type_idx_tensor in unique_y_global:
+                    type_idx = type_idx_tensor.item()
+                    type_mask = (y_global_train == type_idx_tensor)
+                    if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
+                        P_type_global[type_idx] = P_global_cpu[type_mask].mean(dim=0)
+                all_P_type.append(P_type_global)
+        if all_P_type:
+            avg_P_type = torch.stack(all_P_type).mean(dim=0) 
+            # Calculate percentiles efficiently
+            p10, p50, p90 = torch.quantile(avg_P_type, torch.tensor([0.1, 0.5, 0.9]))
+            self.results['10th Percentile Signal'] = p10.item()
+            self.results['50th Percentile Signal'] = p50.item()
+            self.results['90th Percentile Signal'] = p90.item()
+            for bit in range(avg_P_type.shape[1]):
+                self.results[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
+                # Calculate percentiles for each bit efficiently
+                bit_p10, bit_p50, bit_p90 = torch.quantile(avg_P_type[:, bit], torch.tensor([0.1, 0.5, 0.9]))
+                self.results[f"10th Percentile Signal Bit {bit}"] = bit_p10.item()
+                self.results[f"50th Percentile Signal Bit {bit}"] = bit_p50.item()
+                self.results[f"90th Percentile Signal Bit {bit}"] = bit_p90.item()
+        else:
+            self.log.warning("Could not calculate average P_type for evaluation stats.")
+        self.log.info("--- Basic Evaluation Stats ---")
+        for key, val in self.results.items():
+            if isinstance(val, (float, int)): log_msg = f" {key}: {round(val, 4)}"
+            else: log_msg = f" {key}: {val}"
+            self.log.info(log_msg)
+        self.log.info("-----------------------------")
+        noise_levels = {
+            "No Noise": {
+                'P_add': 0,
+                'E_noise': 0,
+                'P_noise': 0,
+                'X_noise': 0,
+                'X_drp': 0,
+                'P_drp': 0,
+                'E_drp': 0.0
+            },
+            "Low Noise": {
+                'P_add': 2.0,
+                'E_noise': 0.05,
+                'P_noise': 0.05,
+                'X_drp': 0.05,
+                'X_noise': 0.05,
+                'P_drp': 0,
+                'E_drp': 0.05
+            },
+            "Medium Noise": {
+                'P_add': 2.5,
+                'E_noise': 0.25,
+                'P_noise': 0.1,
+                'X_drp': 0.1,
+                'X_noise': 0.1,
+                'P_drp': 0,
+                'E_drp': 0.1
+            },
+            "High Noise": {
+                'P_add': 3.0,
+                'E_noise': 0.5,
+                'P_noise': 0.2,
+                'X_noise': 0.2,
+                'X_drp': 0.2,
+                'P_drp': 0,
+                'E_drp': 0.2
+            }
+        }
+        self.eval()
+        for level_name, params in noise_levels.items():
+            self.log.info(f"Calculating {level_name} Accuracy (Global)")
+            try:
+                # Store original parameters and training state
+                original_params = {}
+                original_training_state = self.training
+                for param_name in params.keys():
+                    original_params[param_name] = self.I[param_name]
+                
+                # Update parameters for this noise level
+                for param_name, param_value in params.items():
+                    self.I[param_name] = param_value
+                
+                # Temporarily set to training mode so noise is applied
+                self.training = True
+                with torch.no_grad():
+                    E = self.get_E()
+                    P_test = self.project(self.X_test, E)
+                    y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
+                    avg_accuracy = accuracy_test.item()
+                    self.log.info(f"{level_name} Accuracy: {round(avg_accuracy, 4)}")
+                    self.results[f'{level_name} Accuracy'] = avg_accuracy
+                    # Save P_test averages for "No Noise" condition
+                    if level_name == "No Noise":
+                        self.log.info("Saving P_test averages for No Noise condition...")
+                        try:
+                            P_test_cpu = P_test.cpu()
+                            n_bits = P_test_cpu.shape[1]
+                            P_type_test = torch.zeros((self.n_categories, n_bits), device='cpu')
+                            unique_y_test = torch.unique(self.y_test)
+                            valid_type_indices = []
+                            valid_type_labels = []
+                            for type_idx_tensor in unique_y_test:
+                                type_idx = type_idx_tensor.item()
+                                type_mask = (self.y_test == type_idx_tensor)
+                                if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
+                                    P_type_test[type_idx] = P_test_cpu[type_mask].mean(dim=0)
+                                    valid_type_indices.append(type_idx)
+                                    valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
+                            if valid_type_indices:
+                                # Create DataFrame with cell types as index and bits as columns
+                                # Apply log10 transformation and round to 3 decimal places
+                                P_type_log10 = torch.log10(P_type_test[valid_type_indices].clamp(min=1e-10))
+                                P_type_rounded = torch.round(P_type_log10 * 1000) / 1000  # Round to 3 decimal places
+                                P_type_df = pd.DataFrame(
+                                    P_type_rounded.numpy(),
+                                    index=pd.Index(valid_type_labels),
+                                    columns=pd.Index([f"Bit_{b}" for b in range(n_bits)])
+                                )
+                                p_type_path = os.path.join(self.I['output'], 'P_Type.csv')
+                                P_type_df.to_csv(p_type_path)
+                                self.log.info(f"P_test averages for No Noise condition saved to {p_type_path}")
+                                self.log.info(f"Saved data for {len(valid_type_indices)} cell types across {n_bits} bits")
+                            else:
+                                self.log.warning("No valid cell types found for P_test averages")
+                        except Exception as e:
+                            self.log.error(f"Error saving P_test averages for No Noise condition: {e}")
+                
+                # Restore original parameters and training state
+                for param_name, original_value in original_params.items():
+                    self.I[param_name] = original_value
+                self.training = original_training_state
+            except Exception as e:
+                self.log.error(f"Error during {level_name} accuracy calculation: {e}")
+                self.results[f'{level_name} Accuracy'] = np.nan
+                # Ensure training state is restored even if there's an error
+                self.training = original_training_state
+        # Set back to eval mode after all noise evaluations
+        self.eval()
+        results_df = pd.DataFrame({
+            'values': list(self.results.values())
+        }, index=pd.Index(list(self.results.keys())))
+        results_path = os.path.join(self.I['output'], 'Results.csv') 
+        results_df.to_csv(results_path)
+        self.log.info(f"Evaluation results saved to {results_path}")
+
+    def visualize(self, show_plots=False): 
+        import seaborn as sns
+        self.log.info("Starting visualization generation...")
+        if self.encoder is None or self.decoder is None or \
+           self.X_train is None or self.y_train is None or \
+           self.y_reverse_label_map is None : 
+            self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
+            return
+        saved_plot_paths = []
+        # Use clean versions for visualization to be consistent with loss calculations
+        E = self.get_E_clean()
+        E = E.to(self.I['device'])
+        self.eval()
+        # Visualizations are now global
+        global_name_str = "Global"
+        global_fname_safe = sanitize_filename(global_name_str)
+        self.log.info(f"Generating visualization for {global_name_str}...")
+        X_data_vis = self.X_train # Use full training data
+        y_data_vis = self.y_train # Mapped internal labels
+        y_vis_str_labels = np.array([self.y_reverse_label_map.get(int
+                    (idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
+        if X_data_vis.shape[0] == 0:
+            self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
+            return
+        with torch.no_grad():
+            self.log.info(f"Generating confusion matrix for test data (Global)...")
+            X_test_global = self.X_test
+            y_test_global = self.y_test # True internal labels
+            fig_cm = None 
+            try:
+                with torch.no_grad():
+                    P_test_tensor = self.project_clean(X_test_global, E)
+                    y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
+                y_true_np = y_test_global.cpu().numpy()
+                y_pred_np = y_pred_test.cpu().numpy()
+                present_labels_idx = np.unique(np.concatenate((y_true_np, y_pred_np)))
+                present_labels_str = [self.y_reverse_label_map.get(i, f"Type_{i}") for i in present_labels_idx]
+                if len(present_labels_idx) > 0: 
+                    cm = confusion_matrix(y_true_np, y_pred_np, labels=present_labels_idx) 
+                    cm_sum = cm.sum(axis=1, keepdims=True)
+                    cm_norm = np.divide(cm, cm_sum, out=np.zeros_like(cm, dtype=float), where=cm_sum!=0) 
+                    cm_df = pd.DataFrame(cm_norm, index=pd.Index(present_labels_str), columns=pd.Index(present_labels_str))
+                    fig_width = min(max(10, len(present_labels_str) / 1.5), 25)
+                    fig_height = min(max(8, len(present_labels_str) / 2), 25)
+                    fig_cm = plt.figure(figsize=(fig_width, fig_height))
+                    ax_cm = fig_cm.add_subplot(111)
+                    sns.heatmap(cm_df, annot=False, cmap='jet', linewidths=0.1, ax=ax_cm, vmin=0, vmax=1) 
+                    ax_cm.set_xlabel('Predicted')
+                    ax_cm.set_ylabel('True')
+                    plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
+                    plt.setp(ax_cm.get_yticklabels(), rotation=0)
+                    fig_cm.tight_layout()
+                    plot_filename = f"confusion_matrix_test_{global_fname_safe}.pdf"
+                    plot_path = os.path.join(self.I['output'], plot_filename)
+                    fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
+                    saved_plot_paths.append(plot_path)
+                    self.log.info(f"Saved Test Confusion Matrix for {global_name_str} to {plot_path}")
+                else:
+                    self.log.warning(f"Skipping confusion matrix for {global_name_str}: No labels found in true or predicted test data.")
+            except Exception as e:
+                self.log.error(f"Error generating Test Confusion Matrix for {global_name_str}: {e}")
+            finally:
+                if fig_cm is not None:
+                    plt.close(fig_cm)
+        
+        # Generate learning curves
+        learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
+        unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
+        unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
+        numeric_parameters = np.array([i for i in unique_parameters if not isinstance(learning_curve[i+'_train'].iloc[1],str)])
+        
+        for parameter in numeric_parameters:
+            try:
+                plot_single_learning_curve(parameter, learning_curve, self.I['output'], self.log)
+            except Exception as e:
+                self.log.error(f"Error plotting learning curve for {parameter}: {e}")
+        
+        E = self.get_E_clean()
+        E = E.to(self.I['device'])
+        self.eval()
+        # --- Visualization: Constraints vs Probes per Gene ---
+        try:
+            probes_per_gene = E.sum(dim=1).detach().cpu().numpy()
+            constraints = self.constraints.detach().cpu().numpy()
+            plt.figure(figsize=(6, 4))
+            plt.scatter(constraints, probes_per_gene, s=2, alpha=0.5)
+            # Add y=x line
+            min_val = min(constraints.min(), probes_per_gene.min())
+            max_val = max(constraints.max(), probes_per_gene.max())
+            plt.plot([min_val, max_val], [min_val, max_val], linestyle='--', color='gray', linewidth=1, label='y=x')
+            plt.xlabel('Constraint (max probes per gene)')
+            plt.ylabel('Probes per gene (E_clean)')
+            plt.title('Constraints vs Probes per Gene')
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(os.path.join(self.I['output'], 'constraints_vs_probes_per_gene.pdf'), dpi=200)
+            plt.close()
+        except Exception as e:
+            self.log.error(f"Failed to plot constraints vs probes per gene: {e}")
+
+        # --- Visualization: Clustermap of E_clean (genes clustered, no labels/dendrogram) ---
+        try:
+            import seaborn as sns
+            # Convert E_clean to DataFrame for easier manipulation
+            E_clean_np = E.detach().cpu().numpy()
+            used_WeightMat = pd.DataFrame(E_clean_np)
+
+            # Find the highest bit (column) for each gene (row)
+            highest_bit = used_WeightMat.columns[np.argmax(used_WeightMat.values, axis=1)]
+            gene_order = []
+            for i in sorted(np.unique(highest_bit)):
+                idx = used_WeightMat.index[np.where(highest_bit == i)[0]]
+                vals = used_WeightMat.loc[idx, i]
+                gene_order.extend(list(pd.DataFrame(vals).sort_values(by=i).index))
+
+            # Reorder the DataFrame based on the sorted genes
+            reordered_df = used_WeightMat.loc[gene_order].copy()
+            reordered_df.columns = [int(i)+1 for i in reordered_df.columns]
+
+            # Plot the clustermap (no clustering, just your order)
+            plt.figure(figsize=(10, 10))
+            sns.clustermap(
+                np.log10(reordered_df + 1),
+                cmap='Reds',
+                col_cluster=False,
+                row_cluster=False,
+                figsize=(10, 10),
+                yticklabels=[]
+            )
+            plt.savefig(os.path.join(self.I['output'], 'E.pdf'), dpi=200, bbox_inches='tight')
+            plt.close()
+        except Exception as e:
+            self.log.error(f"Failed to plot E_clean clustermap: {e}")
+
+        with torch.no_grad():
+            P = self.project_clean(X_data_vis, E)
+            for normalization_strategy in ['Raw', 'Sum Norm', 'Bit Center', 'Bit Z-score', 'Sum and Bit Center', 'Sum and Bit Z-score']:
+                P_norm = P.clone()
+                if 'Sum' in normalization_strategy:
+                    P_norm = sum_normalize_p_type(P_norm)
+                if 'Bit Center' in normalization_strategy:
+                    P_norm = bitwise_center_p_type(P_norm)
+                if 'Bit Z-score' in normalization_strategy:
+                    P_norm = bitwise_normalize_p_type(P_norm)
+                n_bits = P.shape[1]
+                P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
+                unique_y_indices_global = torch.unique(y_data_vis)
+                valid_type_indices = []
+                valid_type_labels = []
+                for type_idx_tensor in unique_y_indices_global:
+                    type_idx = type_idx_tensor.item() 
+                    mask = (y_data_vis == type_idx_tensor)
+                    if mask.sum() > 0:
+                        if 0 <= type_idx < self.n_categories:
+                            P_type_global[type_idx] = P_norm[mask].mean(dim=0) 
+                            valid_type_indices.append(type_idx)
+                            valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
+                        else:
+                            self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
+                if not valid_type_indices:
+                    self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
+                    return
+                P_type_global_present = P_type_global[valid_type_indices].cpu() 
+                n_types_present = P_type_global_present.shape[0]
+                if n_types_present > 0:
+                    plot_P_Type(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_{normalization_strategy}.pdf"), self.log)
+                    plot_P_Type_correlation(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_correlation_{normalization_strategy}.pdf"), self.log)
+                    plot_projection_space_density(P_norm.cpu().numpy(), y_vis_str_labels, os.path.join(self.I['output'], f"projection_density_{normalization_strategy}.pdf"), sum_norm=False, log=self.log, use_log10_scale=False)
+            
+
+        self.log.info("Visualization generation finished.")
 
     def _setup_logging(self, user_parameters_path):
         if user_parameters_path is not None:
@@ -444,372 +1201,6 @@ class EncodingDesigner(nn.Module):
             self.is_initialized_from_file = False
             self.E = None
 
-    def train_gene_importance_decoder(self):
-        """Train a simple linear decoder from genes to cell types to identify important genes."""
-        self.log.info("Training gene importance decoder...")
-        device = self.X_train.device
-        n_genes = self.X_train.shape[1]
-        n_categories = len(torch.unique(self.y_train))
-        # Create simple linear decoder: genes -> cell types
-        decoder = nn.Linear(n_genes, n_categories).to(device)
-        optimizer = torch.optim.Adam(decoder.parameters(), lr=0.01)
-        criterion = nn.CrossEntropyLoss()
-        # Track training metrics
-        losses = []
-        accuracies = []
-        # Training loop
-        for epoch in range(500):  # Hardcoded 100 epochs
-            decoder.train()
-            optimizer.zero_grad()
-            outputs = decoder(self.X_train)
-            loss = criterion(outputs, self.y_train)
-            loss.backward()
-            optimizer.step()
-            # Calculate accuracy
-            with torch.no_grad():
-                predictions = outputs.argmax(dim=1)
-                accuracy = (predictions == self.y_train).float().mean()
-                losses.append(loss.item())
-                accuracies.append(accuracy.item())
-            if (epoch + 1) % 50 == 0:
-                self.log.info(f"Gene importance decoder epoch {epoch+1}/1000, loss: {loss.item():.4f}, accuracy: {accuracy.item():.4f}")
-            if accuracy.item() > 0.99:
-                break
-        # Extract gene importance scores from the trained weights
-        with torch.no_grad():
-            gene_importance_scores = torch.abs(decoder.weight).sum(dim=0)  # Sum across output classes
-        self.log.info(f"Gene importance decoder training complete. Score range: [{gene_importance_scores.min().item():.4f}, {gene_importance_scores.max().item():.4f}]")
-        # Find top genes
-        top_n = min(self.I['top_n_genes'], 100)
-        self.log.info(f"Top {top_n} genes by importance score:")
-        # Filter genes based on importance scores
-        top_n_actual = self.I['top_n_genes']
-        top_gene_indices = torch.argsort(gene_importance_scores, descending=True)[:top_n_actual]
-        gene_mask = torch.zeros(n_genes, dtype=torch.bool, device=device)
-        gene_mask[top_gene_indices] = True
-        # Filter data matrices
-        self.X_train = self.X_train[:, gene_mask]
-        self.X_test = self.X_test[:, gene_mask]
-        self.constraints = self.constraints[gene_mask]
-        self.genes = self.genes[gene_mask.cpu().numpy()]
-        self.n_genes = top_n_actual
-        gene_importance_df = pd.DataFrame({
-            'gene_name': self.genes,
-            'importance_score': gene_importance_scores[gene_mask].cpu().numpy()
-        })
-        gene_importance_path = os.path.join(self.I['output'], 'gene_importance_scores.csv')
-        gene_mask_path = os.path.join(self.I['output'], 'gene_mask.pt')
-        gene_importance_df.to_csv(gene_importance_path, index=False)
-        torch.save(gene_mask.cpu(), gene_mask_path)
-        self.log.info(f"Gene importance scores saved to {gene_importance_path}")
-        self.log.info(f"Gene mask saved to {gene_mask_path}")
-        # Create training plots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        ax1.plot(losses)
-        ax1.set_title('Gene Importance Decoder Training Loss')
-        ax1.set_xlabel('Epoch')
-        ax1.set_ylabel('Loss')
-        ax1.grid(True)
-        ax2.plot(accuracies)
-        ax2.set_title('Gene Importance Decoder Training Accuracy')
-        ax2.set_xlabel('Epoch')
-        ax2.set_ylabel('Accuracy')
-        ax2.grid(True)
-        plt.tight_layout()
-        training_plots_path = os.path.join(self.I['output'], 'gene_importance_decoder_training.pdf')
-        plt.savefig(training_plots_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        self.log.info(f"Training plots saved to {training_plots_path}")
-        self.log.info(f"Gene filtering complete: {self.n_genes} genes retained")
-        return gene_importance_scores
-
-    def initialize(self):
-        self.log.info("--- Starting Initialization ---")
-        try:
-            self.log.info("Loading Gene Constraints")
-            self._load_constraints()
-            self._load_data()
-            if self.I['top_n_genes'] > 0 and self.I['top_n_genes'] < self.n_genes:
-                self.train_gene_importance_decoder()
-            self._initialize_encoder()
-            self._initialize_decoder()
-            self._load_pretrained_model()
-            self.log.info("--- Initialization Complete ---")
-            return True
-
-        except FileNotFoundError as e:
-            self.log.error(f"Initialization failed: Input file not found. {e}")
-            return False
-        except KeyError as e:
-            self.log.error(f"Initialization failed: Missing expected column or key. {e}")
-            return False
-        except ValueError as e:
-            self.log.error(f"Initialization failed: Data validation error. {e}")
-            return False
-        except Exception as e:
-            self.log.exception(f"An unexpected error occurred during initialization: {e}")
-            return False
-
-    def perturb_E(self):
-        with torch.no_grad():
-            mask = (torch.rand_like(self.encoder.weight.data) < self.I['E_perb_prct']).float()
-            random_wts = torch.rand_like(self.encoder.weight.data)
-            min_value = torch.tensor(self.I['E_perturb_min'], 
-                                    dtype=random_wts.dtype, device=random_wts.device)
-            max_value = torch.tensor(self.I['E_perturb_max'], 
-                                    dtype=random_wts.dtype, device=random_wts.device)
-            post_activation_wts = min_value + (max_value - min_value) * random_wts
-            if self.I['encoder_act'] == 'sigmoid':
-                new_wts = torch.logit(post_activation_wts)
-            elif self.I['encoder_act'] == 'tanh':
-                # modified tanh activation function (torch.tanh(x)+1)/2
-                new_wts = torch.arctanh(2 * post_activation_wts - 1)
-            elif self.I['encoder_act'] == 'linear':
-                new_wts = post_activation_wts
-            elif self.I['encoder_act'] == 'relu':
-                new_wts = torch.abs(post_activation_wts)
-            else:
-                raise ValueError(f"Invalid activation function: {self.I['encoder_act']}")
-            self.encoder.weight.data = self.encoder.weight.data * (1 - mask) + new_wts * mask
-            num_perturbed = mask.sum().item()
-            self.log.info(f"Perturbed {num_perturbed} weights out of {self.encoder.weight.data.numel()} total weights ({num_perturbed/self.encoder.weight.data.numel()*100:.2f}%)")
-
-    def get_E_clean(self):
-        """Get encoding weights without noise/dropout for loss calculations."""
-        if self.I['encoder_act'] == 'sigmoid':
-            E = torch.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
-        elif self.I['encoder_act'] == 'tanh':
-            # modified tanh activation function (torch.tanh(x)+1)/2
-            E = ((torch.tanh(self.encoder.weight)+1)/2) * self.constraints.unsqueeze(1)
-        elif self.I['encoder_act'] == 'linear':
-            E = self.encoder.weight * self.constraints.unsqueeze(1)
-        elif self.I['encoder_act'] == 'relu':
-            E = torch.relu(self.encoder.weight) * self.constraints.unsqueeze(1)
-        else:
-            raise ValueError(f"Invalid activation function: {self.I['encoder_act']}")
-        return E
-
-    def get_E(self):
-        """Get encoding weights with noise/dropout for training."""
-        E = self.get_E_clean()
-        if self.training and self.I['E_drp'] > 0:
-            E = E * (torch.rand_like(E) > self.I['E_drp']).float()
-        if self.training and self.I['E_noise'] > 0:
-            # Set a lower bound to the percent of probes that can bind
-            maximum_percent_decrease = self.I['E_noise']
-            min_val = 1-maximum_percent_decrease
-            E = E * (((1 - min_val) * torch.rand_like(E)) + min_val)
-        return E
-
-    def project_clean(self, X, E):
-        """Project data without noise/dropout for loss calculations."""
-        P = X.mm(E)
-        return P
-
-    def project(self, X, E):
-        """Project data with noise/dropout for training."""
-        if self.training and self.I['X_noise'] != 0:
-            fold = 1 / (1 - self.I['X_noise'])
-            X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
-        if self.training and self.I['X_drp'] != 0:
-            X = X * (torch.rand_like(X) > self.I['X_drp']).float()
-        P = X.mm(E)
-        if self.training and self.I['P_noise'] > 0:
-            # modify P by a percent change to account for measurement accuracy
-            max_accuracy = self.I['P_noise']
-            P = P + (P * ((2*torch.rand_like(P)-1)*max_accuracy))
-        if self.training and self.I['P_add'] != 0:
-            P = P + (torch.rand_like(P) * (10 ** self.I['P_add']))
-        if self.training and self.I['P_drp'] > 0:
-            P = P * (torch.rand_like(P) > self.I['P_drp']).float()
-        return P
-
-    def decode(self, P, y):
-        if self.I['sum_norm'] != 0:
-            P = self.I['P_scaling'] * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
-            # P = (P - P.mean(1).unsqueeze(1)) / P.std(1).unsqueeze(1).clamp(min=1e-8)
-        if self.I['bit_norm'] != 0:
-            P = (P - P.mean(0)) / P.std(0).clamp(min=1e-8)
-        R = self.decoder(P) 
-        y_predict = R.max(1)[1]
-        accuracy = (y_predict == y).float().mean()
-        if self.I['categorical_wt'] != 0:
-            loss_fn = nn.CrossEntropyLoss(label_smoothing=self.I['label_smoothing']) 
-            categorical_loss = loss_fn(R, y)
-        else:
-            categorical_loss = torch.tensor(0, device=R.device, requires_grad=True)
-        return y_predict, accuracy, categorical_loss
-
-    def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
-        # Get clean versions for loss calculations
-        E_clean = self.get_E_clean()
-        P_clean = self.project_clean(X, E_clean)
-        # Get noisy versions for decoder training
-        E_noisy = self.get_E()
-        P_noisy = self.project(X, E_noisy)
-        # Use noisy projections for decoder training
-        y_predict, accuracy, raw_categorical_loss_component = self.decode(P_noisy, y)
-        raw_losses = {}
-        current_stats = {}
-
-        # --- Probe count loss ---
-        if self.I['probe_wt']!=0:
-            fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
-            probe_wt_loss = swish(fold)
-            raw_losses['probe_wt_loss'] = probe_wt_loss
-            current_stats['probe_wt_loss' + suffix] = probe_wt_loss.item()
-            current_stats['E_n_probes' + suffix] = E_clean.sum().item()
-
-        # --- Gene constraint loss ---
-        if self.I['gene_constraint_wt'] != 0:
-            if self.constraints is None: raise RuntimeError("Constraints not initialized")
-            total_probes_per_gene = E_clean.sum(1)
-            non_zero_constraints = self.constraints>0
-            total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
-            constraints = self.constraints[non_zero_constraints].clamp(min=1)
-            difference = total_probes_per_gene-constraints
-            violations = difference>0
-            if violations.sum() > 0:
-                average_violation = difference[violations].mean()
-                gene_constraint_loss = self.I['gene_constraint_wt'] * average_violation
-            
-                raw_losses['gene_constraint_loss'] = gene_constraint_loss
-                current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
-            current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
-            current_stats['E_median_wt' + suffix] = E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0
-            current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
-            current_stats['avg_over_constraint' + suffix] = difference[violations].mean().item() if violations.any() else 0
-            current_stats['max_over_constraint' + suffix] = difference.max().item() if difference.numel() > 0 else 0
-            current_stats['total_violation_probes' + suffix] = difference[violations].sum().item()
-
-        # --- Sparsity loss ---
-        if self.I['sparsity_wt'] != 0:
-            sparsity_threshold = 1
-            sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
-            fold = (sparsity_ratio - self.I['sparsity']) / self.I['sparsity']
-            sparsity_loss = self.I['sparsity_wt'] * swish(-fold)
-            raw_losses['sparsity_loss'] = sparsity_loss
-            current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
-            current_stats['sparsity' + suffix] = sparsity_ratio.item()
-
-        # The model should have a robust brightness and dynamic range
-        # use sum normalized for this 
-        median_val = P_clean.sum(1).clamp(min=1e-8).median()
-        P_clean_sum_norm = median_val * P_clean / P_clean.sum(1).unsqueeze(1).clamp(min=1e-8)
-        median_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-        lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-        upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-        bit_dynamic_ranges = []
-        bit_percentiles = []
-        bit_medians = []
-        for bit_idx in range(P_clean.shape[1]):
-            bit_values = P_clean_sum_norm[:, bit_idx]
-            p5, p10, p25, p40, p50, p60, p75, p90, p95 = torch.quantile(bit_values, torch.tensor([0.05, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 0.95]))
-            mask_median = (bit_values >= p40) & (bit_values <= p60)
-            median_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
-            mask_lower = (bit_values >= p5) & (bit_values <= p25)
-            lower_brightness_per_bit[bit_idx] = bit_values[mask_lower].mean()
-            mask_upper = (bit_values >= p75) & (bit_values <= p95)
-            upper_brightness_per_bit[bit_idx] = bit_values[mask_upper].mean()
-            fold_change = upper_brightness_per_bit[bit_idx] / lower_brightness_per_bit[bit_idx].clamp(min=1e-8)
-            bit_dynamic_ranges.append(fold_change.item())
-            bit_percentiles.append((lower_brightness_per_bit[bit_idx].item(), median_brightness_per_bit[bit_idx].item(), upper_brightness_per_bit[bit_idx].item()))
-            bit_medians.append(median_brightness_per_bit[bit_idx].item())
-        min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
-        max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
-        min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
-        max_lower, max_median, max_upper = bit_percentiles[max_range_idx]
-        current_stats['E_worst_bit' + suffix] = f"lower:{np.log10(max(min_lower, 1)):.2f}, median:{np.log10(max(min_median, 1)):.2f}, upper:{np.log10(max(min_upper, 1)):.2f}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
-        current_stats['E_best_bit' + suffix] = f"lower:{np.log10(max(max_lower, 1)):.2f}, median:{np.log10(max(max_median, 1)):.2f}, upper:{np.log10(max(max_upper, 1)):.2f}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
-        
-        # --- Brightness loss ---
-        if self.I['brightness_wt'] != 0:
-            target_brightness = 10**self.I['brightness']
-            median_brightness = median_brightness_per_bit.clamp(min=1)
-            fold = (median_brightness - target_brightness) / target_brightness
-            brightness_loss = self.I['brightness_wt'] * swish(-fold).mean()
-            raw_losses['brightness_loss'] = brightness_loss
-            current_stats['brightness_loss' + suffix] = brightness_loss.item()
-
-        # --- Dynamic range loss (lower and upper) ---
-        if self.I['dynamic_wt'] != 0:
-            # Lower dynamic range
-            lower_fold_change = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            fold = (lower_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
-            lower_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
-            raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
-            current_stats['lower_dynamic_loss' + suffix] = lower_dynamic_loss.item()
-            # Upper dynamic range
-            upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
-            fold = (upper_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
-            upper_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
-            raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
-            current_stats['upper_dynamic_loss' + suffix] = upper_dynamic_loss.item()
-
-        # --- Cell type separation loss ---
-        if self.I['separation_wt'] != 0:
-            batch_categories = torch.unique(y)
-            if len(batch_categories) > 1:
-                P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
-                for i, type_idx in enumerate(batch_categories):
-                    v = P_clean_sum_norm[y == type_idx].mean(dim=0)
-                    v = v/v.sum().clamp(min=1e-8)
-                    P_data[i] = v
-                mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
-                P_i = P_data.unsqueeze(1)
-                P_j = P_data.unsqueeze(0)
-                ratio_ij = P_i / P_j.clamp(min=1e-8)
-                ratio_ji = P_j / P_i.clamp(min=1e-8)
-                fold_changes = torch.maximum(ratio_ij, ratio_ji)
-                fold_changes_masked = fold_changes[mask]
-                max_fold_changes = fold_changes_masked.max(dim=1)[0]
-                fold = (max_fold_changes - self.I['separation_fold']) / self.I['separation_fold']
-                separation_loss = self.I['separation_wt'] * swish(-fold).mean()
-                worst_fold_change = max_fold_changes.min().item()
-                p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
-                best_fold_change = max_fold_changes.max().item()
-                raw_losses['separation_loss'] = separation_loss
-                current_stats['separation_loss' + suffix] = separation_loss.item()
-                current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
-
-        # The model should accurately decode cell type labels
-        if self.I['categorical_wt'] != 0:
-            categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component.clamp(min=0,max=15)
-            raw_losses['categorical_loss'] = categorical_loss_component
-            current_stats['categorical_loss' + suffix] = categorical_loss_component.item()
-
-        current_stats['accuracy' + suffix] = accuracy.item() # last for readability
-        
-        # Calculate weight changes
-        current_stats['E_change' + suffix] = 0.0
-        if self.prev_encoder_weights is not None:
-            current_weights = self.encoder.weight.data
-            prev_weights = self.prev_encoder_weights
-            non_zero_mask = (current_weights != 0) & (prev_weights != 0)
-            if non_zero_mask.any():
-                pct_changes = torch.abs((current_weights[non_zero_mask] - prev_weights[non_zero_mask]) / prev_weights[non_zero_mask])
-                current_stats['E_change' + suffix] = pct_changes.mean()
-        self.prev_encoder_weights = self.encoder.weight.data.clone().detach()
-            
-        module = self.decoder[0]
-        current_stats['D_change' + suffix] = 0.0
-        if (self.prev_decoder_weights is not None) and (isinstance(module, nn.Linear)):
-
-            current_weights = module.weight.data
-            prev_weights = self.prev_decoder_weights
-            non_zero_mask = (current_weights != 0) & (prev_weights != 0)
-            if non_zero_mask.any():
-                pct_changes = torch.abs((current_weights[non_zero_mask] - prev_weights[non_zero_mask]) / prev_weights[non_zero_mask])
-                current_stats['D_change' + suffix] = pct_changes.mean()
-        if isinstance(module, nn.Linear):
-            self.prev_decoder_weights = module.weight.data.clone().detach()
-        
-        #total_loss is a tensor
-        total_loss = sum(raw_losses.values()) # tensor not int
-        if isinstance(total_loss, int):
-            total_loss = torch.tensor(total_loss)
-        return total_loss, current_stats
-
     def _update_parameters_for_iteration(self, iteration, n_iterations):
         """Update parameters based on training progress."""
         progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
@@ -827,7 +1218,7 @@ class EncodingDesigner(nn.Module):
         optimizer_gen = torch.optim.Adam([
             {'params': self.encoder.parameters(), 'lr': self.I['lr']},
             {'params': self.decoder.parameters(), 'lr': self.I['lr']}
-        ])
+        ], betas=(self.I.get('adam_beta1', 0.9), 0.999))
         self.optimizer_gen = optimizer_gen
 
     def _get_training_batch(self, iteration, batch_size, n_train_samples):
@@ -1036,406 +1427,8 @@ class EncodingDesigner(nn.Module):
         except Exception as e:
             self.log.error(f"Failed to save learning curve: {e}")
 
-    def fit(self):
-        if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
-            self.log.error("Model is not initialized. Call initialize() before fit().")
-            raise RuntimeError("Model is not initialized. Call initialize() before fit().")
-        # Initialize training state variables
-        self.learning_stats = {} 
-        self.saved_models = {}
-        self.saved_optimizer_states = {}
-        self.best_loss = float('inf')
-        self.best_model_state_dict = None
-        self.best_iteration = -1
-        delayed_perturbation_iter = None
-        start_time = time.time()
-        last_report_time = start_time
-        last_report_iteration = 0
-        try:
-            for iteration in range(self.I['n_iters']):
-                self._update_parameters_for_iteration(iteration, self.I['n_iters'])
-                self.learning_stats[str(iteration)] = {}
-                if iteration == 0:
-                    self._setup_optimizer()
-                for param_group in self.optimizer_gen.param_groups: 
-                    param_group['lr'] = self.I['lr']
-                is_report_iter = (iteration % self.I['report_rt'] == 0) or (iteration == self.I['n_iters'] - 1) 
-                self.train() 
-                X_batch, y_batch = self._get_training_batch(iteration, self.I['batch_size'], self.X_train.shape[0])
-                self.optimizer_gen.zero_grad() 
-                total_loss, batch_stats = self.calculate_loss(
-                    X_batch, y_batch, iteration, suffix='_train')
-                self.learning_stats[str(iteration)].update(batch_stats)
-                self.learning_stats[str(iteration)]['total_loss_train'] = total_loss.item()
-                total_loss.backward() 
-                nan_detected = self._check_gradient_health(iteration)
-                if not nan_detected:
-                    self._apply_gradient_clipping()
-                    self.optimizer_gen.step()
-                    delayed_perturbation_iter = self._handle_weight_perturbation(iteration, self.I['report_rt'], delayed_perturbation_iter)
-                    self._update_best_model(iteration, total_loss)
-                    self._save_model_checkpoint(iteration, is_report_iter)
-                else: 
-                    self._revert_to_previous_state(iteration)
-                if is_report_iter:
-                    last_report_time, last_report_iteration = self._evaluate_on_test_set(iteration, last_report_time, last_report_iteration)
-                if delayed_perturbation_iter == iteration:
-                    self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
-                    self.perturb_E()
-                    delayed_perturbation_iter = None
-                self._cleanup_old_checkpoints(iteration)
-        except Exception as e:
-            self.log.exception(f"Error during training loop at iteration {iteration}: {e}")
-        finally:
-            self._save_final_model(start_time)
-
-    def evaluate(self):
-        if self.encoder is None or self.decoder is None or \
-           self.X_train is None or self.X_test is None or self.y_train is None or \
-           self.y_test is None : 
-            self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
-            return
-        self.results = {}
-        # Use clean versions for evaluation stats to be consistent with loss calculations
-        E = self.get_E_clean()
-        E_cpu = E.cpu().detach()
-        self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
-        all_P_type = []
-        X_global_train = self.X_train 
-        y_global_train = self.y_train
-        if X_global_train.shape[0] > 0:
-            with torch.no_grad():
-                P_global = self.project_clean(X_global_train, E) 
-                P_global_cpu = P_global.cpu()
-                P_type_global = torch.zeros((self.n_categories, P_global_cpu.shape[1]), device='cpu')
-                unique_y_global = torch.unique(y_global_train)
-                for type_idx_tensor in unique_y_global:
-                    type_idx = type_idx_tensor.item()
-                    type_mask = (y_global_train == type_idx_tensor)
-                    if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
-                        P_type_global[type_idx] = P_global_cpu[type_mask].mean(dim=0)
-                all_P_type.append(P_type_global)
-        if all_P_type:
-            avg_P_type = torch.stack(all_P_type).mean(dim=0) 
-            # Calculate percentiles efficiently
-            p10, p50, p90 = torch.quantile(avg_P_type, torch.tensor([0.1, 0.5, 0.9]))
-            self.results['10th Percentile Signal'] = p10.item()
-            self.results['50th Percentile Signal'] = p50.item()
-            self.results['90th Percentile Signal'] = p90.item()
-            for bit in range(avg_P_type.shape[1]):
-                self.results[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
-                # Calculate percentiles for each bit efficiently
-                bit_p10, bit_p50, bit_p90 = torch.quantile(avg_P_type[:, bit], torch.tensor([0.1, 0.5, 0.9]))
-                self.results[f"10th Percentile Signal Bit {bit}"] = bit_p10.item()
-                self.results[f"50th Percentile Signal Bit {bit}"] = bit_p50.item()
-                self.results[f"90th Percentile Signal Bit {bit}"] = bit_p90.item()
-        else:
-            self.log.warning("Could not calculate average P_type for evaluation stats.")
-        self.log.info("--- Basic Evaluation Stats ---")
-        for key, val in self.results.items():
-            if isinstance(val, (float, int)): log_msg = f" {key}: {round(val, 4)}"
-            else: log_msg = f" {key}: {val}"
-            self.log.info(log_msg)
-        self.log.info("-----------------------------")
-        noise_levels = {
-            "No Noise": {
-                'P_add': 0,
-                'E_noise': 0,
-                'P_noise': 0,
-                'X_noise': 0,
-                'X_drp': 0,
-                'P_drp': 0,
-                'E_drp': 0.0
-            },
-            "Low Noise": {
-                'P_add': 2.0,
-                'E_noise': 0.05,
-                'P_noise': 0.05,
-                'X_drp': 0.05,
-                'X_noise': 0.05,
-                'P_drp': 0,
-                'E_drp': 0.05
-            },
-            "Medium Noise": {
-                'P_add': 2.5,
-                'E_noise': 0.25,
-                'P_noise': 0.1,
-                'X_drp': 0.1,
-                'X_noise': 0.1,
-                'P_drp': 0,
-                'E_drp': 0.1
-            },
-            "High Noise": {
-                'P_add': 3.0,
-                'E_noise': 0.5,
-                'P_noise': 0.2,
-                'X_noise': 0.2,
-                'X_drp': 0.2,
-                'P_drp': 0,
-                'E_drp': 0.2
-            }
-        }
-        self.eval()
-        for level_name, params in noise_levels.items():
-            self.log.info(f"Calculating {level_name} Accuracy (Global)")
-            try:
-                # Store original parameters and training state
-                original_params = {}
-                original_training_state = self.training
-                for param_name in params.keys():
-                    original_params[param_name] = self.I[param_name]
-                
-                # Update parameters for this noise level
-                for param_name, param_value in params.items():
-                    self.I[param_name] = param_value
-                
-                # Temporarily set to training mode so noise is applied
-                self.training = True
-                with torch.no_grad():
-                    E = self.get_E()
-                    P_test = self.project(self.X_test, E)
-                    y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
-                    avg_accuracy = accuracy_test.item()
-                    self.log.info(f"{level_name} Accuracy: {round(avg_accuracy, 4)}")
-                    self.results[f'{level_name} Accuracy'] = avg_accuracy
-                    # Save P_test averages for "No Noise" condition
-                    if level_name == "No Noise":
-                        self.log.info("Saving P_test averages for No Noise condition...")
-                        try:
-                            P_test_cpu = P_test.cpu()
-                            n_bits = P_test_cpu.shape[1]
-                            P_type_test = torch.zeros((self.n_categories, n_bits), device='cpu')
-                            unique_y_test = torch.unique(self.y_test)
-                            valid_type_indices = []
-                            valid_type_labels = []
-                            for type_idx_tensor in unique_y_test:
-                                type_idx = type_idx_tensor.item()
-                                type_mask = (self.y_test == type_idx_tensor)
-                                if type_mask.sum() > 0 and 0 <= type_idx < self.n_categories:
-                                    P_type_test[type_idx] = P_test_cpu[type_mask].mean(dim=0)
-                                    valid_type_indices.append(type_idx)
-                                    valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
-                            if valid_type_indices:
-                                # Create DataFrame with cell types as index and bits as columns
-                                # Apply log10 transformation and round to 3 decimal places
-                                P_type_log10 = torch.log10(P_type_test[valid_type_indices].clamp(min=1e-10))
-                                P_type_rounded = torch.round(P_type_log10 * 1000) / 1000  # Round to 3 decimal places
-                                P_type_df = pd.DataFrame(
-                                    P_type_rounded.numpy(),
-                                    index=pd.Index(valid_type_labels),
-                                    columns=pd.Index([f"Bit_{b}" for b in range(n_bits)])
-                                )
-                                p_type_path = os.path.join(self.I['output'], 'P_Type.csv')
-                                P_type_df.to_csv(p_type_path)
-                                self.log.info(f"P_test averages for No Noise condition saved to {p_type_path}")
-                                self.log.info(f"Saved data for {len(valid_type_indices)} cell types across {n_bits} bits")
-                            else:
-                                self.log.warning("No valid cell types found for P_test averages")
-                        except Exception as e:
-                            self.log.error(f"Error saving P_test averages for No Noise condition: {e}")
-                
-                # Restore original parameters and training state
-                for param_name, original_value in original_params.items():
-                    self.I[param_name] = original_value
-                self.training = original_training_state
-            except Exception as e:
-                self.log.error(f"Error during {level_name} accuracy calculation: {e}")
-                self.results[f'{level_name} Accuracy'] = np.nan
-                # Ensure training state is restored even if there's an error
-                self.training = original_training_state
-        # Set back to eval mode after all noise evaluations
-        self.eval()
-        results_df = pd.DataFrame({
-            'values': list(self.results.values())
-        }, index=pd.Index(list(self.results.keys())))
-        results_path = os.path.join(self.I['output'], 'Results.csv') 
-        results_df.to_csv(results_path)
-        self.log.info(f"Evaluation results saved to {results_path}")
-
-    def visualize(self, show_plots=False): 
-        import seaborn as sns
-        self.log.info("Starting visualization generation...")
-        if self.encoder is None or self.decoder is None or \
-           self.X_train is None or self.y_train is None or \
-           self.y_reverse_label_map is None : 
-            self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
-            return
-        saved_plot_paths = []
-        # Use clean versions for visualization to be consistent with loss calculations
-        E = self.get_E_clean()
-        E = E.to(self.I['device'])
-        self.eval()
-        # Visualizations are now global
-        global_name_str = "Global"
-        global_fname_safe = sanitize_filename(global_name_str)
-        self.log.info(f"Generating visualization for {global_name_str}...")
-        X_data_vis = self.X_train # Use full training data
-        y_data_vis = self.y_train # Mapped internal labels
-        y_vis_str_labels = np.array([self.y_reverse_label_map.get(int
-                    (idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
-        if X_data_vis.shape[0] == 0:
-            self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
-            return
-        with torch.no_grad():
-            self.log.info(f"Generating confusion matrix for test data (Global)...")
-            X_test_global = self.X_test
-            y_test_global = self.y_test # True internal labels
-            fig_cm = None 
-            try:
-                with torch.no_grad():
-                    P_test_tensor = self.project_clean(X_test_global, E)
-                    y_pred_test, _, _ = self.decode(P_test_tensor, y_test_global)
-                y_true_np = y_test_global.cpu().numpy()
-                y_pred_np = y_pred_test.cpu().numpy()
-                present_labels_idx = np.unique(np.concatenate((y_true_np, y_pred_np)))
-                present_labels_str = [self.y_reverse_label_map.get(i, f"Type_{i}") for i in present_labels_idx]
-                if len(present_labels_idx) > 0: 
-                    cm = confusion_matrix(y_true_np, y_pred_np, labels=present_labels_idx) 
-                    cm_sum = cm.sum(axis=1, keepdims=True)
-                    cm_norm = np.divide(cm, cm_sum, out=np.zeros_like(cm, dtype=float), where=cm_sum!=0) 
-                    cm_df = pd.DataFrame(cm_norm, index=pd.Index(present_labels_str), columns=pd.Index(present_labels_str))
-                    fig_width = min(max(10, len(present_labels_str) / 1.5), 25)
-                    fig_height = min(max(8, len(present_labels_str) / 2), 25)
-                    fig_cm = plt.figure(figsize=(fig_width, fig_height))
-                    ax_cm = fig_cm.add_subplot(111)
-                    sns.heatmap(cm_df, annot=False, cmap='jet', linewidths=0.1, ax=ax_cm, vmin=0, vmax=1) 
-                    ax_cm.set_xlabel('Predicted')
-                    ax_cm.set_ylabel('True')
-                    plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
-                    plt.setp(ax_cm.get_yticklabels(), rotation=0)
-                    fig_cm.tight_layout()
-                    plot_filename = f"confusion_matrix_test_{global_fname_safe}.pdf"
-                    plot_path = os.path.join(self.I['output'], plot_filename)
-                    fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
-                    saved_plot_paths.append(plot_path)
-                    self.log.info(f"Saved Test Confusion Matrix for {global_name_str} to {plot_path}")
-                else:
-                    self.log.warning(f"Skipping confusion matrix for {global_name_str}: No labels found in true or predicted test data.")
-            except Exception as e:
-                self.log.error(f"Error generating Test Confusion Matrix for {global_name_str}: {e}")
-            finally:
-                if fig_cm is not None:
-                    plt.close(fig_cm)
-        learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
-        unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
-        unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
-        numeric_parameters = np.array([i for i in unique_parameters if not isinstance(learning_curve[i+'_train'].iloc[1],str)])
-        n_start = 0
-        x = np.array(learning_curve.index)[n_start:-1].astype(float)
-        for parameter in numeric_parameters:
-            y1 = np.array(learning_curve[parameter+'_train'])[n_start:-1]
-            y2 = np.array(learning_curve[parameter+'_test'])[n_start:-1]
-            y_min, y_max = np.percentile(y1,[1,99])
-            plt.figure(figsize=(5, 3),dpi=200)
-            plt.scatter(x,y1,label='Train',s=1, alpha=0.6, rasterized=True)
-            plt.scatter(x,y2,label='Test',c='orange',s=1, alpha=0.6, rasterized=True)
-            plt.xlabel('Epoch')
-            # Format parameter name for better readability
-            param_display = parameter.replace('_', ' ').title()
-            plt.ylabel(param_display)
-            plt.ylim(y_min,y_max)
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.pdf"), dpi=300, bbox_inches='tight')
-            plt.close()
-        
-        E = self.get_E_clean()
-        E = E.to(self.I['device'])
-        self.eval()
-        # --- Visualization: Constraints vs Probes per Gene ---
-        try:
-            probes_per_gene = E.sum(dim=1).detach().cpu().numpy()
-            constraints = self.constraints.detach().cpu().numpy()
-            plt.figure(figsize=(6, 4))
-            plt.scatter(constraints, probes_per_gene, s=2, alpha=0.5)
-            # Add y=x line
-            min_val = min(constraints.min(), probes_per_gene.min())
-            max_val = max(constraints.max(), probes_per_gene.max())
-            plt.plot([min_val, max_val], [min_val, max_val], linestyle='--', color='gray', linewidth=1, label='y=x')
-            plt.xlabel('Constraint (max probes per gene)')
-            plt.ylabel('Probes per gene (E_clean)')
-            plt.title('Constraints vs Probes per Gene')
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.I['output'], 'constraints_vs_probes_per_gene.pdf'), dpi=200)
-            plt.close()
-        except Exception as e:
-            self.log.error(f"Failed to plot constraints vs probes per gene: {e}")
-
-        # --- Visualization: Clustermap of E_clean (genes clustered, no labels/dendrogram) ---
-        try:
-            import seaborn as sns
-            # Convert E_clean to DataFrame for easier manipulation
-            E_clean_np = E.detach().cpu().numpy()
-            used_WeightMat = pd.DataFrame(E_clean_np)
-
-            # Find the highest bit (column) for each gene (row)
-            highest_bit = used_WeightMat.columns[np.argmax(used_WeightMat.values, axis=1)]
-            gene_order = []
-            for i in sorted(np.unique(highest_bit)):
-                idx = used_WeightMat.index[np.where(highest_bit == i)[0]]
-                vals = used_WeightMat.loc[idx, i]
-                gene_order.extend(list(pd.DataFrame(vals).sort_values(by=i).index))
-
-            # Reorder the DataFrame based on the sorted genes
-            reordered_df = used_WeightMat.loc[gene_order].copy()
-            reordered_df.columns = [int(i)+1 for i in reordered_df.columns]
-
-            # Plot the clustermap (no clustering, just your order)
-            plt.figure(figsize=(10, 10))
-            sns.clustermap(
-                np.log10(reordered_df + 1),
-                cmap='Reds',
-                col_cluster=False,
-                row_cluster=False,
-                figsize=(10, 10),
-                yticklabels=[]
-            )
-            plt.savefig(os.path.join(self.I['output'], 'E.pdf'), dpi=200, bbox_inches='tight')
-            plt.close()
-        except Exception as e:
-            self.log.error(f"Failed to plot E_clean clustermap: {e}")
-
-        with torch.no_grad():
-            P = self.project_clean(X_data_vis, E)
-            for normalization_strategy in ['Raw', 'Sum Norm', 'Bit Center', 'Bit Z-score', 'Sum and Bit Center', 'Sum and Bit Z-score']:
-                P_norm = P.clone()
-                if 'Sum' in normalization_strategy:
-                    P_norm = sum_normalize_p_type(P_norm)
-                if 'Bit Center' in normalization_strategy:
-                    P_norm = bitwise_center_p_type(P_norm)
-                if 'Bit Z-score' in normalization_strategy:
-                    P_norm = bitwise_normalize_p_type(P_norm)
-                n_bits = P.shape[1]
-                P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
-                unique_y_indices_global = torch.unique(y_data_vis)
-                valid_type_indices = []
-                valid_type_labels = []
-                for type_idx_tensor in unique_y_indices_global:
-                    type_idx = type_idx_tensor.item() 
-                    mask = (y_data_vis == type_idx_tensor)
-                    if mask.sum() > 0:
-                        if 0 <= type_idx < self.n_categories:
-                            P_type_global[type_idx] = P_norm[mask].mean(dim=0) 
-                            valid_type_indices.append(type_idx)
-                            valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
-                        else:
-                            self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
-                if not valid_type_indices:
-                    self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
-                    return
-                P_type_global_present = P_type_global[valid_type_indices].cpu() 
-                n_types_present = P_type_global_present.shape[0]
-                if n_types_present > 0:
-                    plot_P_Type(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_{normalization_strategy}.pdf"), self.log)
-                    plot_P_Type_correlation(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_correlation_{normalization_strategy}.pdf"), self.log)
-                    plot_projection_space_density(P_norm.cpu().numpy(), y_vis_str_labels, os.path.join(self.I['output'], f"projection_density_{normalization_strategy}.pdf"), sum_norm=False, log=self.log, use_log10_scale=False)
-            
-
-        self.log.info("Visualization generation finished.")
-
 # Helper function for smooth, non-negative penalty
-def swish(fold, scale=3.0, shift=-1.278, offset=0.278):
+def swish(fold, scale=3.0, shift=-1.278, offset=0.3):
     """
     Smooth, non-negative penalty function for soft constraints.
     Args:
@@ -1737,6 +1730,48 @@ def bitwise_normalize_p_type(P_type_data):
     P_type_bit_norm = P_type_data.clone()
     P_type_bit_norm = (P_type_bit_norm - P_type_bit_norm.mean(dim=0, keepdim=True)) / P_type_bit_norm.std(dim=0, keepdim=True).clamp(min=1e-8)
     return P_type_bit_norm
+
+def plot_single_learning_curve(parameter, learning_curve, output_dir, log=None):
+    """
+    Plot learning curve for a single parameter (training vs test).
+    
+    Args:
+        parameter (str): Parameter name (without _train or _test suffix)
+        learning_curve (pd.DataFrame): DataFrame containing learning statistics
+        output_dir (str): Directory to save the learning curve plot
+        log (logging.Logger, optional): Logger instance for logging messages
+    """
+    if log is None:
+        log = logging.getLogger("LearningCurvePlotter")
+    
+    n_start = 0
+    x = np.array(learning_curve.index)[n_start:-1].astype(float)
+    y1 = np.array(learning_curve[parameter+'_train'])[n_start:-1].astype(float)
+    y2 = np.array(learning_curve[parameter+'_test'])[n_start:-1].astype(float)
+    
+    # Create mask for finite values
+    mask1 = np.isfinite(y1)
+    mask2 = np.isfinite(y2)
+    
+    # Only proceed if we have valid data
+    if np.any(mask1) and np.any(mask2):
+        y_min, y_max = np.percentile(y1[mask1], [1, 99])
+        plt.figure(figsize=(5, 3), dpi=200)
+        plt.scatter(x[mask1], y1[mask1], label='Train', s=1, alpha=0.6, rasterized=True)
+        plt.scatter(x[mask2], y2[mask2], label='Test', c='orange', s=1, alpha=0.6, rasterized=True)
+        plt.xlabel('Epoch')
+        # Format parameter name for better readability
+        param_display = parameter.replace('_', ' ').title()
+        plt.ylabel(param_display)
+        plt.ylim(y_min, y_max)
+        plt.legend()
+        plt.tight_layout()
+        plot_path = os.path.join(output_dir, f"learning_curve_{parameter}.pdf")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        log.info(f"Saved learning curve for {parameter} to {plot_path}")
+    else:
+        log.warning(f"Skipping learning curve for {parameter}: insufficient valid data")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
