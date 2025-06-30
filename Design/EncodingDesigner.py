@@ -227,7 +227,6 @@ class EncodingDesigner(nn.Module):
             fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
             probe_wt_loss = F.elu(fold,alpha=0.05)
             raw_losses['probe_wt_loss'] = probe_wt_loss
-            current_stats['probe_wt_loss' + suffix] = round(probe_wt_loss.item(), 4)
             current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
 
         # --- Gene constraint loss ---
@@ -245,7 +244,6 @@ class EncodingDesigner(nn.Module):
             gene_constraint_loss = self.I['gene_constraint_wt'] * difference[violations].sum()
             
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
-            current_stats['gene_constraint_loss' + suffix] = round(gene_constraint_loss.item(), 4)
             current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
             current_stats['E_median_wt' + suffix] = round(E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0, 4)
             current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
@@ -257,10 +255,9 @@ class EncodingDesigner(nn.Module):
         if self.I['sparsity_wt'] != 0:
             sparsity_threshold = 1
             sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
-            fold = (sparsity_ratio - self.I['sparsity']) / self.I['sparsity']
-            sparsity_loss = self.I['sparsity_wt'] * swish(-fold)
+            fold = (self.I['sparsity'] - sparsity_ratio) / self.I['sparsity']
+            sparsity_loss = self.I['sparsity_wt'] * F.elu(-fold,alpha=0.1)
             raw_losses['sparsity_loss'] = sparsity_loss
-            current_stats['sparsity_loss' + suffix] = round(sparsity_loss.item(), 4)
             current_stats['sparsity' + suffix] = round(sparsity_ratio.item(), 4)
 
         # The model should have a robust brightness and dynamic range
@@ -298,9 +295,8 @@ class EncodingDesigner(nn.Module):
             target_brightness = 10**self.I['brightness']
             median_brightness = median_brightness_per_bit.clamp(min=1)
             fold = (target_brightness - median_brightness) / target_brightness
-            brightness_loss = self.I['brightness_wt'] * F.elu(fold,alpha=0.1).mean()
+            brightness_loss = self.I['brightness_wt'] * fold[fold>0].sum()
             raw_losses['brightness_loss'] = brightness_loss
-            current_stats['brightness_loss' + suffix] = round(brightness_loss.item(), 4)
             current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
             current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
             current_stats['upper brightness' + suffix] = round(upper_brightness_per_bit.mean().item(), 4)
@@ -310,24 +306,21 @@ class EncodingDesigner(nn.Module):
         if self.I['dynamic_wt'] != 0:
             # Lower dynamic range
             lower_fold_change = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            fold = (lower_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
-            lower_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
-            raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
-            current_stats['lower_dynamic_loss' + suffix] = round(lower_dynamic_loss.item(), 4)
+            fold = (self.I['dynamic_fold'] - lower_fold_change) / self.I['dynamic_fold']
+            lower_dynamic_loss = self.I['dynamic_wt'] * fold[fold>0].mean()
+            # raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
             current_stats['lower_dynamic_fold' + suffix] = round(lower_fold_change.mean().item(), 4)
             # Upper dynamic range
             upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
-            fold = (upper_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
-            upper_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
-            raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
-            current_stats['upper_dynamic_loss' + suffix] = round(upper_dynamic_loss.item(), 4)
+            fold = (self.I['dynamic_fold'] - upper_fold_change) / self.I['dynamic_fold']
+            upper_dynamic_loss = self.I['dynamic_wt'] * fold[fold>0].mean()
+            # raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
             current_stats['upper_dynamic_fold' + suffix] = round(upper_fold_change.mean().item(), 4)
             # Full dynamic range
             full_fold_change = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
             fold = (2*self.I['dynamic_fold']-full_fold_change) / 2*self.I['dynamic_fold']
-            full_dynamic_loss = self.I['dynamic_wt'] * F.elu(fold)
+            full_dynamic_loss = self.I['dynamic_wt'] * fold[fold>0].sum()
             raw_losses['full_dynamic_loss'] = full_dynamic_loss
-            current_stats['lower_dynamic_loss' + suffix] = round(full_dynamic_loss.item(), 4)
             current_stats['full_dynamic_fold' + suffix] = round(full_fold_change.mean().item(), 4)
 
         # --- Cell type separation loss ---
@@ -348,12 +341,11 @@ class EncodingDesigner(nn.Module):
                 fold_changes_masked = fold_changes[mask]
                 max_fold_changes = fold_changes_masked.max(dim=1)[0]
                 fold = (self.I['separation_fold']-max_fold_changes) / self.I['separation_fold']
-                separation_loss = self.I['separation_wt'] * F.elu(fold,alpha=0.1).mean()
+                separation_loss = self.I['separation_wt'] * fold[fold>0].sum()
                 worst_fold_change = max_fold_changes.min().item()
                 p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
                 best_fold_change = max_fold_changes.max().item()
                 raw_losses['separation_loss'] = separation_loss
-                current_stats['separation_loss' + suffix] = round(separation_loss.item(), 4)
                 current_stats['worst_separation' + suffix] = round(worst_fold_change, 4)
                 current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
 
@@ -361,7 +353,6 @@ class EncodingDesigner(nn.Module):
         if self.I['categorical_wt'] != 0:
             categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component#.clamp(min=0,max=15)
             raw_losses['categorical_loss'] = categorical_loss_component
-            current_stats['categorical_loss' + suffix] = round(categorical_loss_component.item(), 4)
 
         current_stats['accuracy' + suffix] = round(accuracy.item(), 4) # last for readability
         
@@ -388,12 +379,15 @@ class EncodingDesigner(nn.Module):
                 current_stats['D_change' + suffix] = round(pct_changes.mean().item(), 4)
         if isinstance(module, nn.Linear):
             self.prev_decoder_weights = module.weight.data.clone().detach()
-        
+
+        for key, value in raw_losses.items():
+            current_stats['$$$ - ' + key + suffix] = round(value.item(), 4)
         #total_loss is a tensor
         total_loss = sum(raw_losses.values()) # tensor not int
         if isinstance(total_loss, int):
             total_loss = torch.tensor(total_loss)
-            current_stats['total_loss' + suffix] = round(total_loss.item(), 4)
+            current_stats['$$$ - total_loss' + suffix] = round(total_loss.item(), 4)
+        
         return total_loss, current_stats
 
     def train_gene_importance_decoder(self):

@@ -138,7 +138,7 @@ user_parameters['input'] = input_dir
 #     ]
 # For testing
 parameter_variant_list = [{
-    'n_iters':[10000],
+    'n_iters':[10000],'gene_constraint_loss':[0.1,1],
     'dynamic_wt':[0,1],'separation_wt':[0,1],'categorical_wt':[1,2,5]}]
 
 # add an option to have _s and _e be the same value
