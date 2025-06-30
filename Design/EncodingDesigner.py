@@ -102,7 +102,6 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'adam_beta1': 0.9,  # Adam optimizer beta1 (momentum) parameter
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -300,10 +299,13 @@ class EncodingDesigner(nn.Module):
         if self.I['brightness_wt'] != 0:
             target_brightness = 10**self.I['brightness']
             median_brightness = median_brightness_per_bit.clamp(min=1)
-            fold = (median_brightness - target_brightness) / target_brightness
-            brightness_loss = self.I['brightness_wt'] * swish(-fold).mean()
+            fold = (target_brightness - median_brightness) / target_brightness
+            brightness_loss = self.I['brightness_wt'] * F.elu(fold,alpha=0.1).mean()
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['brightness_loss' + suffix] = round(brightness_loss.item(), 4)
+            current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
+            current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
+            current_stats['upper brightness' + suffix] = round(upper_brightness_per_bit.mean().item(), 4)
 
         # --- Dynamic range loss (lower and upper) ---
         if self.I['dynamic_wt'] != 0:
@@ -1223,7 +1225,7 @@ class EncodingDesigner(nn.Module):
         optimizer_gen = torch.optim.Adam([
             {'params': self.encoder.parameters(), 'lr': self.I['lr']},
             {'params': self.decoder.parameters(), 'lr': self.I['lr']}
-        ], betas=(self.I.get('adam_beta1', 0.9), 0.999))
+        ], betas=(0.9, 0.9))
         self.optimizer_gen = optimizer_gen
 
     def _get_training_batch(self, iteration, batch_size, n_train_samples):
