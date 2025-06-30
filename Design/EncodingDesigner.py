@@ -306,6 +306,7 @@ class EncodingDesigner(nn.Module):
             current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
             current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
             current_stats['upper brightness' + suffix] = round(upper_brightness_per_bit.mean().item(), 4)
+            current_stats['dynamic_range' + suffix] = round((upper_brightness_per_bit-lower_brightness_per_bit).mean().item(), 4)
 
         # --- Dynamic range loss (lower and upper) ---
         if self.I['dynamic_wt'] != 0:
@@ -315,12 +316,21 @@ class EncodingDesigner(nn.Module):
             lower_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
             raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
             current_stats['lower_dynamic_loss' + suffix] = round(lower_dynamic_loss.item(), 4)
+            current_stats['lower_dynamic_fold' + suffix] = round(lower_fold_change.mean().item(), 4)
             # Upper dynamic range
             upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
             fold = (upper_fold_change - self.I['dynamic_fold']) / self.I['dynamic_fold']
             upper_dynamic_loss = self.I['dynamic_wt'] * swish(-fold).mean()
             raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
             current_stats['upper_dynamic_loss' + suffix] = round(upper_dynamic_loss.item(), 4)
+            current_stats['upper_dynamic_fold' + suffix] = round(upper_fold_change.mean().item(), 4)
+            # Full dynamic range
+            full_fold_change = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+            fold = (2*self.I['dynamic_fold']-full_fold_change) / 2*self.I['dynamic_fold']
+            full_dynamic_loss = self.I['dynamic_wt'] * F.elu(fold)
+            raw_losses['full_dynamic_loss'] = full_dynamic_loss
+            current_stats['lower_dynamic_loss' + suffix] = round(full_dynamic_loss.item(), 4)
+            current_stats['full_dynamic_fold' + suffix] = round(full_fold_change.mean().item(), 4)
 
         # --- Cell type separation loss ---
         if self.I['separation_wt'] != 0:
@@ -339,13 +349,14 @@ class EncodingDesigner(nn.Module):
                 fold_changes = torch.maximum(ratio_ij, ratio_ji)
                 fold_changes_masked = fold_changes[mask]
                 max_fold_changes = fold_changes_masked.max(dim=1)[0]
-                fold = (max_fold_changes - self.I['separation_fold']) / self.I['separation_fold']
-                separation_loss = self.I['separation_wt'] * swish(-fold).mean()
+                fold = (self.I['separation_fold']-max_fold_changes) / self.I['separation_fold']
+                separation_loss = self.I['separation_wt'] * F.elu(fold,alpha=0.1).mean()
                 worst_fold_change = max_fold_changes.min().item()
                 p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
                 best_fold_change = max_fold_changes.max().item()
                 raw_losses['separation_loss'] = separation_loss
                 current_stats['separation_loss' + suffix] = round(separation_loss.item(), 4)
+                current_stats['worst_separation' + suffix] = round(worst_fold_change, 4)
                 current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
 
         # The model should accurately decode cell type labels
