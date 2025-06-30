@@ -241,10 +241,8 @@ class EncodingDesigner(nn.Module):
             total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
             constraints = self.constraints[non_zero_constraints].clamp(min=1)
             difference = total_probes_per_gene-constraints
-            total_difference = F.relu(difference).sum()
-            fractional_difference = total_difference/(E_clean.sum() - total_difference)
-            gene_constraint_loss = self.I['gene_constraint_wt'] * fractional_difference
-            violations = difference>0
+            violations = difference>1
+            gene_constraint_loss = self.I['gene_constraint_wt'] * difference[violations].sum()
             
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = round(gene_constraint_loss.item(), 4)
@@ -292,8 +290,8 @@ class EncodingDesigner(nn.Module):
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
         min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
         max_lower, max_median, max_upper = bit_percentiles[max_range_idx]
-        current_stats['E_worst_bit' + suffix] = f"lower:{np.log10(max(min_lower, 1)):.2f}, median:{np.log10(max(min_median, 1)):.2f}, upper:{np.log10(max(min_upper, 1)):.2f}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
-        current_stats['E_best_bit' + suffix] = f"lower:{np.log10(max(max_lower, 1)):.2f}, median:{np.log10(max(max_median, 1)):.2f}, upper:{np.log10(max(max_upper, 1)):.2f}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
+        current_stats['E_worst_bit' + suffix] = f"min:{max(min_lower, 1):.2e}, med:{max(min_median, 1):.2e}, max:{max(min_upper, 1):.2e}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
+        current_stats['E_best_bit' + suffix] = f"min:{max(max_lower, 1):.2e}, med:{max(max_median, 1):.2e}, max:{max(max_upper, 1):.2e}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
         
         # --- Brightness loss ---
         if self.I['brightness_wt'] != 0:
