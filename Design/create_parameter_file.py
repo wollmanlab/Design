@@ -53,9 +53,9 @@ user_parameters = {
             'probe_wt': 1,  # Weight for probe count loss term
             'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt': 1,  # Weight for dynamic range loss terms
+            'dynamic_wt': 0,  # Weight for dynamic range loss terms
             'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
-            'separation_wt': 1,  # Weight for cell type separation loss term
+            'separation_wt': 0,  # Weight for cell type separation loss term
             'separation_fold': 2.0,  # Minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate

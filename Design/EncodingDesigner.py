@@ -222,25 +222,30 @@ class EncodingDesigner(nn.Module):
 
         # --- Probe count loss ---
         if self.I['probe_wt']!=0:
+            # if fold is double target loss is 1 * probe_wt
+            # if fold is 0 loss is 0 * probe_wt
+            # if fold is below target loss is approaching negative alpha * probe_wt
             fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
-            probe_wt_loss = swish(fold)
+            probe_wt_loss = F.elu(fold,alpha=0.05)
             raw_losses['probe_wt_loss'] = probe_wt_loss
             current_stats['probe_wt_loss' + suffix] = round(probe_wt_loss.item(), 4)
             current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
 
         # --- Gene constraint loss ---
         if self.I['gene_constraint_wt'] != 0:
+            # if 0% of probes are constrained loss is 0
+            # if 1% of probes are constrained loss is 0.01 * gene_constraint_wt
+            # if 100% of probes are constrained loss is 1 * gene_constraint_wt
             if self.constraints is None: raise RuntimeError("Constraints not initialized")
             total_probes_per_gene = E_clean.sum(1)
             non_zero_constraints = self.constraints>0
             total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
             constraints = self.constraints[non_zero_constraints].clamp(min=1)
             difference = total_probes_per_gene-constraints
-            gene_constraint_loss = (F.relu(difference).sum()+1).log2()
+            total_difference = F.relu(difference).sum()
+            fractional_difference = total_difference/(E_clean.sum() - total_difference)
+            gene_constraint_loss = self.I['gene_constraint_wt'] * fractional_difference
             violations = difference>0
-            # if violations.sum() > 0:
-            #     # average_violation = difference[violations].mean()
-            #     gene_constraint_loss = self.I['gene_constraint_wt'] * violations.sum()
             
             raw_losses['gene_constraint_loss'] = gene_constraint_loss
             current_stats['gene_constraint_loss' + suffix] = round(gene_constraint_loss.item(), 4)
