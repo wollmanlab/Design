@@ -652,7 +652,7 @@ class EncodingDesigner(nn.Module):
         raw_losses = {}
         current_stats = {}
 
-        # The model should not use more probes than self.I['n_probes']
+        # --- Probe count loss ---
         if self.I['probe_wt']!=0:
             fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
             probe_wt_loss = swish(fold)
@@ -660,7 +660,7 @@ class EncodingDesigner(nn.Module):
             current_stats['probe_wt_loss' + suffix] = probe_wt_loss.item()
             current_stats['E_n_probes' + suffix] = E_clean.sum().item()
 
-        # The model should not use more probes than a gene can supply - use clean E
+        # --- Gene constraint loss ---
         if self.I['gene_constraint_wt'] != 0:
             if self.constraints is None: raise RuntimeError("Constraints not initialized")
             total_probes_per_gene = E_clean.sum(1)
@@ -668,16 +668,34 @@ class EncodingDesigner(nn.Module):
             total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
             constraints = self.constraints[non_zero_constraints].clamp(min=1)
             difference = total_probes_per_gene-constraints
-            fold = (difference)/constraints
-            gene_constraint_loss = swish(fold).mean()
-            raw_losses['gene_constraint_loss'] = gene_constraint_loss
-            current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
+            violations = difference>0
+            if violations.sum() > 0:
+                average_violation = difference[violations].mean()
+                gene_constraint_loss = self.I['gene_constraint_wt'] * average_violation
+            
+                raw_losses['gene_constraint_loss'] = gene_constraint_loss
+                current_stats['gene_constraint_loss' + suffix] = gene_constraint_loss.item()
             current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
             current_stats['E_median_wt' + suffix] = E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0
-            current_stats['n_genes_over_constraint' + suffix] = (difference >= 1).sum().item()
-            current_stats['avg_over_constraint' + suffix] = difference[difference >= 1].mean().item() if (fold > 1).any() else 0
+            current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
+            current_stats['avg_over_constraint' + suffix] = difference[violations].mean().item() if violations.any() else 0
+            current_stats['max_over_constraint' + suffix] = difference.max().item() if difference.numel() > 0 else 0
+            current_stats['total_violation_probes' + suffix] = difference[violations].sum().item()
+
+        # --- Sparsity loss ---
+        if self.I['sparsity_wt'] != 0:
+            sparsity_threshold = 1
+            sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
+            fold = (sparsity_ratio - self.I['sparsity']) / self.I['sparsity']
+            sparsity_loss = self.I['sparsity_wt'] * swish(-fold)
+            raw_losses['sparsity_loss'] = sparsity_loss
+            current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
+            current_stats['sparsity' + suffix] = sparsity_ratio.item()
 
         # The model should have a robust brightness and dynamic range
+        # use sum normalized for this 
+        median_val = P_clean.sum(1).clamp(min=1e-8).median()
+        P_clean_sum_norm = median_val * P_clean / P_clean.sum(1).unsqueeze(1).clamp(min=1e-8)
         median_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
         lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
         upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
@@ -685,7 +703,7 @@ class EncodingDesigner(nn.Module):
         bit_percentiles = []
         bit_medians = []
         for bit_idx in range(P_clean.shape[1]):
-            bit_values = P_clean[:, bit_idx]
+            bit_values = P_clean_sum_norm[:, bit_idx]
             p5, p10, p25, p40, p50, p60, p75, p90, p95 = torch.quantile(bit_values, torch.tensor([0.05, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 0.95]))
             mask_median = (bit_values >= p40) & (bit_values <= p60)
             median_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
@@ -728,23 +746,13 @@ class EncodingDesigner(nn.Module):
             raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
             current_stats['upper_dynamic_loss' + suffix] = upper_dynamic_loss.item()
 
-        # --- Sparsity loss ---
-        if self.I['sparsity_wt'] != 0:
-            sparsity_threshold = 1
-            sparsity_ratio = (E_clean < sparsity_threshold).float().mean()
-            fold = (sparsity_ratio - self.I['sparsity']) / self.I['sparsity']
-            sparsity_loss = self.I['sparsity_wt'] * swish(-fold)
-            raw_losses['sparsity_loss'] = sparsity_loss
-            current_stats['sparsity_loss' + suffix] = sparsity_loss.item()
-            current_stats['sparsity' + suffix] = sparsity_ratio.item()
-
         # --- Cell type separation loss ---
         if self.I['separation_wt'] != 0:
             batch_categories = torch.unique(y)
             if len(batch_categories) > 1:
                 P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
                 for i, type_idx in enumerate(batch_categories):
-                    v = P_clean[y == type_idx].mean(dim=0)
+                    v = P_clean_sum_norm[y == type_idx].mean(dim=0)
                     v = v/v.sum().clamp(min=1e-8)
                     P_data[i] = v
                 mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
@@ -1245,6 +1253,7 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"Evaluation results saved to {results_path}")
 
     def visualize(self, show_plots=False): 
+        import seaborn as sns
         self.log.info("Starting visualization generation...")
         if self.encoder is None or self.decoder is None or \
            self.X_train is None or self.y_train is None or \
@@ -1268,39 +1277,6 @@ class EncodingDesigner(nn.Module):
             self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
             return
         with torch.no_grad():
-            P = self.project_clean(X_data_vis, E)
-            for normalization_strategy in ['Raw', 'Sum Norm', 'Bit Center', 'Bit Z-score', 'Sum and Bit Center', 'Sum and Bit Z-score']:
-                P_norm = P.clone()
-                if 'Sum' in normalization_strategy:
-                    P_norm = sum_normalize_p_type(P_norm)
-                if 'Bit Center' in normalization_strategy:
-                    P_norm = bitwise_center_p_type(P_norm)
-                if 'Bit Z-score' in normalization_strategy:
-                    P_norm = bitwise_normalize_p_type(P_norm)
-                n_bits = P.shape[1]
-                P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
-                unique_y_indices_global = torch.unique(y_data_vis)
-                valid_type_indices = []
-                valid_type_labels = []
-                for type_idx_tensor in unique_y_indices_global:
-                    type_idx = type_idx_tensor.item() 
-                    mask = (y_data_vis == type_idx_tensor)
-                    if mask.sum() > 0:
-                        if 0 <= type_idx < self.n_categories:
-                            P_type_global[type_idx] = P_norm[mask].mean(dim=0) 
-                            valid_type_indices.append(type_idx)
-                            valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
-                        else:
-                            self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
-                if not valid_type_indices:
-                    self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
-                    return
-                P_type_global_present = P_type_global[valid_type_indices].cpu() 
-                n_types_present = P_type_global_present.shape[0]
-                if n_types_present > 0:
-                    plot_P_Type(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_{normalization_strategy}.pdf"), self.log)
-                    plot_P_Type_correlation(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_correlation_{normalization_strategy}.pdf"), self.log)
-                    plot_projection_space_density(P_norm.cpu().numpy(), y_vis_str_labels, os.path.join(self.I['output'], f"projection_density_{normalization_strategy}.pdf"), sum_norm=False, log=self.log, use_log10_scale=False)
             self.log.info(f"Generating confusion matrix for test data (Global)...")
             X_test_global = self.X_test
             y_test_global = self.y_test # True internal labels
@@ -1362,20 +1338,24 @@ class EncodingDesigner(nn.Module):
             plt.tight_layout()
             plt.savefig(os.path.join(self.I['output'], f"learning_curve_{parameter}.pdf"), dpi=300, bbox_inches='tight')
             plt.close()
-        self.log.info("Visualization generation finished.")
-
+        
         E = self.get_E_clean()
         E = E.to(self.I['device'])
         self.eval()
         # --- Visualization: Constraints vs Probes per Gene ---
         try:
-            probes_per_gene = E.sum(dim=1).cpu().numpy()
-            constraints = self.constraints.cpu().numpy()
+            probes_per_gene = E.sum(dim=1).detach().cpu().numpy()
+            constraints = self.constraints.detach().cpu().numpy()
             plt.figure(figsize=(6, 4))
             plt.scatter(constraints, probes_per_gene, s=2, alpha=0.5)
+            # Add y=x line
+            min_val = min(constraints.min(), probes_per_gene.min())
+            max_val = max(constraints.max(), probes_per_gene.max())
+            plt.plot([min_val, max_val], [min_val, max_val], linestyle='--', color='gray', linewidth=1, label='y=x')
             plt.xlabel('Constraint (max probes per gene)')
             plt.ylabel('Probes per gene (E_clean)')
             plt.title('Constraints vs Probes per Gene')
+            plt.legend()
             plt.tight_layout()
             plt.savefig(os.path.join(self.I['output'], 'constraints_vs_probes_per_gene.pdf'), dpi=200)
             plt.close()
@@ -1385,17 +1365,74 @@ class EncodingDesigner(nn.Module):
         # --- Visualization: Clustermap of E_clean (genes clustered, no labels/dendrogram) ---
         try:
             import seaborn as sns
-            E_clean_np = E.cpu().numpy()
-            # Cluster only genes (rows), do not show labels or dendrogram
-            cg = sns.clustermap(E_clean_np, row_cluster=True, col_cluster=False,
-                                yticklabels=False, xticklabels=False, dendrogram_ratio=(0, 0),
-                                figsize=(8, 8), cmap='inferno')
-            cg.ax_row_dendrogram.set_visible(False)
-            cg.ax_col_dendrogram.set_visible(False)
-            plt.savefig(os.path.join(self.I['output'], 'E_clean_clustermap.pdf'), dpi=200, bbox_inches='tight')
+            # Convert E_clean to DataFrame for easier manipulation
+            E_clean_np = E.detach().cpu().numpy()
+            used_WeightMat = pd.DataFrame(E_clean_np)
+
+            # Find the highest bit (column) for each gene (row)
+            highest_bit = used_WeightMat.columns[np.argmax(used_WeightMat.values, axis=1)]
+            gene_order = []
+            for i in sorted(np.unique(highest_bit)):
+                idx = used_WeightMat.index[np.where(highest_bit == i)[0]]
+                vals = used_WeightMat.loc[idx, i]
+                gene_order.extend(list(pd.DataFrame(vals).sort_values(by=i).index))
+
+            # Reorder the DataFrame based on the sorted genes
+            reordered_df = used_WeightMat.loc[gene_order].copy()
+            reordered_df.columns = [int(i)+1 for i in reordered_df.columns]
+
+            # Plot the clustermap (no clustering, just your order)
+            plt.figure(figsize=(10, 10))
+            sns.clustermap(
+                np.log10(reordered_df + 1),
+                cmap='Reds',
+                col_cluster=False,
+                row_cluster=False,
+                figsize=(10, 10),
+                yticklabels=[]
+            )
+            plt.savefig(os.path.join(self.I['output'], 'E.pdf'), dpi=200, bbox_inches='tight')
             plt.close()
         except Exception as e:
             self.log.error(f"Failed to plot E_clean clustermap: {e}")
+
+        with torch.no_grad():
+            P = self.project_clean(X_data_vis, E)
+            for normalization_strategy in ['Raw', 'Sum Norm', 'Bit Center', 'Bit Z-score', 'Sum and Bit Center', 'Sum and Bit Z-score']:
+                P_norm = P.clone()
+                if 'Sum' in normalization_strategy:
+                    P_norm = sum_normalize_p_type(P_norm)
+                if 'Bit Center' in normalization_strategy:
+                    P_norm = bitwise_center_p_type(P_norm)
+                if 'Bit Z-score' in normalization_strategy:
+                    P_norm = bitwise_normalize_p_type(P_norm)
+                n_bits = P.shape[1]
+                P_type_global = torch.zeros((self.n_categories, n_bits), device=self.I['device'])
+                unique_y_indices_global = torch.unique(y_data_vis)
+                valid_type_indices = []
+                valid_type_labels = []
+                for type_idx_tensor in unique_y_indices_global:
+                    type_idx = type_idx_tensor.item() 
+                    mask = (y_data_vis == type_idx_tensor)
+                    if mask.sum() > 0:
+                        if 0 <= type_idx < self.n_categories:
+                            P_type_global[type_idx] = P_norm[mask].mean(dim=0) 
+                            valid_type_indices.append(type_idx)
+                            valid_type_labels.append(self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}"))
+                        else:
+                            self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
+                if not valid_type_indices:
+                    self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
+                    return
+                P_type_global_present = P_type_global[valid_type_indices].cpu() 
+                n_types_present = P_type_global_present.shape[0]
+                if n_types_present > 0:
+                    plot_P_Type(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_{normalization_strategy}.pdf"), self.log)
+                    plot_P_Type_correlation(P_type_global_present, valid_type_labels, os.path.join(self.I['output'], f"P_type_correlation_{normalization_strategy}.pdf"), self.log)
+                    plot_projection_space_density(P_norm.cpu().numpy(), y_vis_str_labels, os.path.join(self.I['output'], f"projection_density_{normalization_strategy}.pdf"), sum_norm=False, log=self.log, use_log10_scale=False)
+            
+
+        self.log.info("Visualization generation finished.")
 
 # Helper function for smooth, non-negative penalty
 def swish(fold, scale=3.0, shift=-1.278, offset=0.278):
