@@ -160,9 +160,8 @@ user_parameters['input'] = input_dir
 # ]
 
 parameter_variant_list = [
-        {'dynamic_wt':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-        {'separation_wt':[0,0.1,0.25,0.5,0.75,0.9]},
-        {'categorical_wt':[0,0.1,0.5,1,2,5,10]}
+        {'dynamic_fold_e':[0.0,1.0,2.0,4.0]},
+        {'separation_fold_e':[0,0.5,1.0,1.5,2.0]},
 ]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
@@ -175,10 +174,7 @@ parameter_variant_list = [
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-parameter_variant_list = [
-    {
-    'n_iters':[5000]
-    }]
+# parameter_variant_list = [{'n_iters':[5000]}]
 
 # add an option to have _s and _e be the same value
 same_se = True
