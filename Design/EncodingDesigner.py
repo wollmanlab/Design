@@ -112,7 +112,8 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'debug': 0, 
+            'debug': 0,
+            'continue_training': 1,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -1864,6 +1865,14 @@ if __name__ == '__main__':
     if not model.initialize():
         print("Initialization failed. Check the log file for details.")
         exit(1)
-    model.fit()
+    
+    # Check if we should continue training or skip to evaluation
+    if model.I['continue_training'] == 0 and model.is_initialized_from_file:
+        print("Model loaded from file and continue_training=0. Skipping training and proceeding to evaluation.")
+        model.log.info("Skipping training due to continue_training=0 and model loaded from file.")
+    else:
+        print("Starting training...")
+        model.fit()
+    
     model.evaluate()
     model.visualize(show_plots=False)
