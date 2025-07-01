@@ -344,7 +344,9 @@ class EncodingDesigner(nn.Module):
             mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
             P_i = P_data.unsqueeze(1)
             P_j = P_data.unsqueeze(0)
-            separations = (torch.abs(P_i - P_j) / P_j.clamp(min=1e-8))[mask].max(dim=1)[0]
+            difference = torch.abs(P_i - P_j)
+            smallest_value = torch.minimum(P_i, P_j).clamp(min=1e-8)
+            separations = (difference / smallest_value)[mask].max(dim=1)[0]
             target = self.I['separation_fold']
             fold = (target - separations) / target
             fold = fold[fold>0]
