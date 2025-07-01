@@ -1878,7 +1878,7 @@ def plot_loss_contributions(learning_curve, output_dir, log=None):
     log.info(f"Saved loss contributions plot to {plot_path}")
 
 def plot_comprehensive_performance(learning_curve, output_dir, log=None):
-    """Plot accuracy, separation, and dynamic range metrics with three y-axes."""
+    """Plot accuracy, separation, and dynamic range metrics with three y-axes on the left side."""
     if log is None:
         log = logging.getLogger("ComprehensivePerformancePlotter")
     metrics = {
@@ -1902,8 +1902,9 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
     for i, (metric_name, metric_info) in enumerate(available_metrics.items()):
         if i > 0:
             ax = ax1.twinx()
-            if i == 2:  # Third axis offset
-                ax.spines['right'].set_position(('outward', 60))
+            # Position all y-axes on the left side
+            ax.spines['left'].set_position(('outward', 60 * i))
+            ax.spines['right'].set_visible(False)
             axes.append(ax)
         else:
             ax = ax1
@@ -1914,10 +1915,10 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
         if np.any(mask_train) and np.any(mask_test):
             markers = ['o', 's', '^', 'v', '<', '>']
             ax.scatter(x[mask_train], y_train[mask_train], 
-                      label=f"{metric_info['label']} (Train)", color=metric_info['color'], 
-                      s=1, alpha=0.6, marker=markers[i*2], rasterized=True)
+                      color=metric_info['color'], 
+                      s=10, alpha=0.6, marker=markers[i*2], rasterized=True)
             ax.scatter(x[mask_test], y_test[mask_test], 
-                      label=f"{metric_info['label']} (Test)", color=metric_info['color'], 
+                      color=metric_info['color'], 
                       s=1, alpha=0.6, marker=markers[i*2+1], rasterized=True)
             ax.set_ylabel(metric_info['label'], color=metric_info['color'])
             ax.tick_params(axis='y', labelcolor=metric_info['color'])
@@ -1925,13 +1926,6 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
             ax.set_ylim(y_min, y_max)
     ax1.set_xlabel('Epoch')
     ax1.grid(True, alpha=0.3)
-    all_lines, all_labels = [], []
-    for ax in axes:
-        lines, labels = ax.get_legend_handles_labels()
-        all_lines.extend(lines)
-        all_labels.extend(labels)
-    ax1.legend(all_lines, all_labels, loc='center right', bbox_to_anchor=(1.15, 0.5))
-    plt.title('Comprehensive Model Performance Metrics')
     plt.tight_layout()
     plot_path = os.path.join(output_dir, 'comprehensive_performance.pdf')
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
