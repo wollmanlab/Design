@@ -650,24 +650,29 @@ class EncodingDesigner(nn.Module):
                 original_training_state = self.training
                 for param_name in params.keys():
                     original_params[param_name] = self.I[param_name]
-                
                 # Update parameters for this noise level
                 for param_name, param_value in params.items():
                     self.I[param_name] = param_value
-                
                 # Temporarily set to training mode so noise is applied
                 self.training = True
                 with torch.no_grad():
-                    E = self.get_E()
-                    P_test = self.project(self.X_test, E)
-                    y_pred_test, accuracy_test, _ = self.decode(P_test, self.y_test)
-                    avg_accuracy = accuracy_test.item()
-                    self.log.info(f"{level_name} Accuracy: {round(avg_accuracy, 4)}")
-                    self.results[f'{level_name} Accuracy'] = avg_accuracy
+                    with torch.no_grad():
+                        _, stats = self.calculate_loss(self.X_test, self.y_test, iteration="Final", suffix='_test')
+                        accuracy = stats.get('accuracy_test', np.nan)
+                        separation = stats.get('separation_test', np.nan)
+                        dynamic_range = stats.get('dynamic_fold_test', np.nan)
+                        self.log.info(f"{level_name} Accuracy: {round(accuracy, 4)}")
+                        self.log.info(f"{level_name} Separation: {round(separation, 4)}")
+                        self.log.info(f"{level_name} Dynamic Range: {round(dynamic_range, 4)}")
+                        self.results[f'{level_name} Accuracy'] = accuracy
+                        self.results[f'{level_name} Separation'] = separation
+                        self.results[f'{level_name} Dynamic Range'] = dynamic_range
                     # Save P_test averages for "No Noise" condition
                     if level_name == "No Noise":
                         self.log.info("Saving P_test averages for No Noise condition...")
                         try:
+                            E = self.get_E()
+                            P_test = self.project(self.X_test, E)
                             P_test_cpu = P_test.cpu()
                             n_bits = P_test_cpu.shape[1]
                             P_type_test = torch.zeros((self.n_categories, n_bits), device='cpu')
@@ -699,7 +704,6 @@ class EncodingDesigner(nn.Module):
                                 self.log.warning("No valid cell types found for P_test averages")
                         except Exception as e:
                             self.log.error(f"Error saving P_test averages for No Noise condition: {e}")
-                
                 # Restore original parameters and training state
                 for param_name, original_value in original_params.items():
                     self.I[param_name] = original_value
@@ -727,20 +731,15 @@ class EncodingDesigner(nn.Module):
             self.log.error("Cannot visualize: Model not initialized. Run initialize() and fit() first.")
             return
         saved_plot_paths = []
-        # Use clean versions for visualization to be consistent with loss calculations
         E = self.get_E_clean()
-        E = E.to(self.I['device'])
         self.eval()
-        # Visualizations are now global
-        global_name_str = "Global"
-        global_fname_safe = sanitize_filename(global_name_str)
-        self.log.info(f"Generating visualization for {global_name_str}...")
+        self.log.info(f"Generating visualization ...")
         X_data_vis = self.X_train # Use full training data
         y_data_vis = self.y_train # Mapped internal labels
         y_vis_str_labels = np.array([self.y_reverse_label_map.get(int
                     (idx.item()), f"Type_{idx.item()}") for idx in y_data_vis])
         if X_data_vis.shape[0] == 0:
-            self.log.warning(f"Skipping visualization for {global_name_str}: No training data found.")
+            self.log.warning(f"Skipping visualization: No training data found.")
             return
         with torch.no_grad():
             self.log.info(f"Generating confusion matrix for test data (Global)...")
@@ -770,37 +769,33 @@ class EncodingDesigner(nn.Module):
                     plt.setp(ax_cm.get_xticklabels(), rotation=45, ha='right')
                     plt.setp(ax_cm.get_yticklabels(), rotation=0)
                     fig_cm.tight_layout()
-                    plot_filename = f"confusion_matrix_test_{global_fname_safe}.pdf"
+                    plot_filename = f"confusion_matrix_test.pdf"
                     plot_path = os.path.join(self.I['output'], plot_filename)
                     fig_cm.savefig(plot_path, dpi=300, bbox_inches='tight')
                     saved_plot_paths.append(plot_path)
-                    self.log.info(f"Saved Test Confusion Matrix for {global_name_str} to {plot_path}")
+                    self.log.info(f"Saved Test Confusion Matrix to {plot_path}")
                 else:
-                    self.log.warning(f"Skipping confusion matrix for {global_name_str}: No labels found in true or predicted test data.")
+                    self.log.warning(f"Skipping confusion matrix: No labels found in true or predicted test data.")
             except Exception as e:
-                self.log.error(f"Error generating Test Confusion Matrix for {global_name_str}: {e}")
+                self.log.error(f"Error generating Test Confusion Matrix: {e}")
             finally:
                 if fig_cm is not None:
                     plt.close(fig_cm)
-        
         # Generate learning curves
         learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
         unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
         unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
         numeric_parameters = np.array([i for i in unique_parameters if not isinstance(learning_curve[i+'_train'].iloc[1],str)])
-        
         for parameter in numeric_parameters:
             try:
                 plot_single_learning_curve(parameter, learning_curve, self.I['output'], self.log)
             except Exception as e:
                 self.log.error(f"Error plotting learning curve for {parameter}: {e}")
-        
         # Generate loss contributions plot
         try:
             plot_loss_contributions(learning_curve, self.I['output'], self.log)
         except Exception as e:
             self.log.error(f"Error plotting loss contributions: {e}")
-        
         # Generate comprehensive performance plot
         try:
             plot_comprehensive_performance(learning_curve, self.I['output'], self.log)
@@ -890,7 +885,7 @@ class EncodingDesigner(nn.Module):
                         else:
                             self.log.warning(f"Skipping type index {type_idx} during P_type calculation (out of bounds).")
                 if not valid_type_indices:
-                    self.log.warning(f"Skipping visualization for {global_name_str}: No valid cell types found after projection.")
+                    self.log.warning(f"Skipping visualization: No valid cell types found after projection.")
                     return
                 P_type_global_present = P_type_global[valid_type_indices].cpu() 
                 n_types_present = P_type_global_present.shape[0]
@@ -1925,8 +1920,11 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
             if metric_name == 'dynamic_range':
                 ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
                 ax.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
-            y_min, y_max = np.percentile(np.concatenate([y_train[mask_train], y_test[mask_test]]), [1, 99])
-            ax.set_ylim(y_min, y_max)
+            if metric_name == 'accuracy':
+                ax.set_ylim(0, 1)
+            else:  # separation and dynamic_range
+                y_min, y_max = np.percentile(np.concatenate([y_train[mask_train], y_test[mask_test]]), [1, 99])
+                ax.set_ylim(0, y_max)  # Set lower limit to 0
     ax1.set_xlabel('Epoch')
     ax1.grid(True, alpha=0.3)
     y_positions = [0.25, 0.20, 0.15]
