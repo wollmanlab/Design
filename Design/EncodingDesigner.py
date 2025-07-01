@@ -329,12 +329,12 @@ class EncodingDesigner(nn.Module):
         current_stats['lower_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
         dynamic_range = signal['upper'] / signal['median'].clamp(min=1e-8)
         current_stats['upper_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
-        target = 2*self.I['dynamic_fold']
+        target = self.I['dynamic_fold']
         dynamic_range = signal['upper'] / signal['lower'].clamp(min=1e-8)
         fold = (target - dynamic_range) / target
         fold = fold[fold>0]
         if fold.numel() > 0:
-            raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * positive_fold.sum()
+            raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * fold.sum()
         else:
             raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
         current_stats['full_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
@@ -350,15 +350,12 @@ class EncodingDesigner(nn.Module):
             mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
             P_i = P_data.unsqueeze(1)
             P_j = P_data.unsqueeze(0)
-            ratio_ij = P_i / P_j.clamp(min=1e-8)
-            ratio_ji = P_j / P_i.clamp(min=1e-8)
-
+            separations = (torch.abs(P_i - P_j) / P_j.clamp(min=1e-8))[mask].max(dim=1)[0]
             target = self.I['separation_fold']
-            separations = torch.maximum(ratio_ij, ratio_ji)[mask].max(dim=1)[0]
             fold = (target - separations) / target
-            positive_fold = fold[fold>0]
-            if positive_fold.numel() > 0:
-                raw_losses['separation_loss'] = self.I['separation_wt'] * positive_fold.mean()
+            fold = fold[fold>0]
+            if fold.numel() > 0:
+                raw_losses['separation_loss'] = self.I['separation_wt'] * fold.mean()
             else:
                 raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
             worst_separation = separations.min().item()

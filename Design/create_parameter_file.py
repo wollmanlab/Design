@@ -83,20 +83,20 @@ user_parameters = {
             'gene_constraint_wt_s': 1,  # Initial weight for gene constraint violation penalty
             'gene_constraint_wt_e': 1,  # Final weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt_s': 0.01,  # Initial weight for dynamic range loss terms
+            'dynamic_wt_s': 0.1,  # Initial weight for dynamic range loss terms
             'dynamic_wt_e': 0.1,  # Final weight for dynamic range loss terms
-            'dynamic_fold_s': 1.0,  # Initial target fold change for dynamic range
-            'dynamic_fold_e': 2.0,  # Final target fold change for dynamic range
-            'separation_wt_s': 0.1,  # Initial weight for cell type separation loss term
+            'dynamic_fold_s': 0.0,  # Initial target fold change for dynamic range
+            'dynamic_fold_e': 4.0,  # Final target fold change for dynamic range
+            'separation_wt_s': 1,  # Initial weight for cell type separation loss term
             'separation_wt_e': 1,  # Final weight for cell type separation loss term
-            'separation_fold_s': 1.0,  # Initial minimum fold change required between cell type pairs
-            'separation_fold_e': 2.0,  # Final minimum fold change required between cell type pairs
+            'separation_fold_s': 0.0,  # Initial minimum fold change required between cell type pairs
+            'separation_fold_e': 1.0,  # Final minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.05,  # Final learning rate (linear interpolation)
             'report_rt': 100,  # How often to report training progress
-            'sparsity_s': 0.8,  # Initial target sparsity ratio (fraction of zeros)
-            'sparsity_e': 0.8,  # Final target sparsity ratio (fraction of zeros)
+            'sparsity_s': 0.95,  # Initial target sparsity ratio (fraction of zeros)
+            'sparsity_e': 0.95,  # Final target sparsity ratio (fraction of zeros)
             'sparsity_wt_s': 0,  # Initial weight for sparsity loss term
             'sparsity_wt_e': 0,  # Final weight for sparsity loss term
             'categorical_wt_s': 5,  # Initial weight for categorical classification loss
