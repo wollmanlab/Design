@@ -46,24 +46,33 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 100000,  # Total number of training iterations
+            'n_iters': 10000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
-            'probe_wt': 1,  # Weight for probe count loss term
-            'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
+            'probe_wt_s': 1,  # Initial weight for probe count loss term
+            'probe_wt_e': 1,  # Final weight for probe count loss term
+            'gene_constraint_wt_s': 1,  # Initial weight for gene constraint violation penalty
+            'gene_constraint_wt_e': 1,  # Final weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt': 0,  # Weight for dynamic range loss terms
-            'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
-            'separation_wt': 0,  # Weight for cell type separation loss term
-            'separation_fold': 2.0,  # Minimum fold change required between cell type pairs
+            'dynamic_wt_s': 1,  # Initial weight for dynamic range loss terms
+            'dynamic_wt_e': 1,  # Final weight for dynamic range loss terms
+            'dynamic_fold_s': 2.0,  # Initial target fold change for dynamic range
+            'dynamic_fold_e': 2.0,  # Final target fold change for dynamic range
+            'separation_wt_s': 1,  # Initial weight for cell type separation loss term
+            'separation_wt_e': 1,  # Final weight for cell type separation loss term
+            'separation_fold_s': 3.0,  # Initial minimum fold change required between cell type pairs
+            'separation_fold_e': 3.0,  # Final minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.05,  # Final learning rate (linear interpolation)
             'report_rt': 100,  # How often to report training progress
-            'sparsity': 0.95,  # Target sparsity ratio (fraction of zeros)
-            'sparsity_wt': 0,  # Weight for sparsity loss term
-            'categorical_wt': 1,  # Weight for categorical classification loss
+            'sparsity_s': 0.8,  # Initial target sparsity ratio (fraction of zeros)
+            'sparsity_e': 0.8,  # Final target sparsity ratio (fraction of zeros)
+            'sparsity_wt_s': 0,  # Initial weight for sparsity loss term
+            'sparsity_wt_e': 0,  # Final weight for sparsity loss term
+            'categorical_wt_s': 1,  # Initial weight for categorical classification loss
+            'categorical_wt_e': 1,  # Final weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -103,8 +112,8 @@ user_parameters = {
             # Weight perturbation parameters
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
-            'E_init_min': 0.01,  # Minimum probe fraction for initialization
-            'E_init_max': 0.05,  # Maximum probe fraction for initialization
+            'E_init_min': 0.001,  # Minimum probe fraction for initialization
+            'E_init_max': 0.01,  # Maximum probe fraction for initialization
             'E_perturb_min': 0.05,  # Minimum probe fraction for perturbation
             'E_perturb_max': 0.25,  # Maximum probe fraction for perturbation
             # Activation and normalization parameters
@@ -112,6 +121,7 @@ user_parameters = {
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
+            'debug': 1, 
         }
 
 user_parameters['input'] = input_dir
@@ -126,6 +136,12 @@ user_parameters['input'] = input_dir
 #         {'P_add':[0,1,2.0,2.5,3.0,3.5,4.0]},
 #         {'n_bit':[6,12,24,48,96]},
 # ]
+
+parameter_variant_list = [
+        {'dynamic_wt':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
+        {'separation_wt':[0,0.1,0.25,0.5,0.75,0.9]},
+        {'categorical_wt':[0,0.1,0.5,1,2,5,10]}
+]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
 # {'X_drp': [0.1], 'X_noise': [0.5], 'E_drp': [0.1], 'E_noise': [0.0], 'P_drp': [0.0], 'P_noise': [0.05], 'P_add': [2.5]},
@@ -137,9 +153,10 @@ user_parameters['input'] = input_dir
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-parameter_variant_list = [{
-    'n_iters':[10000],'gene_constraint_loss':[0.1,1],
-    'dynamic_wt':[0,1],'separation_wt':[0,1],'categorical_wt':[1,2,5]}]
+# parameter_variant_list = [
+#     {
+#     'n_iters':[10000]
+#     }]
 
 # add an option to have _s and _e be the same value
 same_se = True

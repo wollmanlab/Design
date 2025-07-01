@@ -40,20 +40,31 @@ class EncodingDesigner(nn.Module):
             'batch_size': 1000,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
-            'probe_wt': 1,  # Weight for probe count loss term
-            'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
+            'probe_wt_s': 1,  # Initial weight for probe count loss term
+            'probe_wt_e': 1,  # Final weight for probe count loss term
+            'gene_constraint_wt_s': 1,  # Initial weight for gene constraint violation penalty
+            'gene_constraint_wt_e': 1,  # Final weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
             'dynamic_wt': 1,  # Weight for dynamic range loss terms
-            'dynamic_fold': 2.0,  # Target fold change for dynamic range (lower and upper)
-            'separation_wt': 1,  # Weight for cell type separation loss term
-            'separation_fold': 3.0,  # Minimum fold change required between cell type pairs
+            'dynamic_wt_s': 1,  # Initial weight for dynamic range loss terms
+            'dynamic_wt_e': 1,  # Final weight for dynamic range loss terms
+            'dynamic_fold_s': 2.0,  # Initial target fold change for dynamic range
+            'dynamic_fold_e': 2.0,  # Final target fold change for dynamic range
+            'separation_wt_s': 1,  # Initial weight for cell type separation loss term
+            'separation_wt_e': 1,  # Final weight for cell type separation loss term
+            'separation_fold_s': 3.0,  # Initial minimum fold change required between cell type pairs
+            'separation_fold_e': 3.0,  # Final minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.005,  # Final learning rate (linear interpolation)
             'report_rt': 250,  # How often to report training progress
             'sparsity': 0.8,  # Target sparsity ratio (fraction of zeros)
-            'sparsity_wt': 0,  # Weight for sparsity loss term
-            'categorical_wt': 1,  # Weight for categorical classification loss
+            'sparsity_s': 0.8,  # Initial target sparsity ratio (fraction of zeros)
+            'sparsity_e': 0.8,  # Final target sparsity ratio (fraction of zeros)
+            'sparsity_wt_s': 0,  # Initial weight for sparsity loss term
+            'sparsity_wt_e': 0,  # Final weight for sparsity loss term
+            'categorical_wt_s': 1,  # Initial weight for categorical classification loss
+            'categorical_wt_e': 1,  # Final weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -102,6 +113,7 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
+            'debug': 0, 
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -220,7 +232,7 @@ class EncodingDesigner(nn.Module):
         current_stats = {}
 
         # --- Probe count loss ---
-        if self.I['probe_wt']!=0:
+        if (self.I['probe_wt']!=0) and (self.I['debug']==0):
             # if fold is double target loss is 1 * probe_wt
             # if fold is 0 loss is 0 * probe_wt
             # if fold is below target loss is approaching negative alpha * probe_wt
@@ -230,7 +242,7 @@ class EncodingDesigner(nn.Module):
             current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
 
         # --- Gene constraint loss ---
-        if self.I['gene_constraint_wt'] != 0:
+        if (self.I['gene_constraint_wt'] != 0) and (self.I['debug']==0):
             # if 0% of probes are constrained loss is 0
             # if 1% of probes are constrained loss is 0.01 * gene_constraint_wt
             # if 100% of probes are constrained loss is 1 * gene_constraint_wt
@@ -241,9 +253,10 @@ class EncodingDesigner(nn.Module):
             constraints = self.constraints[non_zero_constraints].clamp(min=1)
             difference = total_probes_per_gene-constraints
             violations = difference>1
-            gene_constraint_loss = self.I['gene_constraint_wt'] * difference[violations].sum()
-            
-            raw_losses['gene_constraint_loss'] = gene_constraint_loss
+            if violations.any():
+                raw_losses['gene_constraint_loss'] = self.I['gene_constraint_wt'] * (difference[violations].mean()-1)
+            else:
+                raw_losses['gene_constraint_loss'] = torch.tensor(0, device=P_clean.device)
             current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
             current_stats['E_median_wt' + suffix] = round(E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0, 4)
             current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
@@ -252,11 +265,12 @@ class EncodingDesigner(nn.Module):
             current_stats['total_violation_probes' + suffix] = round(difference[violations].sum().item(), 4)
 
         # --- Sparsity loss ---
-        if self.I['sparsity_wt'] != 0:
+        if (self.I['sparsity_wt'] != 0) and (self.I['debug']==0):
             sparsity_threshold = 1
             sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
-            fold = (self.I['sparsity'] - sparsity_ratio) / self.I['sparsity']
-            sparsity_loss = self.I['sparsity_wt'] * F.elu(-fold,alpha=0.1)
+            target = self.I['sparsity']
+            fold = (target - sparsity_ratio) / target
+            sparsity_loss = self.I['sparsity_wt'] * F.elu(fold,alpha=0.1)
             raw_losses['sparsity_loss'] = sparsity_loss
             current_stats['sparsity' + suffix] = round(sparsity_ratio.item(), 4)
 
@@ -291,10 +305,10 @@ class EncodingDesigner(nn.Module):
         current_stats['E_best_bit' + suffix] = f"min:{max(max_lower, 1):.2e}, med:{max(max_median, 1):.2e}, max:{max(max_upper, 1):.2e}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
         
         # --- Brightness loss ---
-        if self.I['brightness_wt'] != 0:
+        if (self.I['brightness_wt'] != 0) and (self.I['debug']==0):
             target_brightness = 10**self.I['brightness']
             median_brightness = median_brightness_per_bit.clamp(min=1)
-            fold = (target_brightness - median_brightness) / target_brightness
+            fold = (target_brightness-median_brightness)/target_brightness
             brightness_loss = self.I['brightness_wt'] * fold[fold>0].sum()
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
@@ -303,28 +317,25 @@ class EncodingDesigner(nn.Module):
             current_stats['dynamic_range' + suffix] = round((upper_brightness_per_bit-lower_brightness_per_bit).mean().item(), 4)
 
         # --- Dynamic range loss (lower and upper) ---
-        if self.I['dynamic_wt'] != 0:
+        if (self.I['dynamic_wt'] != 0) and (self.I['debug']==0):
             # Lower dynamic range
-            lower_fold_change = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            fold = (self.I['dynamic_fold'] - lower_fold_change) / self.I['dynamic_fold']
-            lower_dynamic_loss = self.I['dynamic_wt'] * fold[fold>0].mean()
-            # raw_losses['lower_dynamic_loss'] = lower_dynamic_loss
-            current_stats['lower_dynamic_fold' + suffix] = round(lower_fold_change.mean().item(), 4)
+            dynamic_range = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+            current_stats['lower_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
             # Upper dynamic range
-            upper_fold_change = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
-            fold = (self.I['dynamic_fold'] - upper_fold_change) / self.I['dynamic_fold']
-            upper_dynamic_loss = self.I['dynamic_wt'] * fold[fold>0].mean()
-            # raw_losses['upper_dynamic_loss'] = upper_dynamic_loss
-            current_stats['upper_dynamic_fold' + suffix] = round(upper_fold_change.mean().item(), 4)
+            dynamic_range = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
+            current_stats['upper_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
             # Full dynamic range
-            full_fold_change = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            fold = (2*self.I['dynamic_fold']-full_fold_change) / 2*self.I['dynamic_fold']
-            full_dynamic_loss = self.I['dynamic_wt'] * fold[fold>0].sum()
-            raw_losses['full_dynamic_loss'] = full_dynamic_loss
-            current_stats['full_dynamic_fold' + suffix] = round(full_fold_change.mean().item(), 4)
+            target = 2*self.I['dynamic_fold']
+            dynamic_range = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+            fold = (target - dynamic_range) / target
+            if fold.numel() > 0:
+                raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * fold[fold>0].sum()
+            else:
+                raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device)
+            current_stats['full_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
 
         # --- Cell type separation loss ---
-        if self.I['separation_wt'] != 0:
+        if (self.I['separation_wt'] != 0) and (self.I['debug']==0):
             batch_categories = torch.unique(y)
             if len(batch_categories) > 1:
                 P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
@@ -337,20 +348,22 @@ class EncodingDesigner(nn.Module):
                 P_j = P_data.unsqueeze(0)
                 ratio_ij = P_i / P_j.clamp(min=1e-8)
                 ratio_ji = P_j / P_i.clamp(min=1e-8)
-                fold_changes = torch.maximum(ratio_ij, ratio_ji)
-                fold_changes_masked = fold_changes[mask]
-                max_fold_changes = fold_changes_masked.max(dim=1)[0]
-                fold = (self.I['separation_fold']-max_fold_changes) / self.I['separation_fold']
-                separation_loss = self.I['separation_wt'] * fold[fold>0].sum()
-                worst_fold_change = max_fold_changes.min().item()
-                p10,p50,p90 = torch.quantile(max_fold_changes, torch.tensor([0.1, 0.5, 0.9]))
-                best_fold_change = max_fold_changes.max().item()
-                raw_losses['separation_loss'] = separation_loss
-                current_stats['worst_separation' + suffix] = round(worst_fold_change, 4)
-                current_stats['separation' + suffix] = f"min:{worst_fold_change:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
+
+                target = self.I['separation_fold']
+                separations = torch.maximum(ratio_ij, ratio_ji)[mask].max(dim=1)[0]
+                fold = (target - separations) / target
+                if fold.numel() > 0:
+                    raw_losses['separation_loss'] = self.I['separation_wt'] * fold[fold>0].mean()
+                else:
+                    raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device)
+                worst_separations = separations.min().item()
+                p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
+                best_fold_change = separations.max().item()
+                current_stats['worst_separation' + suffix] = round(worst_separations, 4)
+                current_stats['separation' + suffix] = f"min:{worst_separations:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
 
         # The model should accurately decode cell type labels
-        if self.I['categorical_wt'] != 0:
+        if (self.I['categorical_wt'] != 0) and (self.I['debug']==0):
             categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component#.clamp(min=0,max=15)
             raw_losses['categorical_loss'] = categorical_loss_component
 
@@ -370,7 +383,6 @@ class EncodingDesigner(nn.Module):
         module = self.decoder[0]
         current_stats['D_change' + suffix] = 0.0
         if (self.prev_decoder_weights is not None) and (isinstance(module, nn.Linear)):
-
             current_weights = module.weight.data
             prev_weights = self.prev_decoder_weights
             non_zero_mask = (current_weights != 0) & (prev_weights != 0)
@@ -386,7 +398,7 @@ class EncodingDesigner(nn.Module):
         total_loss = sum(raw_losses.values()) # tensor not int
         if isinstance(total_loss, int):
             total_loss = torch.tensor(total_loss)
-            current_stats['$$$ - total_loss' + suffix] = round(total_loss.item(), 4)
+        current_stats['$$$ - total_loss' + suffix] = round(total_loss.item(), 4)
         
         return total_loss, current_stats
 
@@ -785,6 +797,12 @@ class EncodingDesigner(nn.Module):
                 plot_single_learning_curve(parameter, learning_curve, self.I['output'], self.log)
             except Exception as e:
                 self.log.error(f"Error plotting learning curve for {parameter}: {e}")
+        
+        # Generate loss contributions plot
+        try:
+            plot_loss_contributions(learning_curve, self.I['output'], self.log)
+        except Exception as e:
+            self.log.error(f"Error plotting loss contributions: {e}")
         
         E = self.get_E_clean()
         E = E.to(self.I['device'])
@@ -1782,6 +1800,52 @@ def plot_single_learning_curve(parameter, learning_curve, output_dir, log=None):
         log.info(f"Saved learning curve for {parameter} to {plot_path}")
     else:
         log.warning(f"Skipping learning curve for {parameter}: insufficient valid data")
+
+def plot_loss_contributions(learning_curve, output_dir, log=None):
+    """Plot relative contribution of each loss term to total loss across training epochs."""
+    if log is None:
+        log = logging.getLogger("LossContributionPlotter")
+    loss_columns = [col for col in learning_curve.columns if 'train' in col.lower() and 'loss' in col.lower()]
+    total_loss_col = [col for col in learning_curve.columns if 'train' in col.lower() and 'loss' in col.lower()and 'total' in col.lower()][0]
+    valid_iterations = [idx for idx in learning_curve.index if str(idx).replace('.', '').isdigit()]
+    if not valid_iterations:
+        log.warning("No valid numeric iterations found")
+        return
+    data = learning_curve.loc[valid_iterations]
+    x = np.array([float(idx) for idx in data.index])
+    total_loss_values = data[total_loss_col].astype(float)
+    # Calculate relative contributions
+    contributions = []
+    valid_loss_names = []
+    for col in loss_columns:
+        if col == total_loss_col:
+            continue
+        loss_values = data[col].astype(float)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            relative_contribution = np.divide(loss_values, total_loss_values, 
+                                           out=np.zeros_like(loss_values), 
+                                           where=total_loss_values != 0)
+        if np.any(np.isfinite(relative_contribution)):
+            contributions.append(relative_contribution)
+            clean_name = col.replace('_train', '').replace('$$$ - ', '').replace('_', ' ').replace('loss', '').title()
+            valid_loss_names.append(clean_name)
+    if not contributions:
+        log.warning("No valid loss contributions found")
+        return
+    # Create stacked area plot
+    plt.figure(figsize=(12, 8))
+    plt.stackplot(x, np.vstack(contributions), labels=valid_loss_names, alpha=0.8)
+    plt.xlabel('Iteration')
+    plt.ylabel('Relative Contribution to Total Loss')
+    plt.title('Loss Term Contributions (Training)')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.3)
+    plt.ylim(0, 1)
+    plt.tight_layout()
+    plot_path = os.path.join(output_dir, 'loss_contributions.pdf')
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    log.info(f"Saved loss contributions plot to {plot_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
