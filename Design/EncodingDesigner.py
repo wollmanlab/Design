@@ -45,7 +45,6 @@ class EncodingDesigner(nn.Module):
             'gene_constraint_wt_s': 1,  # Initial weight for gene constraint violation penalty
             'gene_constraint_wt_e': 1,  # Final weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt': 1,  # Weight for dynamic range loss terms
             'dynamic_wt_s': 1,  # Initial weight for dynamic range loss terms
             'dynamic_wt_e': 1,  # Final weight for dynamic range loss terms
             'dynamic_fold_s': 2.0,  # Initial target fold change for dynamic range
@@ -216,7 +215,7 @@ class EncodingDesigner(nn.Module):
             loss_fn = nn.CrossEntropyLoss(label_smoothing=self.I['label_smoothing']) 
             categorical_loss = loss_fn(R, y)
         else:
-            categorical_loss = torch.tensor(0, device=R.device, requires_grad=True)
+            categorical_loss = torch.tensor(0, device=R.device, dtype=torch.float32, requires_grad=True)
         return y_predict, accuracy, categorical_loss
 
     def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
@@ -256,7 +255,7 @@ class EncodingDesigner(nn.Module):
             if violations.any():
                 raw_losses['gene_constraint_loss'] = self.I['gene_constraint_wt'] * (difference[violations].mean()-1)
             else:
-                raw_losses['gene_constraint_loss'] = torch.tensor(0, device=P_clean.device)
+                raw_losses['gene_constraint_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
             current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
             current_stats['E_median_wt' + suffix] = round(E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0, 4)
             current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
@@ -309,7 +308,11 @@ class EncodingDesigner(nn.Module):
             target_brightness = 10**self.I['brightness']
             median_brightness = median_brightness_per_bit.clamp(min=1)
             fold = (target_brightness-median_brightness)/target_brightness
-            brightness_loss = self.I['brightness_wt'] * fold[fold>0].sum()
+            positive_fold = fold[fold>0]
+            if positive_fold.numel() > 0:
+                brightness_loss = self.I['brightness_wt'] * positive_fold.sum()
+            else:
+                brightness_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
             raw_losses['brightness_loss'] = brightness_loss
             current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
             current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
@@ -328,10 +331,11 @@ class EncodingDesigner(nn.Module):
             target = 2*self.I['dynamic_fold']
             dynamic_range = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
             fold = (target - dynamic_range) / target
-            if fold.numel() > 0:
-                raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * fold[fold>0].sum()
+            positive_fold = fold[fold>0]
+            if positive_fold.numel() > 0:
+                raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * positive_fold.sum()
             else:
-                raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device)
+                raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
             current_stats['full_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
 
         # --- Cell type separation loss ---
@@ -352,10 +356,11 @@ class EncodingDesigner(nn.Module):
                 target = self.I['separation_fold']
                 separations = torch.maximum(ratio_ij, ratio_ji)[mask].max(dim=1)[0]
                 fold = (target - separations) / target
-                if fold.numel() > 0:
-                    raw_losses['separation_loss'] = self.I['separation_wt'] * fold[fold>0].mean()
+                positive_fold = fold[fold>0]
+                if positive_fold.numel() > 0:
+                    raw_losses['separation_loss'] = self.I['separation_wt'] * positive_fold.mean()
                 else:
-                    raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device)
+                    raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
                 worst_separations = separations.min().item()
                 p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
                 best_fold_change = separations.max().item()
@@ -395,9 +400,12 @@ class EncodingDesigner(nn.Module):
         for key, value in raw_losses.items():
             current_stats['$$$ - ' + key + suffix] = round(value.item(), 4)
         #total_loss is a tensor
-        total_loss = sum(raw_losses.values()) # tensor not int
-        if isinstance(total_loss, int):
-            total_loss = torch.tensor(total_loss)
+        if len(raw_losses) == 0:
+            total_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        else:
+            total_loss = sum(raw_losses.values()) # tensor not int
+            if isinstance(total_loss, int):
+                total_loss = torch.tensor(total_loss, device=P_clean.device, dtype=torch.float32, requires_grad=True)
         current_stats['$$$ - total_loss' + suffix] = round(total_loss.item(), 4)
         
         return total_loss, current_stats
