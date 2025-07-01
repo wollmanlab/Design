@@ -112,7 +112,6 @@ class EncodingDesigner(nn.Module):
             'decoder_act': 'gelu',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'debug': 0,
             'continue_training': 1,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
         }
         self._setup_logging(user_parameters_path)
@@ -232,47 +231,44 @@ class EncodingDesigner(nn.Module):
         current_stats = {}
 
         # --- Probe count loss ---
-        if (self.I['probe_wt']!=0) and (self.I['debug']==0):
-            # if fold is double target loss is 1 * probe_wt
-            # if fold is 0 loss is 0 * probe_wt
-            # if fold is below target loss is approaching negative alpha * probe_wt
-            fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
-            probe_wt_loss = F.elu(fold,alpha=0.05)
-            raw_losses['probe_wt_loss'] = probe_wt_loss
-            current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
+        # if fold is double target loss is 1 * probe_wt
+        # if fold is 0 loss is 0 * probe_wt
+        # if fold is below target loss is approaching negative alpha * probe_wt
+        fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
+        probe_wt_loss = F.elu(fold,alpha=0.05)
+        raw_losses['probe_wt_loss'] = probe_wt_loss
+        current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
 
         # --- Gene constraint loss ---
-        if (self.I['gene_constraint_wt'] != 0) and (self.I['debug']==0):
-            # if 0% of probes are constrained loss is 0
-            # if 1% of probes are constrained loss is 0.01 * gene_constraint_wt
-            # if 100% of probes are constrained loss is 1 * gene_constraint_wt
-            if self.constraints is None: raise RuntimeError("Constraints not initialized")
-            total_probes_per_gene = E_clean.sum(1)
-            non_zero_constraints = self.constraints>0
-            total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
-            constraints = self.constraints[non_zero_constraints].clamp(min=1)
-            difference = total_probes_per_gene-constraints
-            violations = difference>1
-            if violations.any():
-                raw_losses['gene_constraint_loss'] = self.I['gene_constraint_wt'] * (difference[violations].mean()-1)
-            else:
-                raw_losses['gene_constraint_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-            current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
-            current_stats['E_median_wt' + suffix] = round(E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0, 4)
-            current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
-            current_stats['avg_over_constraint' + suffix] = round(difference[violations].mean().item(), 4) if violations.any() else 0
-            current_stats['max_over_constraint' + suffix] = round(difference.max().item(), 4) if difference.numel() > 0 else 0
-            current_stats['total_violation_probes' + suffix] = round(difference[violations].sum().item(), 4)
+        # if 0% of probes are constrained loss is 0
+        # if 1% of probes are constrained loss is 0.01 * gene_constraint_wt
+        # if 100% of probes are constrained loss is 1 * gene_constraint_wt
+        if self.constraints is None: raise RuntimeError("Constraints not initialized")
+        total_probes_per_gene = E_clean.sum(1)
+        non_zero_constraints = self.constraints>0
+        total_probes_per_gene = total_probes_per_gene[non_zero_constraints]
+        constraints = self.constraints[non_zero_constraints].clamp(min=1)
+        difference = total_probes_per_gene-constraints
+        violations = difference>1
+        if violations.any():
+            raw_losses['gene_constraint_loss'] = self.I['gene_constraint_wt'] * (difference[violations].mean()-1)
+        else:
+            raw_losses['gene_constraint_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        current_stats['E_total_n_genes' + suffix] = (E_clean > 1).any(1).sum().item()
+        current_stats['E_median_wt' + suffix] = round(E_clean[E_clean > 1].median().item() if (E_clean > 1).any() else 0, 4)
+        current_stats['n_genes_over_constraint' + suffix] = violations.sum().item()
+        current_stats['avg_over_constraint' + suffix] = round(difference[violations].mean().item(), 4) if violations.any() else 0
+        current_stats['max_over_constraint' + suffix] = round(difference.max().item(), 4) if difference.numel() > 0 else 0
+        current_stats['total_violation_probes' + suffix] = round(difference[violations].sum().item(), 4)
 
         # --- Sparsity loss ---
-        if (self.I['sparsity_wt'] != 0) and (self.I['debug']==0):
-            sparsity_threshold = 1
-            sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
-            target = self.I['sparsity']
-            fold = (target - sparsity_ratio) / target
-            sparsity_loss = self.I['sparsity_wt'] * F.elu(fold,alpha=0.1)
-            raw_losses['sparsity_loss'] = sparsity_loss
-            current_stats['sparsity' + suffix] = round(sparsity_ratio.item(), 4)
+        sparsity_threshold = 1
+        sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
+        target = self.I['sparsity']
+        fold = (target - sparsity_ratio) / target
+        sparsity_loss = self.I['sparsity_wt'] * F.elu(fold,alpha=0.1)
+        raw_losses['sparsity_loss'] = sparsity_loss
+        current_stats['sparsity' + suffix] = round(sparsity_ratio.item(), 4)
 
         # The model should have a robust brightness and dynamic range
         # use sum normalized for this 
@@ -305,73 +301,69 @@ class EncodingDesigner(nn.Module):
         current_stats['E_best_bit' + suffix] = f"min:{max(max_lower, 1):.2e}, med:{max(max_median, 1):.2e}, max:{max(max_upper, 1):.2e}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
         
         # --- Brightness loss ---
-        if (self.I['brightness_wt'] != 0) and (self.I['debug']==0):
-            target_brightness = 10**self.I['brightness']
-            median_brightness = median_brightness_per_bit.clamp(min=1)
-            fold = (target_brightness-median_brightness)/target_brightness
-            positive_fold = fold[fold>0]
-            if positive_fold.numel() > 0:
-                brightness_loss = self.I['brightness_wt'] * positive_fold.sum()
-            else:
-                brightness_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-            raw_losses['brightness_loss'] = brightness_loss
-            current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
-            current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
-            current_stats['upper brightness' + suffix] = round(upper_brightness_per_bit.mean().item(), 4)
-            current_stats['dynamic_range' + suffix] = round((upper_brightness_per_bit-lower_brightness_per_bit).mean().item(), 4)
+        target_brightness = 10**self.I['brightness']
+        median_brightness = median_brightness_per_bit.clamp(min=1)
+        fold = (target_brightness-median_brightness)/target_brightness
+        positive_fold = fold[fold>0]
+        if positive_fold.numel() > 0:
+            brightness_loss = self.I['brightness_wt'] * positive_fold.sum()
+        else:
+            brightness_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        raw_losses['brightness_loss'] = brightness_loss
+        current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
+        current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
+        current_stats['upper brightness' + suffix] = round(upper_brightness_per_bit.mean().item(), 4)
+        current_stats['dynamic_range' + suffix] = round((upper_brightness_per_bit-lower_brightness_per_bit).mean().item(), 4)
 
         # --- Dynamic range loss (lower and upper) ---
-        if (self.I['dynamic_wt'] != 0) and (self.I['debug']==0):
-            # Lower dynamic range
-            dynamic_range = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            current_stats['lower_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
-            # Upper dynamic range
-            dynamic_range = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
-            current_stats['upper_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
-            # Full dynamic range
-            target = 2*self.I['dynamic_fold']
-            dynamic_range = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
-            fold = (target - dynamic_range) / target
-            positive_fold = fold[fold>0]
-            if positive_fold.numel() > 0:
-                raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * positive_fold.sum()
-            else:
-                raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-            current_stats['full_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
+        # Lower dynamic range
+        dynamic_range = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+        current_stats['lower_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
+        # Upper dynamic range
+        dynamic_range = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
+        current_stats['upper_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
+        # Full dynamic range
+        target = 2*self.I['dynamic_fold']
+        dynamic_range = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+        fold = (target - dynamic_range) / target
+        positive_fold = fold[fold>0]
+        if positive_fold.numel() > 0:
+            raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * positive_fold.sum()
+        else:
+            raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        current_stats['full_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
 
         # --- Cell type separation loss ---
-        if (self.I['separation_wt'] != 0) and (self.I['debug']==0):
-            batch_categories = torch.unique(y)
-            if len(batch_categories) > 1:
-                P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
-                for i, type_idx in enumerate(batch_categories):
-                    v = P_clean_sum_norm[y == type_idx].mean(dim=0)
-                    v = v/v.sum().clamp(min=1e-8)
-                    P_data[i] = v
-                mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
-                P_i = P_data.unsqueeze(1)
-                P_j = P_data.unsqueeze(0)
-                ratio_ij = P_i / P_j.clamp(min=1e-8)
-                ratio_ji = P_j / P_i.clamp(min=1e-8)
+        batch_categories = torch.unique(y)
+        if len(batch_categories) > 1:
+            P_data = torch.zeros((len(batch_categories), P_clean.shape[1]), device=P_clean.device)
+            for i, type_idx in enumerate(batch_categories):
+                v = P_clean_sum_norm[y == type_idx].mean(dim=0)
+                v = v/v.sum().clamp(min=1e-8)
+                P_data[i] = v
+            mask = ~torch.eye(len(batch_categories), dtype=torch.bool, device=P_clean.device)
+            P_i = P_data.unsqueeze(1)
+            P_j = P_data.unsqueeze(0)
+            ratio_ij = P_i / P_j.clamp(min=1e-8)
+            ratio_ji = P_j / P_i.clamp(min=1e-8)
 
-                target = self.I['separation_fold']
-                separations = torch.maximum(ratio_ij, ratio_ji)[mask].max(dim=1)[0]
-                fold = (target - separations) / target
-                positive_fold = fold[fold>0]
-                if positive_fold.numel() > 0:
-                    raw_losses['separation_loss'] = self.I['separation_wt'] * positive_fold.mean()
-                else:
-                    raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-                worst_separations = separations.min().item()
-                p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
-                best_fold_change = separations.max().item()
-                current_stats['worst_separation' + suffix] = round(worst_separations, 4)
-                current_stats['separation' + suffix] = f"min:{worst_separations:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
+            target = self.I['separation_fold']
+            separations = torch.maximum(ratio_ij, ratio_ji)[mask].max(dim=1)[0]
+            fold = (target - separations) / target
+            positive_fold = fold[fold>0]
+            if positive_fold.numel() > 0:
+                raw_losses['separation_loss'] = self.I['separation_wt'] * positive_fold.mean()
+            else:
+                raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+            worst_separations = separations.min().item()
+            p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
+            best_fold_change = separations.max().item()
+            current_stats['worst_separation' + suffix] = round(worst_separations, 4)
+            current_stats['separation' + suffix] = f"min:{worst_separations:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
 
         # The model should accurately decode cell type labels
-        if (self.I['categorical_wt'] != 0) and (self.I['debug']==0):
-            categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component#.clamp(min=0,max=15)
-            raw_losses['categorical_loss'] = categorical_loss_component
+        categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component#.clamp(min=0,max=15)
+        raw_losses['categorical_loss'] = categorical_loss_component
 
         current_stats['accuracy' + suffix] = round(accuracy.item(), 4) # last for readability
         
