@@ -162,6 +162,8 @@ user_parameters['input'] = input_dir
 parameter_variant_list = [
         {'dynamic_fold_e':[0.0,1.0,2.0,4.0]},
         {'separation_fold_e':[0,0.5,1.0,1.5,2.0]},
+        {'dynamic_fold_e':[0.0,1.0,2.0,4.0],
+        'separation_fold_e':[0,0.5,1.0,1.5,2.0]},
 ]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
