@@ -917,8 +917,6 @@ class EncodingDesigner(nn.Module):
         input_filename = os.path.basename(user_parameters_path) if user_parameters_path else "default"
         input_filename = os.path.splitext(input_filename)[0]  
         self.log_file = os.path.join(self.I['output'], f'log_{input_filename}.log')
-        if os.path.exists(self.log_file):
-            os.remove(self.log_file)
         logging.basicConfig(
             filename=self.log_file, filemode='a',
             format='%(message)s            |||| %(asctime)s %(name)s %(levelname)s',
