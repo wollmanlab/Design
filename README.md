@@ -50,16 +50,19 @@ Follow these steps to execute the designer:
     * `create_type_tree.py` - Creates the type tree for the reference.
 
 2. **Run Scripts:**
-    * `create_parameter_file.py` - Creates parameter files for `multi_param_file_optimization.sh`.
-        * **Parameters to change:** `base_dir`, `parameter_variants`, replace Run0 
+    * `create_parameter_file.py` - Creates parameter files and automatically submits jobs.
+        * **Parameters to change:** `base_dir`, `parameter_variants`
         ```bash
         conda activate designer_3.12
-        python ./Design/create_parameter_file.py Run0
+        python ./Design/create_parameter_file.py [Run#]
         ```
+        * **Run number:** You can specify a run number (e.g., `Run0`, `Run1`) or let the script automatically find the next available run number.
+        * This script now automatically calls `sub_multi_param_file_optimization.sh` after creating the parameter files, so you only need to run one command.
     * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
         1. Creates the jobs.
         2. Executes the jobs by running `EncodingDesigner.py`.
         * **Parameters to change:** `OPT_DIR`, `CODE_DIR`, replace Run0 
+        * **Note:** This script is now automatically called by `create_parameter_file.py`, but can still be run manually if needed:
         ```bash
         ./Design/sub_multi_param_file_optimization.sh Run0
         ```

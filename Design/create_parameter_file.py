@@ -24,14 +24,42 @@ print(f"input_dir: {input_dir}")
 
 # Check if a command line argument was provided for the run directory
 import sys
+import re
+
+def find_next_run_number(base_dir):
+    """Find the next available run number by looking at existing Run# directories."""
+    if not os.path.exists(base_dir):
+        return "Run0"
+    
+    # Get all directories in base_dir
+    try:
+        existing_dirs = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+    except (OSError, PermissionError):
+        print(f"Warning: Could not read directory {base_dir}. Using Run0.")
+        return "Run0"
+    
+    # Find directories that match the pattern "Run" followed by a number
+    run_dirs = []
+    for dir_name in existing_dirs:
+        match = re.match(r'^Run(\d+)$', dir_name)
+        if match:
+            run_dirs.append(int(match.group(1)))
+    
+    if not run_dirs:
+        return "Run0"
+    
+    # Find the highest run number and add 1
+    next_run_num = max(run_dirs) + 1
+    return f"Run{next_run_num}"
+
 if len(sys.argv) > 1:
     run_dir = sys.argv[1]
     base_dir = os.path.join(base_dir, run_dir)
 else:
-    # Exit with an error message if no run directory is specified
-    print("Error: You must provide a run directory name as an argument.")
-    print("Usage: python create_parameter_file.py <run_directory_name>")
-    sys.exit(1)
+    # Automatically infer the next run number
+    run_dir = find_next_run_number(base_dir)
+    base_dir = os.path.join(base_dir, run_dir)
+    print(f"No run directory specified. Automatically using: {run_dir}")
 
 # Ensure the base directory exists
 os.makedirs(base_dir, exist_ok=True)
@@ -55,14 +83,14 @@ user_parameters = {
             'gene_constraint_wt_s': 1,  # Initial weight for gene constraint violation penalty
             'gene_constraint_wt_e': 1,  # Final weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt_s': 1,  # Initial weight for dynamic range loss terms
-            'dynamic_wt_e': 1,  # Final weight for dynamic range loss terms
-            'dynamic_fold_s': 2.0,  # Initial target fold change for dynamic range
+            'dynamic_wt_s': 0.01,  # Initial weight for dynamic range loss terms
+            'dynamic_wt_e': 0.1,  # Final weight for dynamic range loss terms
+            'dynamic_fold_s': 1.0,  # Initial target fold change for dynamic range
             'dynamic_fold_e': 2.0,  # Final target fold change for dynamic range
-            'separation_wt_s': 1,  # Initial weight for cell type separation loss term
+            'separation_wt_s': 0.1,  # Initial weight for cell type separation loss term
             'separation_wt_e': 1,  # Final weight for cell type separation loss term
-            'separation_fold_s': 3.0,  # Initial minimum fold change required between cell type pairs
-            'separation_fold_e': 3.0,  # Final minimum fold change required between cell type pairs
+            'separation_fold_s': 1.0,  # Initial minimum fold change required between cell type pairs
+            'separation_fold_e': 2.0,  # Final minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.05,  # Final learning rate (linear interpolation)
@@ -71,8 +99,8 @@ user_parameters = {
             'sparsity_e': 0.8,  # Final target sparsity ratio (fraction of zeros)
             'sparsity_wt_s': 0,  # Initial weight for sparsity loss term
             'sparsity_wt_e': 0,  # Final weight for sparsity loss term
-            'categorical_wt_s': 1,  # Initial weight for categorical classification loss
-            'categorical_wt_e': 1,  # Final weight for categorical classification loss
+            'categorical_wt_s': 5,  # Initial weight for categorical classification loss
+            'categorical_wt_e': 5,  # Final weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -89,13 +117,13 @@ user_parameters = {
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             'P_scaling': 5,  # Scaling factor for sum normalization (defaults to n_bit)
             # Gene-level noise parameters
-            'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
-            'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
+            'X_drp_s': 0.05,  # Initial proportion of genes to drop out (randomly set to 0)
+            'X_drp_e': 0.05,  # Final proportion of genes to drop out (randomly set to 0)
             'X_noise_s': 0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             'X_noise_e': 0,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
-            'E_drp_s': 0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
-            'E_drp_e': 0,  # Final proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_s': 0.05,  # Initial proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_e': 0.05,  # Final proportion of encoding weights to drop out (randomly set to 0)
             'E_noise_s': 0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
             'E_noise_e': 0,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters
@@ -107,8 +135,8 @@ user_parameters = {
             'D_drp_s': 0,  # Initial decoder dropout rate
             'D_drp_e': 0,  # Final decoder dropout rate
             # Constant noise parameters
-            'P_add_s': 0,  # Initial constant noise level (log10 scale, added to projections)
-            'P_add_e': 0,  # Final constant noise level (log10 scale, added to projections)
+            'P_add_s': 2.0,  # Initial constant noise level (log10 scale, added to projections)
+            'P_add_e': 2.0,  # Final constant noise level (log10 scale, added to projections)
             # Weight perturbation parameters
             'E_perturb_rt': 0,  # How often to perturb weights (every N iterations)
             'E_perb_prct': 0.01,  # Percentage of weights to perturb (0.0-1.0)
@@ -153,10 +181,10 @@ parameter_variant_list = [
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-# parameter_variant_list = [
-#     {
-#     'n_iters':[10000]
-#     }]
+parameter_variant_list = [
+    {
+    'n_iters':[5000]
+    }]
 
 # add an option to have _s and _e be the same value
 same_se = True
@@ -221,3 +249,25 @@ for parameter_variants in parameter_variant_list:
 
     print(f"Generated {len(combinations)} parameter files in {input_param_path}")
 print(f"Generated {len(total_combinations)} parameter files in {input_param_path}")
+
+# Call the shell script to submit jobs
+print(f"\nSubmitting jobs for run directory: {run_dir}")
+import subprocess
+import os
+# Get the directory where this script is located
+script_dir = os.path.dirname(os.path.abspath(__file__))
+shell_script_path = os.path.join(script_dir, "sub_multi_param_file_optimization.sh")
+# Make sure the shell script is executable
+os.chmod(shell_script_path, 0o755)
+# Call the shell script with the run directory as argument
+try:
+    result = subprocess.run([shell_script_path, run_dir], 
+                          capture_output=True, 
+                          text=True, 
+                          check=True)
+    print("Shell script executed successfully:")
+    print(result.stdout)
+except subprocess.CalledProcessError as e:
+    print(f"Error executing shell script: {e}")
+    print(f"Error output: {e.stderr}")
+    sys.exit(1)
