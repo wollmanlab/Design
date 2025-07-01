@@ -327,10 +327,10 @@ class EncodingDesigner(nn.Module):
         fold = (target - dynamic_range) / target
         fold = fold[fold>0]
         if fold.numel() > 0:
-            raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * fold.sum()
+            raw_losses['dynamic_loss'] = self.I['dynamic_wt'] * fold.sum()
         else:
-            raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-        current_stats['full_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
+            raw_losses['dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        current_stats['dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
 
         # --- Cell type separation loss ---
         batch_categories = torch.unique(y)
