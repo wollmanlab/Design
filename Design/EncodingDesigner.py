@@ -118,9 +118,13 @@ class EncodingDesigner(nn.Module):
         self._load_and_process_parameters(user_parameters_path)
         self._setup_output_and_symlinks(user_parameters_path)
         self.results = {}
+        self.learning_stats = {}
+        self.saved_models = {}
+        self.saved_optimizer_states = {}
         self.best_loss = float('inf')
         self.best_model_state_dict = None
         self.best_iteration = -1
+        self.training_completed = False
         # Weight tracking for change calculation
         self.prev_encoder_weights = None
         self.prev_decoder_weights = None
@@ -1169,11 +1173,13 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"Loaded {self.n_genes} genes from constraints.")
 
     def _load_pretrained_model(self):
-        """Load pretrained model state and gene mask if available."""
+        """Load pretrained model state, learning stats, and gene mask if available."""
         model_state_path = os.path.join(self.I['output'], 'final_model_state.pt')
+        learning_stats_path = os.path.join(self.I['output'], 'learning_stats.json')
         if not os.path.exists(model_state_path):
             self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
             self.is_initialized_from_file = False
+            self.training_completed = False
             return
         self.log.info(f"Found existing model state file: {model_state_path}. Attempting to load.")
         try:
@@ -1184,6 +1190,29 @@ class EncodingDesigner(nn.Module):
             self.to(self.I['device']) 
             self.is_initialized_from_file = True
             self.log.info("Successfully loaded model state from file (strict=False).")
+            if os.path.exists(learning_stats_path):
+                try:
+                    import json
+                    with open(learning_stats_path, 'r') as f:
+                        loaded_learning_stats = json.load(f)
+                    self.learning_stats = loaded_learning_stats
+                    self.log.info(f"Successfully loaded learning stats from {learning_stats_path}")
+                    max_iteration = -1
+                    for key in self.learning_stats.keys():
+                        if key.isdigit():
+                            max_iteration = max(max_iteration, int(key))
+                    if max_iteration >= self.I['n_iters'] - 1:
+                        self.training_completed = True
+                        self.log.info(f"Training appears to be completed (max iteration: {max_iteration}, target: {self.I['n_iters']})")
+                    else:
+                        self.training_completed = False
+                        self.log.info(f"Training appears to be incomplete (max iteration: {max_iteration}, target: {self.I['n_iters']})")
+                except Exception as e:
+                    self.log.error(f"Failed to load learning stats from {learning_stats_path}: {e}")
+                    self.training_completed = False
+            else:
+                self.log.info("No learning stats file found. Assuming training was not completed.")
+                self.training_completed = False
             # Check if gene mask exists and load it if present
             gene_mask_path = os.path.join(self.I['output'], 'gene_mask.pt')
             if os.path.exists(gene_mask_path):
@@ -1397,9 +1426,14 @@ class EncodingDesigner(nn.Module):
         else:
             self.log.warning("No best model state was saved during training. Saving the final iteration state.")
         final_model_path = os.path.join(self.I['output'], 'final_model_state.pt')
+        learning_stats_path = os.path.join(self.I['output'], 'learning_stats.json')
         try:
             torch.save(self.state_dict(), final_model_path)
             self.log.info(f"Final model state dictionary saved to {final_model_path}")
+            import json
+            with open(learning_stats_path, 'w') as f:
+                json.dump(self.learning_stats, f, indent=2)
+            self.log.info(f"Learning stats saved to {learning_stats_path}")
         except Exception as e:
             self.log.error(f"Failed to save final model state: {e}")
 
@@ -1918,7 +1952,10 @@ if __name__ == '__main__':
         exit(1)
     
     # Check if we should continue training or skip to evaluation
-    if model.I['continue_training'] == 0 and model.is_initialized_from_file:
+    if model.training_completed:
+        print("Training appears to be completed. Skipping training and proceeding to evaluation.")
+        model.log.info("Skipping training as training appears to be completed.")
+    elif model.I['continue_training'] == 0 and model.is_initialized_from_file:
         print("Model loaded from file and continue_training=0. Skipping training and proceeding to evaluation.")
         model.log.info("Skipping training due to continue_training=0 and model loaded from file.")
     else:
