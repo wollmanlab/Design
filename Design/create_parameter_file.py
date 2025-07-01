@@ -149,7 +149,7 @@ user_parameters = {
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'continue_training': 1,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
+            'continue_training': 0,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
         }
 
 user_parameters['input'] = input_dir

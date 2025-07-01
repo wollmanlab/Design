@@ -262,37 +262,34 @@ class EncodingDesigner(nn.Module):
         current_stats['total_violation_probes' + suffix] = round(difference[violations].sum().item(), 4)
 
         # --- Sparsity loss ---
-        sparsity_threshold = 1
-        sparsity_ratio = (E_clean < sparsity_threshold).float().mean() * 100
+        sparsity_ratio = (E_clean < 1).float().mean()
         target = self.I['sparsity']
         fold = (target - sparsity_ratio) / target
         sparsity_loss = self.I['sparsity_wt'] * F.elu(fold,alpha=0.1)
         raw_losses['sparsity_loss'] = sparsity_loss
         current_stats['sparsity' + suffix] = round(sparsity_ratio.item(), 4)
 
-        # The model should have a robust brightness and dynamic range
-        # use sum normalized for this 
+        # Brightness and dynamic range analysis with configurable percentiles
         median_val = P_clean.sum(1).clamp(min=1e-8).median()
         P_clean_sum_norm = median_val * P_clean / P_clean.sum(1).unsqueeze(1).clamp(min=1e-8)
-        median_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-        lower_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
-        upper_brightness_per_bit = torch.zeros(P_clean.shape[1], device=P_clean.device)
+        percentiles = {'lower': 10, 'median': 50, 'upper': 90}
+        window = 10  # ±5 for all percentiles
+        brightness_per_bit = {}
         bit_dynamic_ranges = []
         bit_percentiles = []
-        bit_medians = []
         for bit_idx in range(P_clean.shape[1]):
             bit_values = P_clean_sum_norm[:, bit_idx]
-            p5, p10, p25, p40, p50, p60, p75, p90, p95 = torch.quantile(bit_values, torch.tensor([0.05, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 0.95]))
-            mask_median = (bit_values >= p40) & (bit_values <= p60)
-            median_brightness_per_bit[bit_idx] = bit_values[mask_median].mean()
-            mask_lower = (bit_values >= p5) & (bit_values <= p25)
-            lower_brightness_per_bit[bit_idx] = bit_values[mask_lower].mean()
-            mask_upper = (bit_values >= p75) & (bit_values <= p95)
-            upper_brightness_per_bit[bit_idx] = bit_values[mask_upper].mean()
-            fold_change = upper_brightness_per_bit[bit_idx] / lower_brightness_per_bit[bit_idx].clamp(min=1e-8)
+            for region, pct in percentiles.items():
+                p_low = (pct - window/2) / 100
+                p_high = (pct + window/2) / 100
+                mask = (bit_values >= torch.quantile(bit_values, p_low)) & (bit_values <= torch.quantile(bit_values, p_high))
+                brightness_per_bit[region] = brightness_per_bit.get(region, torch.zeros(P_clean.shape[1], device=P_clean.device))
+                brightness_per_bit[region][bit_idx] = bit_values[mask].mean()
+            fold_change = brightness_per_bit['upper'][bit_idx] / brightness_per_bit['lower'][bit_idx].clamp(min=1e-8)
             bit_dynamic_ranges.append(fold_change.item())
-            bit_percentiles.append((lower_brightness_per_bit[bit_idx].item(), median_brightness_per_bit[bit_idx].item(), upper_brightness_per_bit[bit_idx].item()))
-            bit_medians.append(median_brightness_per_bit[bit_idx].item())
+            bit_percentiles.append((brightness_per_bit['lower'][bit_idx].item(), 
+                                  brightness_per_bit['median'][bit_idx].item(), 
+                                  brightness_per_bit['upper'][bit_idx].item()))
         min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
         min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
@@ -302,7 +299,7 @@ class EncodingDesigner(nn.Module):
         
         # --- Brightness loss ---
         target_brightness = 10**self.I['brightness']
-        median_brightness = median_brightness_per_bit.clamp(min=1)
+        median_brightness = brightness_per_bit['median'].clamp(min=1)
         fold = (target_brightness-median_brightness)/target_brightness
         positive_fold = fold[fold>0]
         if positive_fold.numel() > 0:
@@ -310,21 +307,18 @@ class EncodingDesigner(nn.Module):
         else:
             brightness_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
         raw_losses['brightness_loss'] = brightness_loss
-        current_stats['lower brightness' + suffix] = round(lower_brightness_per_bit.mean().item(), 4)
-        current_stats['median brightness' + suffix] = round(median_brightness_per_bit.mean().item(), 4)
-        current_stats['upper brightness' + suffix] = round(upper_brightness_per_bit.mean().item(), 4)
-        current_stats['dynamic_range' + suffix] = round((upper_brightness_per_bit-lower_brightness_per_bit).mean().item(), 4)
+        current_stats['lower brightness' + suffix] = round(brightness_per_bit['lower'].mean().item(), 4)
+        current_stats['median brightness' + suffix] = round(brightness_per_bit['median'].mean().item(), 4)
+        current_stats['upper brightness' + suffix] = round(brightness_per_bit['upper'].mean().item(), 4)
+        current_stats['dynamic_range' + suffix] = round((brightness_per_bit['upper']-brightness_per_bit['lower']).mean().item(), 4)
 
         # --- Dynamic range loss (lower and upper) ---
-        # Lower dynamic range
-        dynamic_range = median_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+        dynamic_range = brightness_per_bit['median'] / brightness_per_bit['lower'].clamp(min=1e-8)
         current_stats['lower_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
-        # Upper dynamic range
-        dynamic_range = upper_brightness_per_bit / median_brightness_per_bit.clamp(min=1e-8)
+        dynamic_range = brightness_per_bit['upper'] / brightness_per_bit['median'].clamp(min=1e-8)
         current_stats['upper_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
-        # Full dynamic range
         target = 2*self.I['dynamic_fold']
-        dynamic_range = upper_brightness_per_bit / lower_brightness_per_bit.clamp(min=1e-8)
+        dynamic_range = brightness_per_bit['upper'] / brightness_per_bit['lower'].clamp(min=1e-8)
         fold = (target - dynamic_range) / target
         positive_fold = fold[fold>0]
         if positive_fold.numel() > 0:
