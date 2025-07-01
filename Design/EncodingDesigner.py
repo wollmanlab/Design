@@ -276,24 +276,32 @@ class EncodingDesigner(nn.Module):
         # Brightness and dynamic range analysis with configurable percentiles
         median_val = P_clean.sum(1).clamp(min=1e-8).median()
         P_clean_sum_norm = median_val * P_clean / P_clean.sum(1).unsqueeze(1).clamp(min=1e-8)
-        percentiles = {'lower': 10, 'median': 50, 'upper': 90}
-        window = 10  # ±5 for all percentiles
-        brightness_per_bit = {}
+        quant = {
+            'lower_min': 0.05, 
+            'lower_max': 0.15, 
+            'median_min': 0.45,
+            'median_max':0.55,
+            'upper_min': 0.85,
+            'upper_max': 0.95}
+        signal = {
+            'lower': torch.zeros(P_clean.shape[1], device=P_clean.device),
+            'median': torch.zeros(P_clean.shape[1], device=P_clean.device),
+            'upper': torch.zeros(P_clean.shape[1], device=P_clean.device)
+        }
         bit_dynamic_ranges = []
         bit_percentiles = []
         for bit_idx in range(P_clean.shape[1]):
             bit_values = P_clean_sum_norm[:, bit_idx]
-            for region, pct in percentiles.items():
-                p_low = (pct - window/2) / 100
-                p_high = (pct + window/2) / 100
-                mask = (bit_values >= torch.quantile(bit_values, p_low)) & (bit_values <= torch.quantile(bit_values, p_high))
-                brightness_per_bit[region] = brightness_per_bit.get(region, torch.zeros(P_clean.shape[1], device=P_clean.device))
-                brightness_per_bit[region][bit_idx] = bit_values[mask].mean()
-            fold_change = brightness_per_bit['upper'][bit_idx] / brightness_per_bit['lower'][bit_idx].clamp(min=1e-8)
+            quantiles_tensor = torch.tensor([val for val in quant.values()], device=bit_values.device)
+            quant_results = torch.quantile(bit_values, quantiles_tensor)
+            for i, region in enumerate(signal.keys()):
+                mask = (bit_values >= quant_results[i * 2]) & (bit_values <= quant_results[i * 2 + 1])
+                signal[region][bit_idx] = bit_values[mask].mean() if mask.any() else torch.tensor(0.0, device=bit_values.device)
+            fold_change = signal['upper'][bit_idx] / signal['lower'][bit_idx].clamp(min=1e-8)
             bit_dynamic_ranges.append(fold_change.item())
-            bit_percentiles.append((brightness_per_bit['lower'][bit_idx].item(), 
-                                  brightness_per_bit['median'][bit_idx].item(), 
-                                  brightness_per_bit['upper'][bit_idx].item()))
+            bit_percentiles.append((signal['lower'][bit_idx].item(), 
+                                  signal['median'][bit_idx].item(), 
+                                  signal['upper'][bit_idx].item()))
         min_range_idx = bit_dynamic_ranges.index(min(bit_dynamic_ranges))
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
         min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
@@ -302,30 +310,30 @@ class EncodingDesigner(nn.Module):
         current_stats['E_best_bit' + suffix] = f"min:{max(max_lower, 1):.2e}, med:{max(max_median, 1):.2e}, max:{max(max_upper, 1):.2e}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
         
         # --- Brightness loss ---
-        target_brightness = 10**self.I['brightness']
-        median_brightness = brightness_per_bit['median'].clamp(min=1)
-        fold = (target_brightness-median_brightness)/target_brightness
+        target = 10**self.I['brightness']
+        median_brightness = signal['median'].clamp(min=1)
+        fold = (target-median_brightness)/target
         positive_fold = fold[fold>0]
         if positive_fold.numel() > 0:
             brightness_loss = self.I['brightness_wt'] * positive_fold.sum()
         else:
             brightness_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
         raw_losses['brightness_loss'] = brightness_loss
-        current_stats['lower brightness' + suffix] = round(brightness_per_bit['lower'].mean().item(), 4)
-        current_stats['median brightness' + suffix] = round(brightness_per_bit['median'].mean().item(), 4)
-        current_stats['upper brightness' + suffix] = round(brightness_per_bit['upper'].mean().item(), 4)
-        current_stats['dynamic_range' + suffix] = round((brightness_per_bit['upper']-brightness_per_bit['lower']).mean().item(), 4)
+        current_stats['lower brightness' + suffix] = round(signal['lower'].mean().item(), 4)
+        current_stats['median brightness' + suffix] = round(signal['median'].mean().item(), 4)
+        current_stats['upper brightness' + suffix] = round(signal['upper'].mean().item(), 4)
+        current_stats['dynamic_range' + suffix] = round((signal['upper']-signal['lower']).mean().item(), 4)
 
-        # --- Dynamic range loss (lower and upper) ---
-        dynamic_range = brightness_per_bit['median'] / brightness_per_bit['lower'].clamp(min=1e-8)
+        # --- Dynamic range loss ---
+        dynamic_range = signal['median'] / signal['lower'].clamp(min=1e-8)
         current_stats['lower_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
-        dynamic_range = brightness_per_bit['upper'] / brightness_per_bit['median'].clamp(min=1e-8)
+        dynamic_range = signal['upper'] / signal['median'].clamp(min=1e-8)
         current_stats['upper_dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
         target = 2*self.I['dynamic_fold']
-        dynamic_range = brightness_per_bit['upper'] / brightness_per_bit['lower'].clamp(min=1e-8)
+        dynamic_range = signal['upper'] / signal['lower'].clamp(min=1e-8)
         fold = (target - dynamic_range) / target
-        positive_fold = fold[fold>0]
-        if positive_fold.numel() > 0:
+        fold = fold[fold>0]
+        if fold.numel() > 0:
             raw_losses['full_dynamic_loss'] = self.I['dynamic_wt'] * positive_fold.sum()
         else:
             raw_losses['full_dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
@@ -353,17 +361,16 @@ class EncodingDesigner(nn.Module):
                 raw_losses['separation_loss'] = self.I['separation_wt'] * positive_fold.mean()
             else:
                 raw_losses['separation_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-            worst_separations = separations.min().item()
+            worst_separation = separations.min().item()
             p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
-            best_fold_change = separations.max().item()
-            current_stats['worst_separation' + suffix] = round(worst_separations, 4)
-            current_stats['separation' + suffix] = f"min:{worst_separations:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_fold_change:.2f}"
+            best_separation = separations.max().item()
+            current_stats['separation' + suffix] = round(worst_separation, 4)
+            current_stats['separation_report' + suffix] = f"min:{worst_separation:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_separation:.2f}"
 
-        # The model should accurately decode cell type labels
-        categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component#.clamp(min=0,max=15)
+        # --- Categorical loss ---
+        categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component
         raw_losses['categorical_loss'] = categorical_loss_component
-
-        current_stats['accuracy' + suffix] = round(accuracy.item(), 4) # last for readability
+        current_stats['accuracy' + suffix] = round(accuracy.item(), 4)
         
         # Calculate weight changes
         current_stats['E_change' + suffix] = 0.0
@@ -1887,7 +1894,7 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
     metrics = {
         'accuracy': {'train': 'accuracy_train', 'test': 'accuracy_test', 'color': '#ff7f0e', 'label': 'Accuracy'},
         'separation': {'train': 'separation_train', 'test': 'separation_test', 'color': '#9467bd', 'label': 'Separation'},
-        'dynamic_range': {'train': 'full_dynamic_fold_train', 'test': 'full_dynamic_fold_test', 'color': '#17becf', 'label': 'Dynamic Range'}
+        'dynamic_range': {'train': 'dynamic_range_train', 'test': 'dynamic_range_test', 'color': '#17becf', 'label': 'Dynamic Range'}
     }
     available_metrics = {k: v for k, v in metrics.items() 
                         if v['train'] in learning_curve.columns and v['test'] in learning_curve.columns}
