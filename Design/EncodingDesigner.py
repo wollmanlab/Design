@@ -18,6 +18,7 @@ import re
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.patches import Patch
+from matplotlib.ticker import ScalarFormatter
 from sklearn.metrics import confusion_matrix
 import argparse
 from typing import Optional, Dict, Any, List, Union
@@ -1882,15 +1883,10 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
     if log is None:
         log = logging.getLogger("ComprehensivePerformancePlotter")
     metrics = {
+        'dynamic_range': {'train': 'dynamic_range_train', 'test': 'dynamic_range_test', 'color': '#17becf', 'label': 'Dynamic Range'},
         'accuracy': {'train': 'accuracy_train', 'test': 'accuracy_test', 'color': '#ff7f0e', 'label': 'Accuracy'},
-        'separation': {'train': 'separation_train', 'test': 'separation_test', 'color': '#9467bd', 'label': 'Separation'},
-        'dynamic_range': {'train': 'dynamic_range_train', 'test': 'dynamic_range_test', 'color': '#17becf', 'label': 'Dynamic Range'}
+        'separation': {'train': 'separation_train', 'test': 'separation_test', 'color': '#9467bd', 'label': 'Separation'}
     }
-    available_metrics = {k: v for k, v in metrics.items() 
-                        if v['train'] in learning_curve.columns and v['test'] in learning_curve.columns}
-    if not available_metrics:
-        log.error("No valid metrics found in learning curve data")
-        return
     valid_iterations = [idx for idx in learning_curve.index if str(idx).replace('.', '').isdigit()]
     if not valid_iterations:
         log.warning("No valid numeric iterations found")
@@ -1898,34 +1894,47 @@ def plot_comprehensive_performance(learning_curve, output_dir, log=None):
     data = learning_curve.loc[valid_iterations]
     x = np.array([float(idx) for idx in data.index])
     fig, ax1 = plt.subplots(figsize=(10, 6), dpi=200)
-    axes = [ax1]
-    for i, (metric_name, metric_info) in enumerate(available_metrics.items()):
-        if i > 0:
-            ax = ax1.twinx()
-            # Position all y-axes on the left side
-            ax.spines['left'].set_position(('outward', 60 * i))
-            ax.spines['right'].set_visible(False)
-            axes.append(ax)
-        else:
+    axes = []
+    for i, (metric_name, metric_info) in enumerate(metrics.items()):
+        if i == 0:
             ax = ax1
+            ax.yaxis.set_ticks_position('left')
+            ax.yaxis.set_label_position('left')
+        elif i == 1:
+            ax = ax1.twinx()
+            ax.yaxis.set_ticks_position('right')
+            ax.yaxis.set_label_position('right')
+        else:
+            ax = ax1.twinx()
+            ax.yaxis.set_ticks_position('right')
+            ax.yaxis.set_label_position('right')
+            ax.spines['right'].set_position(('axes', 0))
+        axes.append(ax)
         y_train = data[metric_info['train']].astype(float)
         y_test = data[metric_info['test']].astype(float)
         mask_train = np.isfinite(y_train)
         mask_test = np.isfinite(y_test)
         if np.any(mask_train) and np.any(mask_test):
-            markers = ['o', 's', '^', 'v', '<', '>']
             ax.scatter(x[mask_train], y_train[mask_train], 
                       color=metric_info['color'], 
-                      s=10, alpha=0.6, marker=markers[i*2], rasterized=True)
+                      s=1, alpha=0.6, marker='o', rasterized=True)
             ax.scatter(x[mask_test], y_test[mask_test], 
                       color=metric_info['color'], 
-                      s=1, alpha=0.6, marker=markers[i*2+1], rasterized=True)
-            ax.set_ylabel(metric_info['label'], color=metric_info['color'])
-            ax.tick_params(axis='y', labelcolor=metric_info['color'])
+                      s=10, alpha=0.6, marker='o', rasterized=True)
+            ax.tick_params(axis='y', labelcolor=metric_info['color'], pad=1.5)
+            if metric_name == 'dynamic_range':
+                ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+                ax.ticklabel_format(style='scientific', axis='y', scilimits=(0,0))
             y_min, y_max = np.percentile(np.concatenate([y_train[mask_train], y_test[mask_test]]), [1, 99])
             ax.set_ylim(y_min, y_max)
     ax1.set_xlabel('Epoch')
     ax1.grid(True, alpha=0.3)
+    y_positions = [0.25, 0.20, 0.15]
+    for i, (metric_name, metric_info) in enumerate(metrics.items()):
+        if i < len(y_positions):
+            plt.figtext(0.2, y_positions[i], metric_info['label'], 
+                       color=metric_info['color'], fontsize=12, ha='center', va='center',
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='black', alpha=0.8))
     plt.tight_layout()
     plot_path = os.path.join(output_dir, 'comprehensive_performance.pdf')
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
