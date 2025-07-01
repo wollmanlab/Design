@@ -40,30 +40,23 @@ class EncodingDesigner(nn.Module):
             'batch_size': 1000,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
-            'probe_wt_s': 1,  # Initial weight for probe count loss term
-            'probe_wt_e': 1,  # Final weight for probe count loss term
-            'gene_constraint_wt_s': 1,  # Initial weight for gene constraint violation penalty
-            'gene_constraint_wt_e': 1,  # Final weight for gene constraint violation penalty
+            'probe_wt': 1,  # Weight for probe count loss term
+            'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt_s': 1,  # Initial weight for dynamic range loss terms
-            'dynamic_wt_e': 1,  # Final weight for dynamic range loss terms
+            'dynamic_wt': 1,  # Weight for dynamic range loss terms
             'dynamic_fold_s': 2.0,  # Initial target fold change for dynamic range
             'dynamic_fold_e': 2.0,  # Final target fold change for dynamic range
-            'separation_wt_s': 1,  # Initial weight for cell type separation loss term
-            'separation_wt_e': 1,  # Final weight for cell type separation loss term
+            'separation_wt': 1,  # Weight for cell type separation loss term
             'separation_fold_s': 3.0,  # Initial minimum fold change required between cell type pairs
             'separation_fold_e': 3.0,  # Final minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.05,  # Initial learning rate
             'lr_e': 0.005,  # Final learning rate (linear interpolation)
             'report_rt': 250,  # How often to report training progress
-            'sparsity': 0.8,  # Target sparsity ratio (fraction of zeros)
             'sparsity_s': 0.8,  # Initial target sparsity ratio (fraction of zeros)
             'sparsity_e': 0.8,  # Final target sparsity ratio (fraction of zeros)
-            'sparsity_wt_s': 0,  # Initial weight for sparsity loss term
-            'sparsity_wt_e': 0,  # Final weight for sparsity loss term
-            'categorical_wt_s': 1,  # Initial weight for categorical classification loss
-            'categorical_wt_e': 1,  # Final weight for categorical classification loss
+            'sparsity_wt': 0,  # Weight for sparsity loss term
+            'categorical_wt': 1,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -239,7 +232,7 @@ class EncodingDesigner(nn.Module):
         # if fold is 0 loss is 0 * probe_wt
         # if fold is below target loss is approaching negative alpha * probe_wt
         fold = (E_clean.sum()-self.I['n_probes'])/self.I['n_probes']
-        probe_wt_loss = F.elu(fold,alpha=0.05)
+        probe_wt_loss = self.I['probe_wt'] * F.elu(fold,alpha=0.05)
         raw_losses['probe_wt_loss'] = probe_wt_loss
         current_stats['E_n_probes' + suffix] = round(E_clean.sum().item(), 4)
 
