@@ -263,3 +263,17 @@ except subprocess.CalledProcessError as e:
     print(f"Error executing shell script: {e}")
     print(f"Error output: {e.stderr}")
     sys.exit(1)
+
+# Show current job status
+print("\nCurrent job status:")
+try:
+    qstat_result = subprocess.run(['qstat', '-u', '$USER'], 
+                                capture_output=True, 
+                                text=True, 
+                                check=True)
+    print(qstat_result.stdout)
+except subprocess.CalledProcessError as e:
+    print(f"Error checking job status: {e}")
+    print(f"Error output: {e.stderr}")
+except FileNotFoundError:
+    print("qstat command not found - may not be on a PBS/SGE system")
