@@ -74,7 +74,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 6,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 10000,  # Total number of training iterations
+            'n_iters': 100000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
@@ -96,7 +96,7 @@ user_parameters = {
             'sparsity_wt': 0,  # Weight for sparsity loss term
             'categorical_wt': 5,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
-            'best_model': 1,  # Whether to save the best model during training
+            'best_model': 0,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
             'input': './',  # Input directory path
@@ -160,9 +160,7 @@ user_parameters['input'] = input_dir
 # ]
 
 parameter_variant_list = [
-        {'categorical_wt':[0,0.1,0.5,1,2,5,10]},
-        {'separation_wt':[0,0.1,0.5,1,2,5,10]},
-        {'categorical_wt':[0,0.1,0.5,1,2,5,10],
+        {'decoder_n_lyr':[0,1,2],'categorical_wt':[0,0.1,0.5,1,2,5,10],
         'separation_wt':[0,0.1,0.5,1,2,5,10]},
 ]
 # parameter_variant_list = [
@@ -176,7 +174,39 @@ parameter_variant_list = [
 # {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
 #     ]
 # For testing
-# parameter_variant_list = [{'n_iters':[5000]}]
+parameter_variant_list = [
+    {
+    'lr_s':[0.001,0.005,0.01,0.05,0.1],
+    'decoder_n_lyr':[0,1,2,3],
+    'categorical_wt':[5],
+    'separation_wt':[2]
+    },
+    {
+    'lr_s':[0.001,0.005,0.01,0.05,0.1],
+    'n_bits':[12,24,48,96],
+    'categorical_wt':[5],
+    'separation_wt':[2]
+    },
+    {
+    'lr_s':[0.001,0.005,0.01,0.05,0.1],
+    'n_bits':[24],
+    'categorical_wt':[0.1,0.5,1,2.5,5,10],
+    'separation_wt':[2]
+    },
+    {
+    'lr_s':[0.001,0.005,0.01,0.05,0.1],
+    'n_bits':[24],
+    'categorical_wt':[5],
+    'separation_wt':[0.1,0.5,1,2.5,5,10]
+    }]
+
+parameter_variant_list = [
+    {
+    'lr_s':[0.001,0.005,0.01,0.05,0.1],
+    'decoder_n_lyr':[0,1,2,3],
+    'categorical_wt':[5],
+    'separation_wt':[2]
+    }]
 
 # add an option to have _s and _e be the same value
 same_se = True
