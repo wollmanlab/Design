@@ -107,6 +107,7 @@ class EncodingDesigner(nn.Module):
             'sum_norm': 0,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
             'continue_training': 1,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
+            'use_noise': 1,  # Whether to apply noise/dropout during training (0 = no noise, 1 = use noise)
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -168,6 +169,8 @@ class EncodingDesigner(nn.Module):
     def get_E(self):
         """Get encoding weights with noise/dropout for training."""
         E = self.get_E_clean()
+        if self.I['use_noise'] == 0:
+            return E
         if self.training and self.I['E_drp'] > 0:
             E = E * (torch.rand_like(E) > self.I['E_drp']).float()
         if self.training and self.I['E_noise'] > 0:
@@ -184,6 +187,8 @@ class EncodingDesigner(nn.Module):
 
     def project(self, X, E):
         """Project data with noise/dropout for training."""
+        if self.I['use_noise'] == 0:
+            return X.mm(E)
         if self.training and self.I['X_noise'] != 0:
             fold = 1 / (1 - self.I['X_noise'])
             X = X * torch.exp(torch.rand_like(X) * 2 * torch.log(torch.tensor(fold)) - torch.log(torch.tensor(fold)))
@@ -1109,10 +1114,13 @@ class EncodingDesigner(nn.Module):
                     decoder_modules.append(nn.Tanh())
                 else:
                     raise ValueError(f"Invalid decoder activation function: {self.I['decoder_act']}")
-                decoder_modules.append(nn.Dropout(p=self.I['D_drp']))
+                # Only add dropout if use_noise is enabled
+                if self.I['use_noise'] == 1:
+                    decoder_modules.append(nn.Dropout(p=self.I['D_drp']))
                 current_decoder_layer_input_dim = self.I['decoder_h_dim'] 
             decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
-            log_msg_decoder_structure = f"Initialized decoder with {self.I['decoder_n_lyr']} hidden layer(s) (dim={self.I['decoder_h_dim']}, activation={self.I['decoder_act']}, dropout={self.I['D_drp']}) and output layer."
+            dropout_info = f"dropout={self.I['D_drp']}" if self.I['use_noise'] == 1 else "no dropout"
+            log_msg_decoder_structure = f"Initialized decoder with {self.I['decoder_n_lyr']} hidden layer(s) (dim={self.I['decoder_h_dim']}, activation={self.I['decoder_act']}, {dropout_info}) and output layer."
         self.decoder = nn.Sequential(*decoder_modules).to(self.I['device'])
         self.log.info(f"Initialized decoder.")
         self.log.info(log_msg_decoder_structure)

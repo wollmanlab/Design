@@ -74,7 +74,7 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 3,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 100000,  # Total number of training iterations
+            'n_iters': 250000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness': 4.5,  # Target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
@@ -88,8 +88,8 @@ user_parameters = {
             'separation_fold_s': 0.0,  # Initial minimum fold change required between cell type pairs
             'separation_fold_e': 1.0,  # Final minimum fold change required between cell type pairs
             'gradient_clip': 1,  # Maximum gradient norm for clipping
-            'lr_s': 0.05,  # Initial learning rate
-            'lr_e': 0.05,  # Final learning rate (linear interpolation)
+            'lr_s': 0.01,  # Initial learning rate
+            'lr_e': 0.01,  # Final learning rate (linear interpolation)
             'report_rt': 100,  # How often to report training progress
             'sparsity_s': 0.95,  # Initial target sparsity ratio (fraction of zeros)
             'sparsity_e': 0.95,  # Final target sparsity ratio (fraction of zeros)
@@ -143,139 +143,35 @@ user_parameters = {
             'decoder_act': 'tanh',  # Activation function for decoder hidden layers ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
             'sum_norm': 1,  # Whether to normalize projection by sum
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
-            'continue_training': 0,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
+            'continue_training': 0,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training)
+            'use_noise': 1,  # Whether to apply noise/dropout during training (0 = no noise, 1 = use noise) 
         }
 
 user_parameters['input'] = input_dir
-# Define parameter variants - parameters to vary and their possible values
-# parameter_variant_list = [
-#         {'X_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'X_noise':[0,0.1,0.25,0.5,0.75,0.9]},
-#         {'E_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'E_noise':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_drp':[0,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_noise':[0,0.01,0.05,0.1,0.25,0.5,0.75,0.9]},
-#         {'P_add':[0,1,2.0,2.5,3.0,3.5,4.0]},
-#         {'n_bit':[6,12,24,48,96]},
-# ]
 
-parameter_variant_list = [
-        {'decoder_n_lyr':[0,1,2],'categorical_wt':[0,0.1,0.5,1,2,5,10],
-        'separation_wt':[0,0.1,0.5,1,2,5,10]},
-]
-# parameter_variant_list = [
-# # Best parameter values for highest No Noise Accuracy:
-# {'X_drp': [0.1], 'X_noise': [0.5], 'E_drp': [0.1], 'E_noise': [0.0], 'P_drp': [0.0], 'P_noise': [0.05], 'P_add': [2.5]},
-# # Best parameter values for highest Low Noise Accuracy:
-# {'X_drp': [0.1], 'X_noise': [0.75], 'E_drp': [0.1], 'E_noise': [0.75], 'P_drp': [0.0], 'P_noise': [0.1], 'P_add': [2.5]},
-# # Best parameter values for highest Medium Noise Accuracy:
-# {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.25], 'E_noise': [0.9], 'P_drp': [0.0], 'P_noise': [0.1], 'P_add': [2.5]},
-# # Best parameter values for highest High Noise Accuracy:
-# {'X_drp': [0.5], 'X_noise': [0.9], 'E_drp': [0.75], 'E_noise': [0.9], 'P_drp': [0.1], 'P_noise': [0.25], 'P_add': [4.0]},
-#     ]
-# For testing
+# Figure 2 Baseline  with vs without noise
 parameter_variant_list = [
     {
-    'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
-    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[24], #[12,24,48,96]
-    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-    },
-    {
-    'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0],#[0,1,2,3]
-    'categorical_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[24], #[12,24,48,96]
-    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-    },
-    {
-    'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0],#[0,1,2,3]
-    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[24], #[12,24,48,96]
-    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-    },
-    {
-    'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0],#[0,1,2,3]
-    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[12,24,48,96], #[12,24,48,96]
-    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-    },
-    {
-    'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0],#[0,1,2,3]
-    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[24], #[12,24,48,96]
-    'dynamic_wt':[0.1,0.5,1,2.5,5,10], #[0.1,0.5,1,2.5,5,10]
-    },
-    {
-    'lr_s':[0.01],
-    'decoder_n_lyr':[0],#[0,1,2,3]
-    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[24], #[12,24,48,96]
-    'dynamic_wt':[0.1,0.5,1,2.5,5,10], #[0.1,0.5,1,2.5,5,10]
-    },
-    ]
-
-# Figure 2 Baseline
-parameter_variant_list = [
-    {
-    'lr_s':[0.01],
     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
     'categorical_wt':[1],#[0.1,0.5,1,2.5,5,10]
     'separation_wt':[0],#[0.1,0.5,1,2.5,5,10]
-    'brightness_wt':[0],
-    'gene_constraint_wt':[0],
-    'probe_wt':[0],
     'n_bit':[24], #[12,24,48,96]
     'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-    'n_iters':[250000],
-    'n_cpu':[3]
+    'use_noise':[0,1]
     },
 ]
 
 # # Figure 2 Showing Tradeoffs
 # parameter_variant_list = [
 #     {
-#     'lr_s':[0.01],
 #     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
 #     'categorical_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
 #     'separation_wt':[0.0,0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
 #     'brightness':[4.5],
 #     'n_bit':[24], #[12,24,48,96]
-#     'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-#     'n_iters':[250000],
-#     'n_cpu':[12]
+#     'use_noise':[1]
 #     },
 # ]
-
-
-# parameter_variant_list = [
-#     {
-#     'lr_s':[0.001,0.005,0.01,0.05,0.1],
-#     'n_bit':[24],
-#     'decoder_n_lyr':[0],
-#     'categorical_wt':[5],
-#     'separation_wt':[0.1,0.5,1,2.5,5,10]
-#     }]
-# parameter_variant_list = [
-#     {
-#     'lr_s':[0.01],
-#     'n_bit':[24],
-#     'decoder_n_lyr':[0],
-#     'categorical_wt':[5],
-#     'separation_wt':[0.1,0.5,1,2.5,5,10],
-#     'dynamic_wt':[0.1,0.5,1,2.5,5,10]
-#     }]
-
 # add an option to have _s and _e be the same value
 same_se = True
 
