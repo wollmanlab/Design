@@ -662,7 +662,7 @@ class EncodingDesigner(nn.Module):
                         _, stats = self.calculate_loss(self.X_test, self.y_test, iteration="Final", suffix='_test')
                         accuracy = stats.get('accuracy_test', np.nan)
                         separation = stats.get('separation_test', np.nan)
-                        dynamic_range = stats.get('dynamic_fold_test', np.nan)
+                        dynamic_range = stats.get('dynamic_range_test', np.nan)
                         self.log.info(f"{level_name} Accuracy: {round(accuracy, 4)}")
                         self.log.info(f"{level_name} Separation: {round(separation, 4)}")
                         self.log.info(f"{level_name} Dynamic Range: {round(dynamic_range, 4)}")
