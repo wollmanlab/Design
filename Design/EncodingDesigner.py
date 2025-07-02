@@ -357,7 +357,7 @@ class EncodingDesigner(nn.Module):
             worst_separation = separations.min().item()
             p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
             best_separation = separations.max().item()
-            current_stats['separation' + suffix] = round(worst_separation, 4)
+            current_stats['separation' + suffix] = round(p10.item(), 4)
             current_stats['separation_report' + suffix] = f"min:{worst_separation:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_separation:.2f}"
 
         # --- Categorical loss ---

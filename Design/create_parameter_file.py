@@ -81,7 +81,7 @@ user_parameters = {
             'probe_wt': 1,  # Weight for probe count loss term
             'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
             'brightness_wt':1,  # Weight for target brightness loss term
-            'dynamic_wt': 0.1,  # Weight for dynamic range loss terms
+            'dynamic_wt': 0.0,  # Weight for dynamic range loss terms
             'dynamic_fold_s': 0.0,  # Initial target fold change for dynamic range
             'dynamic_fold_e': 4.0,  # Final target fold change for dynamic range
             'separation_wt': 1,  # Weight for cell type separation loss term
@@ -160,10 +160,10 @@ user_parameters['input'] = input_dir
 # ]
 
 parameter_variant_list = [
-        {'dynamic_fold_e':[0.0,1.0,2.0,4.0]},
-        {'separation_fold_e':[0,0.5,1.0,1.5,2.0]},
-        {'dynamic_fold_e':[0.0,1.0,2.0,4.0],
-        'separation_fold_e':[0,0.5,1.0,1.5,2.0]},
+        {'categorical_wt':[0,0.1,0.5,1,2,5,10]},
+        {'separation_wt':[0,0.1,0.5,1,2,5,10]},
+        {'categorical_wt':[0,0.1,0.5,1,2,5,10],
+        'separation_wt':[0,0.1,0.5,1,2,5,10]},
 ]
 # parameter_variant_list = [
 # # Best parameter values for highest No Noise Accuracy:
