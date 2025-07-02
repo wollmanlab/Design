@@ -149,7 +149,7 @@ user_parameters = {
 
 user_parameters['input'] = input_dir
 
-# # Figure 2 Baseline  with vs without noise Run 2 (Run0 with no probe weights)
+# # Figure 2a Baseline  with vs without noise Run 2 (Run0 with no probe weights)
 # parameter_variant_list = [
 #     {
 #     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
@@ -161,7 +161,7 @@ user_parameters['input'] = input_dir
 #     },
 # ]
 
-# # Figure 2 Showing Tradeoffs Run 1
+# # Figure 2b Showing Tradeoffs Run 1
 # parameter_variant_list = [
 #     {
 #     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
@@ -173,15 +173,30 @@ user_parameters['input'] = input_dir
 #     },
 # ]
 
-# Figure 2 Brightness Run 3
+# # Figure 2a Brightness Run 3
+# parameter_variant_list = [
+#     {
+#     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
+#     'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+#     'separation_wt':[1],#[0.1,0.5,1,2.5,5,10]
+#     'brightness':[2.5,3,3.5,4,4.5,5,5.5,6],
+#     'n_bit':[24], #[12,24,48,96]
+#     'use_noise':[1]
+#     },
+# ]
+
+# N_bits with no experimental constraints Run 4
 parameter_variant_list = [
     {
     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
-    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[1],#[0.1,0.5,1,2.5,5,10]
-    'brightness':[2.5,3,3.5,4,4.5,5,5.5,6],
-    'n_bit':[24], #[12,24,48,96]
-    'use_noise':[1]
+    'categorical_wt':[1],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[0],#[0.1,0.5,1,2.5,5,10]
+    'brightness_wt':[0],
+    'gene_constraint_wt':[0],
+    'probe_wt':[0],
+    'dynamic_wt':[0],
+    'n_bit':[12,24,48,96], #[12,24,48,96]
+    'use_noise':[0,1]
     },
 ]
 
