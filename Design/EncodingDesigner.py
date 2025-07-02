@@ -547,6 +547,11 @@ class EncodingDesigner(nn.Module):
                     self._revert_to_previous_state(iteration)
                 if is_report_iter:
                     last_report_time, last_report_iteration = self._evaluate_on_test_set(iteration, last_report_time, last_report_iteration)
+                
+                # Save checkpoint every 10k iterations
+                if (iteration + 1) % 10000 == 0:
+                    self._save_checkpoint(iteration)
+                
                 if delayed_perturbation_iter == iteration:
                     self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
                     self.perturb_E()
@@ -1393,6 +1398,35 @@ class EncodingDesigner(nn.Module):
         self.log.info('------------------')
         
         return current_time, iteration
+
+    def _save_checkpoint(self, iteration):
+        """Save a checkpoint with model state, optimizer state, and learning stats."""
+        try:
+            checkpoint_dir = os.path.join(self.I['output'], 'checkpoints')
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            
+            checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_iter_{iteration}.pt')
+            learning_stats_path = os.path.join(checkpoint_dir, f'checkpoint_iter_{iteration}_stats.json')
+            
+            # Save model state
+            torch.save({
+                'iteration': iteration,
+                'model_state_dict': self.state_dict(),
+                'optimizer_state_dict': self.optimizer_gen.state_dict(),
+                'best_loss': self.best_loss,
+                'best_iteration': self.best_iteration,
+                'parameters': self.I
+            }, checkpoint_path)
+            
+            # Save learning stats
+            import json
+            with open(learning_stats_path, 'w') as f:
+                json.dump(self.learning_stats, f, indent=2)
+            
+            self.log.info(f"Saved checkpoint at iteration {iteration} to {checkpoint_path}")
+            
+        except Exception as e:
+            self.log.error(f"Failed to save checkpoint at iteration {iteration}: {e}")
 
     def _cleanup_old_checkpoints(self, iteration):
         """Remove old model checkpoints to save memory."""

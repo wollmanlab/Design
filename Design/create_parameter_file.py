@@ -177,36 +177,87 @@ parameter_variant_list = [
 parameter_variant_list = [
     {
     'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0,1,2,3],
-    'categorical_wt':[5],
-    'separation_wt':[2]
+    'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
+    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
+    'n_bit':[24], #[12,24,48,96]
+    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
     },
     {
     'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'n_bits':[12,24,48,96],
-    'categorical_wt':[5],
-    'separation_wt':[2]
+    'decoder_n_lyr':[0],#[0,1,2,3]
+    'categorical_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
+    'n_bit':[24], #[12,24,48,96]
+    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
     },
     {
     'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'n_bits':[24],
-    'categorical_wt':[0.1,0.5,1,2.5,5,10],
-    'separation_wt':[2]
+    'decoder_n_lyr':[0],#[0,1,2,3]
+    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+    'n_bit':[24], #[12,24,48,96]
+    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
     },
     {
     'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'n_bits':[24],
-    'categorical_wt':[5],
-    'separation_wt':[0.1,0.5,1,2.5,5,10]
-    }]
+    'decoder_n_lyr':[0],#[0,1,2,3]
+    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
+    'n_bit':[12,24,48,96], #[12,24,48,96]
+    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
+    },
+    {
+    'lr_s':[0.001,0.005,0.01,0.05,0.1],
+    'decoder_n_lyr':[0],#[0,1,2,3]
+    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[2],#[0.1,0.5,1,2.5,5,10]
+    'n_bit':[24], #[12,24,48,96]
+    'dynamic_wt':[0.1,0.5,1,2.5,5,10], #[0.1,0.5,1,2.5,5,10]
+    },
+    {
+    'lr_s':[0.01],
+    'decoder_n_lyr':[0],#[0,1,2,3]
+    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+    'n_bit':[24], #[12,24,48,96]
+    'dynamic_wt':[0.1,0.5,1,2.5,5,10], #[0.1,0.5,1,2.5,5,10]
+    },
+    ]
 
+# Figure 2 Showing Tradeoffs
 parameter_variant_list = [
     {
-    'lr_s':[0.001,0.005,0.01,0.05,0.1],
-    'decoder_n_lyr':[0,1,2,3],
-    'categorical_wt':[5],
-    'separation_wt':[2]
-    }]
+    'lr_s':[0.01],
+    'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
+    'categorical_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[0.0,0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+    'brightness':[4.5],
+    'n_bit':[24], #[12,24,48,96]
+    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
+    'n_iters':[250000],
+    'n_cpu':[12]
+    },
+]
+
+
+# parameter_variant_list = [
+#     {
+#     'lr_s':[0.001,0.005,0.01,0.05,0.1],
+#     'n_bit':[24],
+#     'decoder_n_lyr':[0],
+#     'categorical_wt':[5],
+#     'separation_wt':[0.1,0.5,1,2.5,5,10]
+#     }]
+# parameter_variant_list = [
+#     {
+#     'lr_s':[0.01],
+#     'n_bit':[24],
+#     'decoder_n_lyr':[0],
+#     'categorical_wt':[5],
+#     'separation_wt':[0.1,0.5,1,2.5,5,10],
+#     'dynamic_wt':[0.1,0.5,1,2.5,5,10]
+#     }]
 
 # add an option to have _s and _e be the same value
 same_se = True
@@ -216,7 +267,10 @@ for parameter_variants in parameter_variant_list:
     # Generate all parameter combinations
     param_names = list(parameter_variants.keys())
     param_values = list(parameter_variants.values())
-
+    for param_name in param_names:
+        if not param_name in user_parameters.keys():
+            if not param_name+'_s' in user_parameters.keys():
+                raise ValueError(f"Parameter {param_name} not found in user_parameters")
     # Generate all combinations of parameter values
     combinations = list(itertools.product(*param_values))
     total_combinations.extend(combinations)
