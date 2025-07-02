@@ -72,7 +72,7 @@ os.makedirs(os.path.join(base_dir, 'design_results'), exist_ok=True)
 os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 
 user_parameters = {
-            'n_cpu': 6,  # Number of CPU threads to use for PyTorch
+            'n_cpu': 3,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
             'n_iters': 100000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
@@ -225,20 +225,37 @@ parameter_variant_list = [
     },
     ]
 
-# Figure 2 Showing Tradeoffs
+# Figure 2 Baseline
 parameter_variant_list = [
     {
     'lr_s':[0.01],
     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
-    'categorical_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[0.0,0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
-    'brightness':[4.5],
+    'categorical_wt':[1],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[0],#[0.1,0.5,1,2.5,5,10]
+    'brightness_wt':[0],
+    'gene_constraint_wt':[0],
+    'probe_wt':[0],
     'n_bit':[24], #[12,24,48,96]
     'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
     'n_iters':[250000],
-    'n_cpu':[12]
+    'n_cpu':[3]
     },
 ]
+
+# # Figure 2 Showing Tradeoffs
+# parameter_variant_list = [
+#     {
+#     'lr_s':[0.01],
+#     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
+#     'categorical_wt':[0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+#     'separation_wt':[0.0,0.1,0.5,1,2.5,5,10],#[0.1,0.5,1,2.5,5,10]
+#     'brightness':[4.5],
+#     'n_bit':[24], #[12,24,48,96]
+#     'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
+#     'n_iters':[250000],
+#     'n_cpu':[12]
+#     },
+# ]
 
 
 # parameter_variant_list = [
