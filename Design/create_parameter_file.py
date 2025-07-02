@@ -149,19 +149,19 @@ user_parameters = {
 
 user_parameters['input'] = input_dir
 
-# Figure 2 Baseline  with vs without noise
-parameter_variant_list = [
-    {
-    'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
-    'categorical_wt':[1],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[0],#[0.1,0.5,1,2.5,5,10]
-    'n_bit':[24], #[12,24,48,96]
-    'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
-    'use_noise':[0,1]
-    },
-]
+# # Figure 2 Baseline  with vs without noise Run 2 (Run0 with no probe weights)
+# parameter_variant_list = [
+#     {
+#     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
+#     'categorical_wt':[1],#[0.1,0.5,1,2.5,5,10]
+#     'separation_wt':[0],#[0.1,0.5,1,2.5,5,10]
+#     'n_bit':[24], #[12,24,48,96]
+#     'dynamic_wt':[0], #[0.1,0.5,1,2.5,5,10]
+#     'use_noise':[0,1]
+#     },
+# ]
 
-# # Figure 2 Showing Tradeoffs
+# # Figure 2 Showing Tradeoffs Run 1
 # parameter_variant_list = [
 #     {
 #     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
@@ -172,6 +172,19 @@ parameter_variant_list = [
 #     'use_noise':[1]
 #     },
 # ]
+
+# Figure 2 Brightness Run 3
+parameter_variant_list = [
+    {
+    'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
+    'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
+    'separation_wt':[1],#[0.1,0.5,1,2.5,5,10]
+    'brightness':[2.5,3,3.5,4,4.5,5,5.5,6],
+    'n_bit':[24], #[12,24,48,96]
+    'use_noise':[1]
+    },
+]
+
 # add an option to have _s and _e be the same value
 same_se = True
 
