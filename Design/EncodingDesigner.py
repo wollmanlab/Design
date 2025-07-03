@@ -556,6 +556,10 @@ class EncodingDesigner(nn.Module):
                 if (iteration + 1) % 10000 == 0:
                     self._save_checkpoint(iteration)
                 
+                # Run evaluation and visualization every 50k iterations
+                if (iteration + 1) % 50000 == 0:
+                    self._save_eval_and_viz(iteration)
+                
                 if delayed_perturbation_iter == iteration:
                     self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
                     self.perturb_E()
@@ -1442,6 +1446,38 @@ class EncodingDesigner(nn.Module):
             
         except Exception as e:
             self.log.error(f"Failed to save checkpoint at iteration {iteration}: {e}")
+
+    def _save_eval_and_viz(self, iteration):
+        """Save evaluation results and visualizations at specific iteration."""
+        try:
+            eval_dir = os.path.join(self.I['output'], 'eval_checkpoints')
+            os.makedirs(eval_dir, exist_ok=True)
+            
+            # Create iteration-specific output directory
+            iter_output_dir = os.path.join(eval_dir, f'iter_{iteration}')
+            os.makedirs(iter_output_dir, exist_ok=True)
+            
+            # Temporarily change output directory
+            original_output = self.I['output']
+            self.I['output'] = iter_output_dir
+            
+            self.log.info(f"Running evaluation and visualization for iteration {iteration}")
+            
+            # Run evaluation
+            self.evaluate()
+            
+            # Run visualization
+            self.visualize(show_plots=False)
+            
+            # Restore original output directory
+            self.I['output'] = original_output
+            
+            self.log.info(f"Saved evaluation and visualization for iteration {iteration} to {iter_output_dir}")
+            
+        except Exception as e:
+            self.log.error(f"Failed to save evaluation and visualization for iteration {iteration}: {e}")
+            # Restore original output directory even if there's an error
+            self.I['output'] = original_output
 
     def _cleanup_old_checkpoints(self, iteration):
         """Remove old model checkpoints to save memory."""
