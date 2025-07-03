@@ -1176,9 +1176,16 @@ class EncodingDesigner(nn.Module):
         self.genes = np.array(constraints_df.index)
         if 'constraints' not in constraints_df.columns:
             raise KeyError(f"Column 'constraints' not found in {self.I['constraints']}")
-        self.constraints = torch.tensor(constraints_df['constraints'].values, dtype=torch.float32, device=self.I['device'])
+        
+        # If gene_constraint_wt is 0, set all constraints to 1000
+        if self.I['gene_constraint_wt'] == 0:
+            self.constraints = torch.full((len(self.genes),), 1000.0, dtype=torch.float32, device=self.I['device'])
+            self.log.info(f"Gene constraint weight is 0. Setting all {self.n_genes} gene constraints to 1000.")
+        else:
+            self.constraints = torch.tensor(constraints_df['constraints'].values, dtype=torch.float32, device=self.I['device'])
+            self.log.info(f"Loaded {self.n_genes} genes from constraints file.")
+        
         self.n_genes = len(self.genes)
-        self.log.info(f"Loaded {self.n_genes} genes from constraints.")
 
     def _load_pretrained_model(self):
         """Load pretrained model state, learning stats, and gene mask if available."""

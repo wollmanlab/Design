@@ -211,7 +211,39 @@ parameter_variant_list = [
     'probe_wt':[1],
     'dynamic_wt':[0],
     'n_bit':[12,24,48,96], #[12,24,48,96]
-    'use_noise':[1]
+    'use_noise':[1],
+    },
+]
+
+# Separability screen  Run 6
+parameter_variant_list = [
+    {
+    'decoder_n_lyr':[0,1,2,3],
+    'categorical_wt':[1],
+    'separation_wt':[0.0,0.05,0.1,0.5,1,1.5,2,5],
+    'brightness_wt':[1],
+    'gene_constraint_wt':[1],
+    'probe_wt':[1],
+    'dynamic_wt':[0],
+    'n_bit':[24], # set 
+    'use_noise':[1],
+    },
+]
+
+# Brightness screen  Run 7
+parameter_variant_list = [
+    {
+    'decoder_n_lyr':[0,1,2,3],
+    'categorical_wt':[1],
+    'separation_wt':[0.1], # set
+    'brightness_wt':[1],
+    'brightness':[2.5,3,3.5,4,4.5,5,5.5,6],
+    'n_probes':[100e3,200e3,300e3,400e3,500e3],
+    'gene_constraint_wt':[1],
+    'probe_wt':[1],
+    'dynamic_wt':[0],
+    'n_bit':[24], # set
+    'use_noise':[1],
     },
 ]
 
