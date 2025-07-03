@@ -64,7 +64,6 @@ class EncodingDesigner(nn.Module):
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
             'input': './',  # Input directory path
             'decoder_n_lyr': 0,  # Number of hidden layers in decoder
-            'decoder_h_dim': 128,  # Hidden dimension size in decoder
             'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
             'constraints': 'constraints.csv',  # Path to gene constraints file
             'X_test': 'X_test.pt',  # Path to test features tensor
@@ -986,7 +985,7 @@ class EncodingDesigner(nn.Module):
                 self.log.info(f"Constructed path for '{param_key}': {self.I[param_key]}")
         # Convert parameters to integers
         params_to_int = ['n_bit', 'n_iters', 'report_rt', 'batch_size', 'n_cpu',
-                         'decoder_n_lyr', 'decoder_h_dim'] 
+                         'decoder_n_lyr'] 
         for param_key in params_to_int:
             self.convert_param_to_int(param_key) 
         # Log final parameters
@@ -1097,10 +1096,11 @@ class EncodingDesigner(nn.Module):
             decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
             log_msg_decoder_structure = "Initialized single linear decoder."
         else:
+            decoder_h_dim = int(3 * self.I['n_bit'])  # Hidden dimension is 3x the number of bits
             for i in range(self.I['decoder_n_lyr']):
-                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.I['decoder_h_dim']))
+                decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, decoder_h_dim))
                 # Add batch normalization for better training stability
-                decoder_modules.append(nn.BatchNorm1d(self.I['decoder_h_dim']))
+                decoder_modules.append(nn.BatchNorm1d(decoder_h_dim))
                 # Add activation function based on decoder_activation parameter
                 if self.I['decoder_act'] == 'relu':
                     decoder_modules.append(nn.ReLU())
@@ -1117,10 +1117,10 @@ class EncodingDesigner(nn.Module):
                 # Only add dropout if use_noise is enabled
                 if self.I['use_noise'] == 1:
                     decoder_modules.append(nn.Dropout(p=self.I['D_drp']))
-                current_decoder_layer_input_dim = self.I['decoder_h_dim'] 
+                current_decoder_layer_input_dim = decoder_h_dim 
             decoder_modules.append(nn.Linear(current_decoder_layer_input_dim, self.n_categories))
             dropout_info = f"dropout={self.I['D_drp']}" if self.I['use_noise'] == 1 else "no dropout"
-            log_msg_decoder_structure = f"Initialized decoder with {self.I['decoder_n_lyr']} hidden layer(s) (dim={self.I['decoder_h_dim']}, activation={self.I['decoder_act']}, {dropout_info}) and output layer."
+            log_msg_decoder_structure = f"Initialized decoder with {self.I['decoder_n_lyr']} hidden layer(s) (dim={decoder_h_dim}, activation={self.I['decoder_act']}, {dropout_info}) and output layer."
         self.decoder = nn.Sequential(*decoder_modules).to(self.I['device'])
         self.log.info(f"Initialized decoder.")
         self.log.info(log_msg_decoder_structure)

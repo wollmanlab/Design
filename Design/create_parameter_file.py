@@ -101,7 +101,6 @@ user_parameters = {
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
             'input': './',  # Input directory path
             'decoder_n_lyr': 0,  # Number of hidden layers in decoder
-            'decoder_h_dim': 64,  # Hidden dimension size in decoder
             'top_n_genes': 0,  # Number of top genes to keep (0 = keep all genes)
             'constraints': 'constraints.csv',  # Path to gene constraints file
             'X_test': 'X_test.pt',  # Path to test features tensor
