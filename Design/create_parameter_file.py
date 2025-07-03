@@ -179,7 +179,7 @@ user_parameters['input'] = input_dir
 #     {
 #     'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
 #     'categorical_wt':[5],#[0.1,0.5,1,2.5,5,10]
-#     'separation_wt':[1],#[0.1,0.5,1,2.5,5,10]
+#     'separation_wt':[0.1],#[0.1,0.5,1,2.5,5,10]
 #     'brightness':[2.5,3,3.5,4,4.5,5,5.5,6],
 #     'n_bit':[24], #[12,24,48,96]
 #     'use_noise':[1]
@@ -236,7 +236,7 @@ user_parameters['input'] = input_dir
 #     {
 #     'decoder_n_lyr':[0,1,2,3],
 #     'categorical_wt':[1],
-#     'separation_wt':[1], # set
+#     'separation_wt':[0.1], # set
 #     'brightness_wt':[1],
 #     'brightness':[2.5,3,3.5,4,4.5,5,5.5,6],
 #     'n_probes':[100e3,200e3,300e3,400e3,500e3],
@@ -254,7 +254,7 @@ parameter_variant_list.append(
     'fig':['fig2a'],
     'decoder_n_lyr':[0,1],
     'categorical_wt':[2.5],
-    'separation_wt':[1],
+    'separation_wt':[0.1],
     'brightness_wt':[1],
     'brightness':[4.5],
     'n_probes':[300e3],
@@ -272,7 +272,7 @@ parameter_variant_list.append(
     'fig':['fig2b'],
     'decoder_n_lyr':[0,1],
     'categorical_wt':[2.5],
-    'separation_wt':[1],
+    'separation_wt':[0.1],
     'brightness_wt':[1],
     'brightness':[4.5],
     'n_probes':[300e3],
@@ -309,7 +309,7 @@ parameter_variant_list.append(
     'fig':['fig2d'],
     'decoder_n_lyr':[0,1],
     'categorical_wt':[2.5],
-    'separation_wt':[1],
+    'separation_wt':[0.1],
     'brightness_wt':[1],
     'brightness':[3,3.5,4,4.5,5,5.5,6],
     'n_probes':[300e3],
@@ -327,7 +327,7 @@ parameter_variant_list.append(
     'fig':['fig3a'],
     'decoder_n_lyr':[0,1],
     'categorical_wt':[2.5],
-    'separation_wt':[1],
+    'separation_wt':[0.1],
     'brightness_wt':[1],
     'brightness':[4.5],
     'n_probes':[300e3],
@@ -345,7 +345,7 @@ parameter_variant_list.append(
     'fig':['fig3b'],
     'decoder_n_lyr':[0,1],
     'categorical_wt':[2.5],
-    'separation_wt':[1],
+    'separation_wt':[0.1],
     'brightness_wt':[1],
     'brightness':[4.5],
     'n_probes':[1e3,5e3,10e3,50e3,100e3,250e3,500e3,1000e3],
@@ -363,7 +363,7 @@ parameter_variant_list.append(
     'fig':['fig3c'],
     'decoder_n_lyr':[0,1],
     'categorical_wt':[2.5],
-    'separation_wt':[1],
+    'separation_wt':[0.1],
     'brightness_wt':[1],
     'brightness':[3,3.5,4,4.5,5,5.5,6],
     'n_probes':[300e3],
