@@ -144,6 +144,7 @@ user_parameters = {
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
             'continue_training': 0,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training)
             'use_noise': 1,  # Whether to apply noise/dropout during training (0 = no noise, 1 = use noise) 
+            'fig':''
         }
 
 user_parameters['input'] = input_dir
