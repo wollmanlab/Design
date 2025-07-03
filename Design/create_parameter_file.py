@@ -185,18 +185,33 @@ user_parameters['input'] = input_dir
 #     },
 # ]
 
-# N_bits with no experimental constraints Run 4
+# # N_bits with no experimental constraints Run 4
+# parameter_variant_list = [
+#     {
+#     'decoder_n_lyr':[0,1,2,3],
+#     'categorical_wt':[1],
+#     'separation_wt':[0],
+#     'brightness_wt':[0],
+#     'gene_constraint_wt':[0],
+#     'probe_wt':[0],
+#     'dynamic_wt':[0],
+#     'n_bit':[12,24,48,96], #[12,24,48,96]
+#     'use_noise':[0,1]
+#     },
+# ]
+
+# N_bits with experimental constraints Run 5
 parameter_variant_list = [
     {
-    'decoder_n_lyr':[0,1,2,3],#[0,1,2,3]
-    'categorical_wt':[1],#[0.1,0.5,1,2.5,5,10]
-    'separation_wt':[0],#[0.1,0.5,1,2.5,5,10]
-    'brightness_wt':[0],
-    'gene_constraint_wt':[0],
-    'probe_wt':[0],
+    'decoder_n_lyr':[0,1,2,3],
+    'categorical_wt':[1],
+    'separation_wt':[0],
+    'brightness_wt':[1],
+    'gene_constraint_wt':[1],
+    'probe_wt':[1],
     'dynamic_wt':[0],
     'n_bit':[12,24,48,96], #[12,24,48,96]
-    'use_noise':[0,1]
+    'use_noise':[1]
     },
 ]
 
