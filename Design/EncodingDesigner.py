@@ -111,7 +111,6 @@ class EncodingDesigner(nn.Module):
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
         self._setup_output_and_symlinks(user_parameters_path)
-        self.results = {}
         self.learning_stats = {}
         self.saved_models = {}
         self.saved_optimizer_states = {}
@@ -119,7 +118,6 @@ class EncodingDesigner(nn.Module):
         self.best_model_state_dict = None
         self.best_iteration = -1
         self.training_completed = False
-        # Weight tracking for change calculation
         self.prev_encoder_weights = None
         self.prev_decoder_weights = None
 
@@ -546,7 +544,6 @@ class EncodingDesigner(nn.Module):
                     self.optimizer_gen.step()
                     delayed_perturbation_iter = self._handle_weight_perturbation(iteration, self.I['report_rt'], delayed_perturbation_iter)
                     self._update_best_model(iteration, total_loss)
-                    self._save_model_checkpoint(iteration, is_report_iter)
                 else: 
                     self._revert_to_previous_state(iteration)
                 if is_report_iter:
@@ -558,7 +555,7 @@ class EncodingDesigner(nn.Module):
                 
                 # Run evaluation and visualization every 50k iterations
                 if (iteration + 1) % 50000 == 0:
-                    self._save_eval_and_viz(iteration)
+                    self.save_eval_and_viz(iteration,eval_dir='eval_checkpoints')
                 
                 if delayed_perturbation_iter == iteration:
                     self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
@@ -568,7 +565,7 @@ class EncodingDesigner(nn.Module):
         except Exception as e:
             self.log.exception(f"Error during training loop at iteration {iteration}: {e}")
         finally:
-            self._save_final_model(start_time)
+            self.save_eval_and_viz(iteration=self.I['n_iters']-1, eval_dir=None)
 
     def evaluate(self):
         if self.encoder is None or self.decoder is None or \
@@ -576,11 +573,11 @@ class EncodingDesigner(nn.Module):
            self.y_test is None : 
             self.log.error("Cannot evaluate: Model not initialized or trained. Run initialize() and fit() first.")
             return
-        self.results = {}
+        results_dict = {}
         # Use clean versions for evaluation stats to be consistent with loss calculations
         E = self.get_E_clean()
         E_cpu = E.cpu().detach()
-        self.results['Number of Probes (Constrained)'] = E_cpu.sum().item()
+        results_dict['Number of Probes (Constrained)'] = E_cpu.sum().item()
         all_P_type = []
         X_global_train = self.X_train 
         y_global_train = self.y_train
@@ -600,20 +597,20 @@ class EncodingDesigner(nn.Module):
             avg_P_type = torch.stack(all_P_type).mean(dim=0) 
             # Calculate percentiles efficiently
             p10, p50, p90 = torch.quantile(avg_P_type, torch.tensor([0.1, 0.5, 0.9]))
-            self.results['10th Percentile Signal'] = p10.item()
-            self.results['50th Percentile Signal'] = p50.item()
-            self.results['90th Percentile Signal'] = p90.item()
+            results_dict['10th Percentile Signal'] = p10.item()
+            results_dict['50th Percentile Signal'] = p50.item()
+            results_dict['90th Percentile Signal'] = p90.item()
             for bit in range(avg_P_type.shape[1]):
-                self.results[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
+                results_dict[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
                 # Calculate percentiles for each bit efficiently
                 bit_p10, bit_p50, bit_p90 = torch.quantile(avg_P_type[:, bit], torch.tensor([0.1, 0.5, 0.9]))
-                self.results[f"10th Percentile Signal Bit {bit}"] = bit_p10.item()
-                self.results[f"50th Percentile Signal Bit {bit}"] = bit_p50.item()
-                self.results[f"90th Percentile Signal Bit {bit}"] = bit_p90.item()
+                results_dict[f"10th Percentile Signal Bit {bit}"] = bit_p10.item()
+                results_dict[f"50th Percentile Signal Bit {bit}"] = bit_p50.item()
+                results_dict[f"90th Percentile Signal Bit {bit}"] = bit_p90.item()
         else:
             self.log.warning("Could not calculate average P_type for evaluation stats.")
         self.log.info("--- Basic Evaluation Stats ---")
-        for key, val in self.results.items():
+        for key, val in results_dict.items():
             if isinstance(val, (float, int)): log_msg = f" {key}: {round(val, 4)}"
             else: log_msg = f" {key}: {val}"
             self.log.info(log_msg)
@@ -679,9 +676,9 @@ class EncodingDesigner(nn.Module):
                         self.log.info(f"{level_name} Accuracy: {round(accuracy, 4)}")
                         self.log.info(f"{level_name} Separation: {round(separation, 4)}")
                         self.log.info(f"{level_name} Dynamic Range: {round(dynamic_range, 4)}")
-                        self.results[f'{level_name} Accuracy'] = accuracy
-                        self.results[f'{level_name} Separation'] = separation
-                        self.results[f'{level_name} Dynamic Range'] = dynamic_range
+                        results_dict[f'{level_name} Accuracy'] = accuracy
+                        results_dict[f'{level_name} Separation'] = separation
+                        results_dict[f'{level_name} Dynamic Range'] = dynamic_range
                     # Save P_test averages for "No Noise" condition
                     if level_name == "No Noise":
                         self.log.info("Saving P_test averages for No Noise condition...")
@@ -725,14 +722,14 @@ class EncodingDesigner(nn.Module):
                 self.training = original_training_state
             except Exception as e:
                 self.log.error(f"Error during {level_name} accuracy calculation: {e}")
-                self.results[f'{level_name} Accuracy'] = np.nan
+                results_dict[f'{level_name} Accuracy'] = np.nan
                 # Ensure training state is restored even if there's an error
                 self.training = original_training_state
         # Set back to eval mode after all noise evaluations
         self.eval()
         results_df = pd.DataFrame({
-            'values': list(self.results.values())
-        }, index=pd.Index(list(self.results.keys())))
+            'values': list(results_dict.values())
+        }, index=pd.Index(list(results_dict.keys())))
         results_path = os.path.join(self.I['output'], 'Results.csv') 
         results_df.to_csv(results_path)
         self.log.info(f"Evaluation results saved to {results_path}")
@@ -911,6 +908,53 @@ class EncodingDesigner(nn.Module):
             
 
         self.log.info("Visualization generation finished.")
+
+    def calculate_bit_importance(self):
+        """Calculate bit-wise importance scores using dynamic range from calculate_loss."""
+        self.log.info("--- Calculating Bit Importance Scores ---")
+        E_clean = self.get_E_clean()
+        n_bits = E_clean.shape[1]
+        with torch.no_grad():
+            P_clean = self.project_clean(self.X_train, E_clean)
+            median_val = P_clean.sum(1).clamp(min=1e-8).median()
+            P_clean_sum_norm = median_val * P_clean / P_clean.sum(1).unsqueeze(1).clamp(min=1e-8)
+            bit_dynamic_ranges = []
+            bit_percentiles = []
+            for bit_idx in range(n_bits):
+                bit_values = P_clean_sum_norm[:, bit_idx]
+                quantiles_tensor = torch.tensor([0.05, 0.15, 0.45, 0.55, 0.85, 0.95], device=bit_values.device)
+                quant_results = torch.quantile(bit_values, quantiles_tensor)
+                fold_change = quant_results[5] / quant_results[0].clamp(min=1e-8)  # p95 / p05
+                bit_dynamic_ranges.append(fold_change.item())
+                bit_percentiles.append((quant_results[0].item(), quant_results[2].item(), quant_results[4].item()))
+        gene_usage_per_bit = (E_clean > 0.1).float().sum(dim=0)
+        bit_strengths = E_clean.sum(dim=0)
+        if isinstance(self.decoder[0], nn.Linear):
+            decoder_weights = self.decoder[0].weight.data
+            decoder_importance = torch.abs(decoder_weights).sum(dim=0)
+        else:
+            decoder_importance = torch.zeros(n_bits, device=E_clean.device)
+        dynamic_ranges = torch.tensor(bit_dynamic_ranges, device=E_clean.device)
+        probe_efficiency = bit_strengths / gene_usage_per_bit.clamp(min=1)
+        probe_efficiency_norm = probe_efficiency / probe_efficiency.max()
+        decoder_importance_norm = decoder_importance / decoder_importance.max()
+        dynamic_ranges_norm = dynamic_ranges / dynamic_ranges.max()
+        importance_scores = (0.4 * probe_efficiency_norm + 
+                           0.3 * decoder_importance_norm + 
+                           0.3 * dynamic_ranges_norm)
+        sorted_indices = torch.argsort(importance_scores, descending=True)
+        self.log.info(f"Bit importance scores calculated for {n_bits} bits")
+        self.log.info(f"Top 5 bits: {sorted_indices[:5].cpu().numpy()}")
+        self.log.info(f"Bottom 5 bits: {sorted_indices[-5:].cpu().numpy()}")
+        return {
+            'importance_scores': importance_scores.cpu().numpy(),
+            'sorted_indices': sorted_indices.cpu().numpy(),
+            'probe_efficiency': probe_efficiency.cpu().numpy(),
+            'decoder_importance': decoder_importance.cpu().numpy(),
+            'dynamic_ranges': dynamic_ranges.cpu().numpy(),
+            'gene_usage_per_bit': gene_usage_per_bit.cpu().numpy(),
+            'bit_strengths': bit_strengths.cpu().numpy()
+        }
 
     def _setup_logging(self, user_parameters_path):
         if user_parameters_path is not None:
@@ -1193,88 +1237,89 @@ class EncodingDesigner(nn.Module):
 
     def _load_pretrained_model(self):
         """Load pretrained model state, learning stats, and gene mask if available."""
-        model_state_path = os.path.join(self.I['output'], 'final_model_state.pt')
-        learning_stats_path = os.path.join(self.I['output'], 'learning_stats.json')
-        if not os.path.exists(model_state_path):
-            self.log.info(f"No existing model state file found at {model_state_path}. Model will use fresh initial weights.")
+        model_files = []
+        for root, dirs, files in os.walk(self.I['output']):
+            if 'trimmed' in root:
+                continue
+            model_state_files = [os.path.join(root,i) for i in files if i.endswith('model_state.pt')]
+            learning_stats_files = [i for i in files if i.endswith('learning_stats.json')]
+            if (len(model_state_files)>0) and (len(learning_stats_files)>0):
+                model_files.extend(model_state_files) 
+        # Sort by modification time to get the newest
+        if model_files:
+            model_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+            newest_model_path = model_files[0]
+            model_dir = os.path.dirname(newest_model_path)
+            self.log.info(f"Found model state file: {newest_model_path}. Attempting to load.")
+            try:
+                loaded_state_dict = torch.load(newest_model_path, map_location=self.I['device'])
+                missing_keys, unexpected_keys = self.load_state_dict(loaded_state_dict, strict=False)
+                if missing_keys: self.log.warning(f"Missing keys when loading state_dict: {missing_keys}")
+                if unexpected_keys: self.log.warning(f"Unexpected keys when loading state_dict: {unexpected_keys}")
+                self.to(self.I['device']) 
+                self.is_initialized_from_file = True
+                self.log.info("Successfully loaded model state from file (strict=False).")
+                # Look for learning stats in the same directory as the model
+                learning_stats_path = os.path.join(model_dir, 'learning_stats.json')
+                if os.path.exists(learning_stats_path):
+                    try:
+                        import json
+                        with open(learning_stats_path, 'r') as f:
+                            loaded_learning_stats = json.load(f)
+                        self.learning_stats = loaded_learning_stats
+                        self.log.info(f"Successfully loaded learning stats from {learning_stats_path}")
+                        max_iteration = -1
+                        for key in self.learning_stats.keys():
+                            if key.isdigit():
+                                max_iteration = max(max_iteration, int(key))
+                        if max_iteration >= self.I['n_iters'] - 1:
+                            self.training_completed = True
+                            self.log.info(f"Training appears to be completed (max iteration: {max_iteration}, target: {self.I['n_iters']})")
+                        else:
+                            self.training_completed = False
+                            self.log.info(f"Training appears to be incomplete (max iteration: {max_iteration}, target: {self.I['n_iters']})")
+                    except Exception as e:
+                        self.log.error(f"Failed to load learning stats from {learning_stats_path}: {e}")
+                        self.training_completed = False
+                else:
+                    self.log.info(f"No learning stats file found in {model_dir}. Assuming training was not completed.")
+                    self.training_completed = False
+                
+                # Check if gene mask exists in the same directory and load it if present
+                gene_mask_path = os.path.join(model_dir, 'gene_mask.pt')
+                if os.path.exists(gene_mask_path):
+                    self.log.info(f"Found gene mask file: {gene_mask_path}. Loading gene filtering.")
+                    try:
+                        gene_mask = torch.load(gene_mask_path, map_location=self.I['device'])
+                        if gene_mask.dtype != torch.bool:
+                            gene_mask = gene_mask.bool()
+                        self.X_train = self.X_train[:, gene_mask]
+                        self.X_test = self.X_test[:, gene_mask]
+                        self.constraints = self.constraints[gene_mask]
+                        self.genes = self.genes[gene_mask.cpu().numpy()]
+                        self.n_genes = gene_mask.sum().item()
+                        self.log.info(f"Applied gene mask: {self.n_genes} genes retained from {len(gene_mask)} total genes")
+                        # Reinitialize encoder with correct dimensions
+                        self._initialize_encoder()
+                        self.log.info(f"Reinitialized encoder with {self.n_genes} genes")
+                    except Exception as e:
+                        self.log.error(f"Failed to load gene mask from {gene_mask_path}: {e}")
+                        self.log.warning("Continuing without gene filtering.")
+                else:
+                    self.log.info("No gene mask file found. Using all genes.")
+                    
+            except Exception as e:
+                self.log.error(f"Failed to load model state from {newest_model_path}: {e}. Model will use fresh initial weights.")
+                self.is_initialized_from_file = False
+        else:
+            self.log.info("No existing model state file found. Model will use fresh initial weights.")
             self.is_initialized_from_file = False
+        
+        # If still not initialized from file, use fresh weights
+        if not self.is_initialized_from_file:
+            self.log.info("No existing model state found. Model will use fresh initial weights.")
             self.training_completed = False
             return
-        self.log.info(f"Found existing model state file: {model_state_path}. Attempting to load.")
-        try:
-            loaded_state_dict = torch.load(model_state_path, map_location=self.I['device'])
-            missing_keys, unexpected_keys = self.load_state_dict(loaded_state_dict, strict=False)
-            if missing_keys: self.log.warning(f"Missing keys when loading state_dict: {missing_keys}")
-            if unexpected_keys: self.log.warning(f"Unexpected keys when loading state_dict: {unexpected_keys}")
-            self.to(self.I['device']) 
-            self.is_initialized_from_file = True
-            self.log.info("Successfully loaded model state from file (strict=False).")
-            if os.path.exists(learning_stats_path):
-                try:
-                    import json
-                    with open(learning_stats_path, 'r') as f:
-                        loaded_learning_stats = json.load(f)
-                    self.learning_stats = loaded_learning_stats
-                    self.log.info(f"Successfully loaded learning stats from {learning_stats_path}")
-                    max_iteration = -1
-                    for key in self.learning_stats.keys():
-                        if key.isdigit():
-                            max_iteration = max(max_iteration, int(key))
-                    if max_iteration >= self.I['n_iters'] - 1:
-                        self.training_completed = True
-                        self.log.info(f"Training appears to be completed (max iteration: {max_iteration}, target: {self.I['n_iters']})")
-                    else:
-                        self.training_completed = False
-                        self.log.info(f"Training appears to be incomplete (max iteration: {max_iteration}, target: {self.I['n_iters']})")
-                except Exception as e:
-                    self.log.error(f"Failed to load learning stats from {learning_stats_path}: {e}")
-                    self.training_completed = False
-            else:
-                self.log.info("No learning stats file found. Assuming training was not completed.")
-                self.training_completed = False
-            # Check if gene mask exists and load it if present
-            gene_mask_path = os.path.join(self.I['output'], 'gene_mask.pt')
-            if os.path.exists(gene_mask_path):
-                self.log.info(f"Found gene mask file: {gene_mask_path}. Loading gene filtering.")
-                try:
-                    gene_mask = torch.load(gene_mask_path, map_location=self.I['device'])
-                    if gene_mask.dtype != torch.bool:
-                        gene_mask = gene_mask.bool()
-                    self.X_train = self.X_train[:, gene_mask]
-                    self.X_test = self.X_test[:, gene_mask]
-                    self.constraints = self.constraints[gene_mask]
-                    self.genes = self.genes[gene_mask.cpu().numpy()]
-                    self.n_genes = gene_mask.sum().item()
-                    self.log.info(f"Applied gene mask: {self.n_genes} genes retained from {len(gene_mask)} total genes")
-                    # Reinitialize encoder with correct dimensions
-                    self._initialize_encoder()
-                    self.log.info(f"Reinitialized encoder with {self.n_genes} genes")
-                except Exception as e:
-                    self.log.error(f"Failed to load gene mask from {gene_mask_path}: {e}")
-                    self.log.warning("Continuing without gene filtering.")
-            else:
-                self.log.info("No gene mask file found. Using all genes.")
-            self.eval() 
-            with torch.no_grad():
-                final_E = self.get_E_clean().detach().clone()
-                self.log.info("Enforcing constraints on loaded E matrix...")
-                if self.constraints is None:
-                    self.log.error("Cannot enforce constraints: self.constraints is None.")
-                    self.E = final_E 
-                else:
-                    E_final_constrained = torch.clip(final_E.round(), 0, None)
-                    T = self.constraints.clone().detach()
-                    m = E_final_constrained.sum(1) > T
-                    if m.any():
-                        scaling_factors = (T[m] / E_final_constrained.sum(1)[m].clamp(min=1e-8)).unsqueeze(1)
-                        E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
-                        E_final_constrained = E_final_constrained.clamp(min=0)
-                    self.E = E_final_constrained.clone().detach() 
-                    self.log.info(f"Stored constrained E matrix from loaded model. Probe count: {self.E.sum().item():.2f}")
-        except Exception as e:
-            self.log.error(f"Failed to load model state from {model_state_path}: {e}. Model will use fresh initial weights.")
-            self.is_initialized_from_file = False
-            self.E = None
 
     def _update_parameters_for_iteration(self, iteration, n_iterations):
         """Update parameters based on training progress."""
@@ -1346,12 +1391,6 @@ class EncodingDesigner(nn.Module):
             self.best_model_state_dict = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
             self.best_iteration = iteration
             self.log.info(f"*** New best model found at iteration {iteration} (Train Loss: {self.best_loss:.4f}) ***")
-
-    def _save_model_checkpoint(self, iteration, is_report_iter):
-        """Save model checkpoint if needed."""
-        if is_report_iter or iteration == self.best_iteration:  
-            self.saved_models[iteration] = {k: v.cpu().detach().clone() for k, v in self.state_dict().items()}
-            self.saved_optimizer_states[iteration] = self.optimizer_gen.state_dict()
 
     def _revert_to_previous_state(self, iteration):
         """Revert to previous model state when NaN/Inf detected."""
@@ -1447,32 +1486,24 @@ class EncodingDesigner(nn.Module):
         except Exception as e:
             self.log.error(f"Failed to save checkpoint at iteration {iteration}: {e}")
 
-    def _save_eval_and_viz(self, iteration):
+    def save_eval_and_viz(self, iteration, eval_dir=None):
         """Save evaluation results and visualizations at specific iteration."""
         try:
-            eval_dir = os.path.join(self.I['output'], 'eval_checkpoints')
+            if eval_dir is None:
+                eval_dir = self.I['output']
+            else:
+                eval_dir = os.path.join(self.I['output'], eval_dir)
             os.makedirs(eval_dir, exist_ok=True)
-            
-            # Create iteration-specific output directory
             iter_output_dir = os.path.join(eval_dir, f'iter_{iteration}')
             os.makedirs(iter_output_dir, exist_ok=True)
-            
-            # Temporarily change output directory
             original_output = self.I['output']
             self.I['output'] = iter_output_dir
-            
             self.log.info(f"Running evaluation and visualization for iteration {iteration}")
-            
-            # Run evaluation
             self.evaluate()
-            
-            # Run visualization
             self.visualize(show_plots=False)
-            
-            # Restore original output directory
+            self.save_model()
             self.I['output'] = original_output
-            
-            self.log.info(f"Saved evaluation and visualization for iteration {iteration} to {iter_output_dir}")
+            self.log.info(f"Saved evaluation, visualization, and model state for iteration {iteration} to {iter_output_dir}")
             
         except Exception as e:
             self.log.error(f"Failed to save evaluation and visualization for iteration {iteration}: {e}")
@@ -1487,8 +1518,9 @@ class EncodingDesigner(nn.Module):
                 self.saved_models.pop(key_to_del, None)
                 self.saved_optimizer_states.pop(key_to_del, None)
 
-    def _save_final_model(self, start_time):
+    def save_model(self):
         """Save final model and perform cleanup."""
+        output_dir = self.I['output']
         if self.I['best_model'] == 0:
             self.best_model_state_dict = None
             self.log.info("Best model turned off. Saving the final iteration state.")
@@ -1505,11 +1537,11 @@ class EncodingDesigner(nn.Module):
                 self.log.error(f"Failed to load best model state before saving: {e}. Saving the final iteration state instead.")
         else:
             self.log.warning("No best model state was saved during training. Saving the final iteration state.")
-        final_model_path = os.path.join(self.I['output'], 'final_model_state.pt')
-        learning_stats_path = os.path.join(self.I['output'], 'learning_stats.json')
+        model_path = os.path.join(output_dir, 'model_state.pt')
+        learning_stats_path = os.path.join(output_dir, 'learning_stats.json')
         try:
-            torch.save(self.state_dict(), final_model_path)
-            self.log.info(f"Final model state dictionary saved to {final_model_path}")
+            torch.save(self.state_dict(), model_path)
+            self.log.info(f"Final model state dictionary saved to {model_path}")
             import json
             with open(learning_stats_path, 'w') as f:
                 json.dump(self.learning_stats, f, indent=2)
@@ -1537,7 +1569,6 @@ class EncodingDesigner(nn.Module):
                 log_msg = f'{name}: {item}'
             self.log.info(log_msg)
         self.log.info('------------------')
-        self.log.info('Total time taken: {:.2f} seconds'.format(time.time() - start_time))
         self.eval() 
         with torch.no_grad():
             E = self.get_E_clean().detach().clone() 
@@ -1554,19 +1585,83 @@ class EncodingDesigner(nn.Module):
                 E_final_constrained[m, :] = (E_final_constrained[m, :] * scaling_factors).floor()
                 E_final_constrained = E_final_constrained.clamp(min=0)
             self.E = E_final_constrained.clone().detach() 
-            e_csv_path = os.path.join(self.I['output'], 'E_constrained.csv')
-            e_pt_path = os.path.join(self.I['output'], 'E_constrained.pt')
+            e_csv_path = os.path.join(output_dir, 'E_constrained.csv')
+            e_pt_path = os.path.join(output_dir, 'E_constrained.pt')
             pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
             torch.save(self.E.cpu(), e_pt_path)
             self.log.info(f"Final constrained E matrix saved to {e_csv_path} and {e_pt_path}")
             self.log.info(f"Final constrained probe count: {self.E.sum().item():.2f}")
         try:
             learning_df = pd.DataFrame.from_dict(self.learning_stats, orient='index')
-            learning_curve_path = os.path.join(self.I['output'], 'learning_curve.csv')
+            learning_curve_path = os.path.join(output_dir, 'learning_curve.csv')
             learning_df.to_csv(learning_curve_path)
             self.log.info(f"Learning curve data saved to {learning_curve_path}")
         except Exception as e:
             self.log.error(f"Failed to save learning curve: {e}")
+
+    def trim_bits(self, n_keep=None):
+        """Trim the model to keep the top n_keep most important bits (default: trim 1 bit)."""
+        bit_info = self.calculate_bit_importance()
+        sorted_indices = bit_info['sorted_indices']
+        n_bits = len(sorted_indices)
+        if n_keep is None:
+            n_keep = n_bits - 1
+        if n_keep >= n_bits:
+            self.log.info(f"Requested to keep {n_keep} bits, but model only has {n_bits} bits. No trimming performed.")
+            return np.sort(sorted_indices)
+        keep_indices = np.sort(sorted_indices[:n_keep])
+        remove_indices = np.setdiff1d(np.arange(n_bits), keep_indices)
+        # Update encoder weights
+        with torch.no_grad():
+            self.encoder.weight = torch.nn.Parameter(self.encoder.weight[:, keep_indices])
+        # Update decoder first layer weights (assume nn.Linear as first layer)
+        if isinstance(self.decoder[0], nn.Linear):
+            old_weight = self.decoder[0].weight.data
+            new_weight = old_weight[:, keep_indices]
+            self.decoder[0].weight = torch.nn.Parameter(new_weight)
+        else:
+            self.log.warning("Decoder first layer is not nn.Linear. Skipping decoder weight trimming.")
+        # Update n_bit
+        self.I['n_bit'] = self.encoder.weight.shape[1]
+        self.log.info(f"Trimmed to {self.I['n_bit']} bits. Kept bits: {keep_indices}. Removed bits: {remove_indices}")
+
+    def iterative_trim_to_n_bits(self, target_n_bits=12, max_iterations=10):
+        """Iteratively trim bits down to target_n_bits over max_iterations using linear spacing."""
+        if self.I['n_bit'] > target_n_bits:
+            n_keeps = np.unique(np.linspace(target_n_bits, self.I['n_bit']-1, max_iterations).astype(int))[::-1]
+            for n_keep in n_keeps:
+                self.log.info(f"Trimming from {self.I['n_bit']} to {n_keep} bits")
+                try:
+                    self.trim_bits(n_keep=n_keep)
+                    self.train_decoder_only(n_iterations=1000)
+                    self.save_eval_and_viz(iteration=n_keep, eval_dir='trimmed')
+                except Exception as e:
+                    self.log.error(f"Error during trimming to {n_keep} bits: {e}")
+                    break
+            self.log.info(f"Iterative trimming complete. Final n_bits: {self.I['n_bit']}")
+
+    def train_decoder_only(self, n_iterations=1000):
+        """Train only the decoder for n_iterations using only categorical loss."""
+        self.log.info(f"--- Starting Decoder-Only Training for {n_iterations} iterations ---")
+        # Set encoder learning rate to 0
+        for param_group in self.optimizer_gen.param_groups:
+            if 'encoder' in str(param_group['params'][0]):
+                param_group['lr'] = 0.0
+        self.train()
+        for iteration in range(n_iterations):
+            X, y = self._get_training_batch(iteration, self.I['batch_size'], self.X_train.shape[0])
+            self.optimizer_gen.zero_grad()
+            E_noisy = self.get_E()
+            P_noisy = self.project(X, E_noisy)
+            y_predict, accuracy, total_loss = self.decode(P_noisy, y)
+            total_loss.backward()
+            self.optimizer_gen.step()
+        self.eval()
+        # Restore encoder learning rate
+        for param_group in self.optimizer_gen.param_groups:
+            if 'encoder' in str(param_group['params'][0]):
+                param_group['lr'] = self.I['lr']
+        self.log.info("--- Decoder-Only Training Complete ---")
 
 # Helper function for smooth, non-negative penalty
 def swish(fold, scale=3.0, shift=-1.278, offset=0.3):
@@ -2046,6 +2141,3 @@ if __name__ == '__main__':
     else:
         print("Starting training...")
         model.fit()
-    
-    model.evaluate()
-    model.visualize(show_plots=False)
