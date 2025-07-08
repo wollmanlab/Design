@@ -929,8 +929,9 @@ class EncodingDesigner(nn.Module):
                 bit_percentiles.append((quant_results[0].item(), quant_results[2].item(), quant_results[4].item()))
         gene_usage_per_bit = (E_clean > 0.1).float().sum(dim=0)
         bit_strengths = E_clean.sum(dim=0)
-        if isinstance(self.decoder[0], nn.Linear):
-            decoder_weights = self.decoder[0].weight.data
+        first_layer = self.decoder[0]
+        if isinstance(first_layer, nn.Linear):
+            decoder_weights = first_layer.weight.data
             decoder_importance = torch.abs(decoder_weights).sum(dim=0)
         else:
             decoder_importance = torch.zeros(n_bits, device=E_clean.device)
@@ -944,16 +945,16 @@ class EncodingDesigner(nn.Module):
                            0.3 * dynamic_ranges_norm)
         sorted_indices = torch.argsort(importance_scores, descending=True)
         self.log.info(f"Bit importance scores calculated for {n_bits} bits")
-        self.log.info(f"Top 5 bits: {sorted_indices[:5].cpu().numpy()}")
-        self.log.info(f"Bottom 5 bits: {sorted_indices[-5:].cpu().numpy()}")
+        self.log.info(f"Top 5 bits: {sorted_indices[:5].detach().cpu().numpy()}")
+        self.log.info(f"Bottom 5 bits: {sorted_indices[-5:].detach().cpu().numpy()}")
         return {
-            'importance_scores': importance_scores.cpu().numpy(),
-            'sorted_indices': sorted_indices.cpu().numpy(),
-            'probe_efficiency': probe_efficiency.cpu().numpy(),
-            'decoder_importance': decoder_importance.cpu().numpy(),
-            'dynamic_ranges': dynamic_ranges.cpu().numpy(),
-            'gene_usage_per_bit': gene_usage_per_bit.cpu().numpy(),
-            'bit_strengths': bit_strengths.cpu().numpy()
+            'importance_scores': importance_scores.detach().cpu().numpy(),
+            'sorted_indices': sorted_indices.detach().cpu().numpy(),
+            'probe_efficiency': probe_efficiency.detach().cpu().numpy(),
+            'decoder_importance': decoder_importance.detach().cpu().numpy(),
+            'dynamic_ranges': dynamic_ranges.detach().cpu().numpy(),
+            'gene_usage_per_bit': gene_usage_per_bit.detach().cpu().numpy(),
+            'bit_strengths': bit_strengths.detach().cpu().numpy()
         }
 
     def _setup_logging(self, user_parameters_path):
@@ -1615,10 +1616,11 @@ class EncodingDesigner(nn.Module):
         with torch.no_grad():
             self.encoder.weight = torch.nn.Parameter(self.encoder.weight[:, keep_indices])
         # Update decoder first layer weights (assume nn.Linear as first layer)
-        if isinstance(self.decoder[0], nn.Linear):
-            old_weight = self.decoder[0].weight.data
+        first_layer = self.decoder[0]
+        if isinstance(first_layer, nn.Linear):
+            old_weight = first_layer.weight.data
             new_weight = old_weight[:, keep_indices]
-            self.decoder[0].weight = torch.nn.Parameter(new_weight)
+            first_layer.weight = torch.nn.Parameter(new_weight)
         else:
             self.log.warning("Decoder first layer is not nn.Linear. Skipping decoder weight trimming.")
         # Update n_bit
@@ -1629,20 +1631,64 @@ class EncodingDesigner(nn.Module):
         """Iteratively trim bits down to target_n_bits over max_iterations using linear spacing."""
         if self.I['n_bit'] > target_n_bits:
             n_keeps = np.unique(np.linspace(target_n_bits, self.I['n_bit']-1, max_iterations).astype(int))[::-1]
+            bit_counts = []
+            accuracies = []
             for n_keep in n_keeps:
                 self.log.info(f"Trimming from {self.I['n_bit']} to {n_keep} bits")
                 try:
                     self.trim_bits(n_keep=n_keep)
                     self.train_decoder_only(n_iterations=1000)
                     self.save_eval_and_viz(iteration=n_keep, eval_dir='trimmed')
+                    self.eval()
+                    with torch.no_grad():
+                        E_clean = self.get_E_clean()
+                        P_clean = self.project_clean(self.X_test, E_clean)
+                        y_predict, accuracy, _ = self.decode(P_clean, self.y_test)
+                        bit_counts.append(self.I['n_bit'])
+                        accuracies.append(accuracy.item())
+                        self.log.info(f"Accuracy at {self.I['n_bit']} bits: {accuracy.item():.4f}")
                 except Exception as e:
                     self.log.error(f"Error during trimming to {n_keep} bits: {e}")
                     break
+            if len(bit_counts) > 1:
+                self.plot_accuracy_vs_bits(bit_counts, accuracies)
             self.log.info(f"Iterative trimming complete. Final n_bits: {self.I['n_bit']}")
+
+    def plot_accuracy_vs_bits(self, bit_counts, accuracies):
+        """Plot accuracy vs bit count after trimming."""
+        try:
+            plt.figure(figsize=(10, 6))
+            plt.plot(bit_counts, accuracies, 'bo-', linewidth=2, markersize=8, label='Test Accuracy')
+            plt.xlabel('Number of Bits')
+            plt.ylabel('Accuracy')
+            plt.title('Accuracy vs Bit Count After Trimming')
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            for i, (bits, acc) in enumerate(zip(bit_counts, accuracies)):
+                if i == 0 or i == len(bit_counts) - 1 or acc == max(accuracies):
+                    plt.annotate(f'{acc:.3f}', (bits, acc), 
+                               xytext=(5, 5), textcoords='offset points',
+                               bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7))
+            plt.tight_layout()
+            plot_path = os.path.join(self.I['output'], 'trimmed', 'accuracy_vs_bits.pdf')
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            self.log.info(f"Accuracy vs bits plot saved to {plot_path}")
+            data_df = pd.DataFrame({
+                'bit_count': bit_counts,
+                'accuracy': accuracies
+            })
+            csv_path = os.path.join(self.I['output'], 'trimmed', 'accuracy_vs_bits.csv')
+            data_df.to_csv(csv_path, index=False)
+            self.log.info(f"Accuracy vs bits data saved to {csv_path}")
+        except Exception as e:
+            self.log.error(f"Error creating accuracy vs bits plot: {e}")
 
     def train_decoder_only(self, n_iterations=1000):
         """Train only the decoder for n_iterations using only categorical loss."""
         self.log.info(f"--- Starting Decoder-Only Training for {n_iterations} iterations ---")
+        if not hasattr(self, 'optimizer_gen'):
+            self._setup_optimizer()
         # Set encoder learning rate to 0
         for param_group in self.optimizer_gen.param_groups:
             if 'encoder' in str(param_group['params'][0]):
@@ -2141,3 +2187,20 @@ if __name__ == '__main__':
     else:
         print("Starting training...")
         model.fit()
+    
+    # Check if trimming has been run and run it if not
+    trimmed_dir = os.path.join(model.I['output'], 'trimmed')
+    if not os.path.exists(trimmed_dir):
+        print("Trimming directory not found. Running iterative trimming...")
+        model.log.info("Trimming directory not found. Running iterative trimming...")
+        try:
+            # Default target is 12 bits, but can be adjusted based on model parameters
+            target_n_bits = min(12, model.I['n_bit'] // 2)  # Use 12 or half the current bits, whichever is smaller
+            model.iterative_trim_to_n_bits(target_n_bits=target_n_bits, max_iterations=10)
+            print(f"Iterative trimming completed. Final n_bits: {model.I['n_bit']}")
+        except Exception as e:
+            print(f"Error during trimming: {e}")
+            model.log.error(f"Error during trimming: {e}")
+    else:
+        print("Trimming directory found. Skipping trimming.")
+        model.log.info("Trimming directory found. Skipping trimming.")
