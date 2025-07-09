@@ -3,7 +3,6 @@
 import pandas as pd
 import os
 import itertools
-from datetime import datetime
 import getpass
 
 # find user
@@ -74,11 +73,11 @@ os.makedirs(os.path.join(base_dir, 'job_logs'), exist_ok=True)
 user_parameters = {
             'n_cpu': 3,  # Number of CPU threads to use for PyTorch
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
-            'n_iters': 250000,  # Total number of training iterations
+            'n_iters': 100000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness_s': 4.5,  # Initial target brightness in log10 scale
             'brightness_e': 4.5,  # Final target brightness in log10 scale
-            'saturation': 1.0,  # When to reach final values for all _s/_e parameters (0.0-1.0, 1.0 = end of training)
+            'saturation': 0.75,  # When to reach final values for all _s/_e parameters (0.0-1.0, 1.0 = end of training)
             'n_probes': 30e4,  # Target total number of probes across all genes
             'probe_wt': 1,  # Weight for probe count loss term
             'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
@@ -92,7 +91,7 @@ user_parameters = {
             'gradient_clip': 1,  # Maximum gradient norm for clipping
             'lr_s': 0.01,  # Initial learning rate
             'lr_e': 0.01,  # Final learning rate (linear interpolation)
-            'report_rt': 100,  # How often to report training progress
+            'report_rt': 500,  # How often to report training progress
             'sparsity_s': 0.95,  # Initial target sparsity ratio (fraction of zeros)
             'sparsity_e': 0.95,  # Final target sparsity ratio (fraction of zeros)
             'sparsity_wt': 0,  # Weight for sparsity loss term
@@ -113,13 +112,13 @@ user_parameters = {
             'y_label_converter_path': 'categorical_converter.csv',  # Path to label mapping file
             'P_scaling': 5,  # Scaling factor for sum normalization (defaults to n_bit)
             # Gene-level noise parameters
-            'X_drp_s': 0.05,  # Initial proportion of genes to drop out (randomly set to 0)
-            'X_drp_e': 0.05,  # Final proportion of genes to drop out (randomly set to 0)
+            'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
+            'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
             'X_noise_s': 0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             'X_noise_e': 0,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
-            'E_drp_s': 0.05,  # Initial proportion of encoding weights to drop out (randomly set to 0)
-            'E_drp_e': 0.05,  # Final proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_s': 0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_e': 0,  # Final proportion of encoding weights to drop out (randomly set to 0)
             'E_noise_s': 0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
             'E_noise_e': 0,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters

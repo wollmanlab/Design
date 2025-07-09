@@ -215,8 +215,10 @@ class EncodingDesigner(nn.Module):
         y_predict = R.max(1)[1]
         accuracy = (y_predict == y).float().mean()
         if self.I['categorical_wt'] != 0:
-            loss_fn = nn.CrossEntropyLoss(label_smoothing=self.I['label_smoothing']) 
-            categorical_loss = loss_fn(R, y)
+            # OPTIMIZATION: Cache loss function to avoid recreating it every time
+            if not hasattr(self, '_cached_loss_fn'):
+                self._cached_loss_fn = nn.CrossEntropyLoss(label_smoothing=self.I['label_smoothing'])
+            categorical_loss = self._cached_loss_fn(R, y)
         else:
             categorical_loss = torch.tensor(0, device=R.device, dtype=torch.float32, requires_grad=True)
         return y_predict, accuracy, categorical_loss
