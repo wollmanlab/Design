@@ -59,6 +59,7 @@ class EncodingDesigner(nn.Module):
             'sparsity_s': 0.8,  # Initial target sparsity ratio (fraction of zeros)
             'sparsity_e': 0.8,  # Final target sparsity ratio (fraction of zeros)
             'sparsity_wt': 0,  # Weight for sparsity loss term
+            'sparsity_threshold': 0.01,  # Threshold below which weights are considered sparse (for sparsity calculation)
             'categorical_wt': 1,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 1,  # Whether to save the best model during training
@@ -264,7 +265,7 @@ class EncodingDesigner(nn.Module):
         current_stats['total_violation_probes' + suffix] = round(difference[violations].sum().item(), 4)
 
         # --- Sparsity loss ---
-        sparsity_ratio = (E_clean < 1).float().mean()
+        sparsity_ratio = (E_clean < self.I['sparsity_threshold']).float().mean()
         target = self.I['sparsity']
         fold = (target - sparsity_ratio) / target
         sparsity_loss = self.I['sparsity_wt'] * F.elu(fold,alpha=0.1)

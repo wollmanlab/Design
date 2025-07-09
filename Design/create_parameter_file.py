@@ -95,7 +95,8 @@ user_parameters = {
             'sparsity_s': 0.95,  # Initial target sparsity ratio (fraction of zeros)
             'sparsity_e': 0.95,  # Final target sparsity ratio (fraction of zeros)
             'sparsity_wt': 0,  # Weight for sparsity loss term
-            'categorical_wt': 5,  # Weight for categorical classification loss
+            'sparsity_threshold': 0.01,  # Threshold below which weights are considered sparse (for sparsity calculation)
+            'categorical_wt': 2.5,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
             'best_model': 0,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
@@ -249,148 +250,184 @@ user_parameters['input'] = input_dir
 #     },
 # ]
 parameter_variant_list = []
-# Fig 2a Benchmark Encoding Capacity
+# # Fig 2a Benchmark Encoding Capacity
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig2a'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0.1],
+#     'brightness_wt':[1],
+#     'brightness':[4.5],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[0],
+#     'probe_wt':[0],
+#     'dynamic_wt':[0],
+#     'n_bit':[3,6,12,24,48,96],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+# # Fig 2b In Situ Encoding Capacity
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig2b'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0.1],
+#     'brightness_wt':[1],
+#     'brightness':[4.5],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[0],
+#     'dynamic_wt':[0],
+#     'n_bit':[3,6,12,24,48,96],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+# # Fig 2c Separability Tradeoff
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig2c'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0,0.05,0.1,0.5,1,2,5],
+#     'brightness_wt':[1],
+#     'brightness':[4.5],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[0],
+#     'dynamic_wt':[0],
+#     'n_bit':[24],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+
+# # Fig 2d Brightness Tradeoff
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig2d'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0.1],
+#     'brightness_wt':[1],
+#     'brightness':[3,3.5,4,4.5,5,5.5,6],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[0],
+#     'dynamic_wt':[0],
+#     'n_bit':[24],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+# # Fig 3a Number of Imaging Rounds Tradeoff
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig3a'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0.1],
+#     'brightness_wt':[1],
+#     'brightness':[4.5],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[1],
+#     'dynamic_wt':[0],
+#     'n_bit':[3,6,12,24,48,96],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+# # Fig 3b Number of Encoding Probes Tradeoff
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig3b'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0.1],
+#     'brightness_wt':[1],
+#     'brightness':[4.5],
+#     'n_probes':[1e3,5e3,10e3,50e3,100e3,250e3,500e3,1000e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[1],
+#     'dynamic_wt':[0],
+#     'n_bit':[24],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+# # Fig 3c Brightness tradeoff fixed probes 
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig3c'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0.1],
+#     'brightness_wt':[1],
+#     'brightness':[3,3.5,4,4.5,5,5.5,6],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[1],
+#     'dynamic_wt':[0],
+#     'n_bit':[24],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
+# # Fig 3d Separability Tradeoff
+# parameter_variant_list.append(
+#     {
+#     'fig':['fig3d'],
+#     'decoder_n_lyr':[0,1],
+#     'categorical_wt':[2.5],
+#     'separation_wt':[0,0.05,0.1,0.5,1,2,5],
+#     'brightness_wt':[1],
+#     'brightness':[4.5],
+#     'n_probes':[300e3],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[1],
+#     'dynamic_wt':[0],
+#     'n_bit':[24],
+#     'use_noise':[1],
+#     'replicate':[1,2,3]
+#     })
+
 parameter_variant_list.append(
     {
-    'fig':['fig2a'],
+    'fig':['tanh vs sigmoid'],
     'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0.1],
-    'brightness_wt':[1],
+    'encoder_act':['tanh','sigmoid'],
     'brightness':[4.5],
     'n_probes':[300e3],
-    'gene_constraint_wt':[0],
-    'probe_wt':[0],
-    'dynamic_wt':[0],
-    'n_bit':[3,6,12,24,48,96],
+    'gene_constraint_wt':[1],
+    'n_bit':[48],
     'use_noise':[1],
     'replicate':[1,2,3]
     })
 
-# Fig 2b In Situ Encoding Capacity
 parameter_variant_list.append(
     {
-    'fig':['fig2b'],
+    'fig':['brightness ramp'],
     'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0.1],
-    'brightness_wt':[1],
+    'brightness_s':[2.0],
+    'brightness_e':[4.5],
+    'saturation':[0.0,0.5,1.0],
+    'n_probes':[300e3],
+    'n_bit':[48],
+    'replicate':[1,2,3]
+    })
+
+parameter_variant_list.append(
+    {
+    'fig':['sparsity'],
+    'decoder_n_lyr':[0,1],
     'brightness':[4.5],
+    'sparsity_wt':[0,0.1,0.5,1,2,5],
     'n_probes':[300e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[0],
-    'dynamic_wt':[0],
-    'n_bit':[3,6,12,24,48,96],
-    'use_noise':[1],
-    'replicate':[1,2,3]
-    })
-
-# Fig 2c Separability Tradeoff
-parameter_variant_list.append(
-    {
-    'fig':['fig2c'],
-    'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0,0.05,0.1,0.5,1,2,5],
-    'brightness_wt':[1],
-    'brightness':[4.5],
-    'n_probes':[300e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[0],
-    'dynamic_wt':[0],
-    'n_bit':[24],
-    'use_noise':[1],
-    'replicate':[1,2,3]
-    })
-
-
-# Fig 2d Brightness Tradeoff
-parameter_variant_list.append(
-    {
-    'fig':['fig2d'],
-    'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0.1],
-    'brightness_wt':[1],
-    'brightness':[3,3.5,4,4.5,5,5.5,6],
-    'n_probes':[300e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[0],
-    'dynamic_wt':[0],
-    'n_bit':[24],
-    'use_noise':[1],
-    'replicate':[1,2,3]
-    })
-
-# Fig 3a Number of Imaging Rounds Tradeoff
-parameter_variant_list.append(
-    {
-    'fig':['fig3a'],
-    'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0.1],
-    'brightness_wt':[1],
-    'brightness':[4.5],
-    'n_probes':[300e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[1],
-    'dynamic_wt':[0],
-    'n_bit':[3,6,12,24,48,96],
-    'use_noise':[1],
-    'replicate':[1,2,3]
-    })
-
-# Fig 3b Number of Encoding Probes Tradeoff
-parameter_variant_list.append(
-    {
-    'fig':['fig3b'],
-    'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0.1],
-    'brightness_wt':[1],
-    'brightness':[4.5],
-    'n_probes':[1e3,5e3,10e3,50e3,100e3,250e3,500e3,1000e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[1],
-    'dynamic_wt':[0],
-    'n_bit':[24],
-    'use_noise':[1],
-    'replicate':[1,2,3]
-    })
-
-# Fig 3c Brightness tradeoff fixed probes 
-parameter_variant_list.append(
-    {
-    'fig':['fig3c'],
-    'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0.1],
-    'brightness_wt':[1],
-    'brightness':[3,3.5,4,4.5,5,5.5,6],
-    'n_probes':[300e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[1],
-    'dynamic_wt':[0],
-    'n_bit':[24],
-    'use_noise':[1],
-    'replicate':[1,2,3]
-    })
-
-# Fig 3d Separability Tradeoff
-parameter_variant_list.append(
-    {
-    'fig':['fig3d'],
-    'decoder_n_lyr':[0,1],
-    'categorical_wt':[2.5],
-    'separation_wt':[0,0.05,0.1,0.5,1,2,5],
-    'brightness_wt':[1],
-    'brightness':[4.5],
-    'n_probes':[300e3],
-    'gene_constraint_wt':[1],
-    'probe_wt':[1],
-    'dynamic_wt':[0],
-    'n_bit':[24],
-    'use_noise':[1],
+    'n_bit':[48],
     'replicate':[1,2,3]
     })
 
