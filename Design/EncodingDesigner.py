@@ -552,12 +552,12 @@ class EncodingDesigner(nn.Module):
                 if is_report_iter:
                     last_report_time, last_report_iteration = self._evaluate_on_test_set(iteration, last_report_time, last_report_iteration)
                 
-                # Save checkpoint every 10k iterations
-                if (iteration + 1) % 10000 == 0:
-                    self._save_checkpoint(iteration)
+                # # Save checkpoint every 10k iterations
+                # if (iteration + 1) % 10000 == 0:
+                #     self._save_checkpoint(iteration)
                 
                 # Run evaluation and visualization every 50k iterations
-                if (iteration + 1) % 50000 == 0:
+                if (iteration + 1) % 10000 == 0:
                     self.save_eval_and_viz(iteration,eval_dir='eval_checkpoints')
                 
                 if delayed_perturbation_iter == iteration:

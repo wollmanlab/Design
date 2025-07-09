@@ -78,6 +78,7 @@ user_parameters = {
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
             'brightness_s': 4.5,  # Initial target brightness in log10 scale
             'brightness_e': 4.5,  # Final target brightness in log10 scale
+            'saturation': 1.0,  # When to reach final values for all _s/_e parameters (0.0-1.0, 1.0 = end of training)
             'n_probes': 30e4,  # Target total number of probes across all genes
             'probe_wt': 1,  # Weight for probe count loss term
             'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
