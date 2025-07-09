@@ -1647,7 +1647,7 @@ class EncodingDesigner(nn.Module):
                 self.log.info(f"Trimming from {self.I['n_bit']} to {n_keep} bits")
                 try:
                     self.trim_bits(n_keep=n_keep)
-                    self.train_decoder_only(n_iterations=1000)
+                    self.train_decoder_only(n_iterations=10000)
                     self.save_eval_and_viz(iteration=n_keep, eval_dir='trimmed')
                     self.eval()
                     with torch.no_grad():
