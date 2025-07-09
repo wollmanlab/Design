@@ -39,7 +39,9 @@ class EncodingDesigner(nn.Module):
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
             'n_iters': 10000,  # Total number of training iterations
             'batch_size': 1000,  # Batch size for training (0 = use full dataset)
-            'brightness': 4.5,  # Target brightness in log10 scale
+            'brightness_s': 4.5,  # Initial target brightness in log10 scale
+            'brightness_e': 4.5,  # Final target brightness in log10 scale
+            'saturation': 1.0,  # When to reach final values for all _s/_e parameters (0.0-1.0, 1.0 = end of training)
             'n_probes': 30e4,  # Target total number of probes across all genes
             'probe_wt': 1,  # Weight for probe count loss term
             'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
@@ -841,8 +843,10 @@ class EncodingDesigner(nn.Module):
         try:
             import seaborn as sns
             # Convert E_clean to DataFrame for easier manipulation
-            E_clean_np = E.detach().cpu().numpy()
+            E_clean_np = E.detach().cpu().numpy().astype(int)
             used_WeightMat = pd.DataFrame(E_clean_np)
+            # if below 1 set to 0
+            used_WeightMat = used_WeightMat.applymap(lambda x: 0 if x < 1 else x)
 
             # Find the highest bit (column) for each gene (row)
             highest_bit = used_WeightMat.columns[np.argmax(used_WeightMat.values, axis=1)]
@@ -1325,6 +1329,10 @@ class EncodingDesigner(nn.Module):
     def _update_parameters_for_iteration(self, iteration, n_iterations):
         """Update parameters based on training progress."""
         progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
+        if self.I.get('saturation', 1.0) == 0:
+            progress = 1.0
+        else:
+            progress = np.clip(progress / self.I.get('saturation', 1.0), 0, 1)
         parameters_to_update = [i.replace('_s', '') for i in self.I if i.endswith('_s')]
         for param in parameters_to_update:
             self.I[param] = (self.I[f'{param}_s'] + (self.I[f'{param}_e'] - self.I[f'{param}_s']) * progress)
@@ -1368,9 +1376,8 @@ class EncodingDesigner(nn.Module):
 
     def _apply_gradient_clipping(self):
         """Apply gradient clipping if enabled."""
-        max_norm_value = self.I.get('gradient_clip', 1.0) 
-        if max_norm_value > 0:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm_value)
+        if self.I.get('gradient_clip', 1.0)  > 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.I.get('gradient_clip', 1.0) )
 
     def _handle_weight_perturbation(self, iteration, report_rt, delayed_perturbation_iter):
         """Handle weight perturbation logic."""
@@ -1620,7 +1627,9 @@ class EncodingDesigner(nn.Module):
         if isinstance(first_layer, nn.Linear):
             old_weight = first_layer.weight.data
             new_weight = old_weight[:, keep_indices]
-            first_layer.weight = torch.nn.Parameter(new_weight)
+            new_first_layer = nn.Linear(len(keep_indices), first_layer.out_features)
+            new_first_layer.weight = torch.nn.Parameter(new_weight)
+            self.decoder[0] = new_first_layer.to(self.I['device'])
         else:
             self.log.warning("Decoder first layer is not nn.Linear. Skipping decoder weight trimming.")
         # Update n_bit
@@ -1689,6 +1698,8 @@ class EncodingDesigner(nn.Module):
         self.log.info(f"--- Starting Decoder-Only Training for {n_iterations} iterations ---")
         if not hasattr(self, 'optimizer_gen'):
             self._setup_optimizer()
+        # overwrite the learning stats
+        self.learning_stats = {}
         # Set encoder learning rate to 0
         for param_group in self.optimizer_gen.param_groups:
             if 'encoder' in str(param_group['params'][0]):
@@ -1702,6 +1713,20 @@ class EncodingDesigner(nn.Module):
             y_predict, accuracy, total_loss = self.decode(P_noisy, y)
             total_loss.backward()
             self.optimizer_gen.step()
+            self.learning_stats[str(iteration)] = {
+                'accuracy_train': accuracy.item(),
+                'total_loss_train': total_loss.item()
+            }
+            # Evaluate on test set periodically
+            if iteration % 100 == 0 or iteration == n_iterations - 1:
+                self.eval()
+                with torch.no_grad():
+                    E_clean = self.get_E_clean()
+                    P_clean = self.project_clean(self.X_test, E_clean)
+                    y_predict_test, accuracy_test, total_loss_test = self.decode(P_clean, self.y_test)
+                    self.learning_stats[str(iteration)]['accuracy_test'] = accuracy_test.item()
+                    self.learning_stats[str(iteration)]['total_loss_test'] = total_loss_test.item()
+                self.train()
         self.eval()
         # Restore encoder learning rate
         for param_group in self.optimizer_gen.param_groups:
@@ -2088,7 +2113,7 @@ def plot_loss_contributions(learning_curve, output_dir, log=None):
         return
     # Create stacked area plot
     plt.figure(figsize=(12, 8))
-    plt.stackplot(x, np.vstack(contributions), labels=valid_loss_names, alpha=0.8)
+    plt.stackplot(x, np.vstack(contributions), labels=valid_loss_names)
     plt.xlabel('Iteration')
     plt.ylabel('Relative Contribution to Total Loss')
     plt.title('Loss Term Contributions (Training)')

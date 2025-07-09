@@ -76,7 +76,8 @@ user_parameters = {
             'n_bit': 24,  # Number of bits in the encoding (dimensionality of the projection)
             'n_iters': 250000,  # Total number of training iterations
             'batch_size': 500,  # Batch size for training (0 = use full dataset)
-            'brightness': 4.5,  # Target brightness in log10 scale
+            'brightness_s': 4.5,  # Initial target brightness in log10 scale
+            'brightness_e': 4.5,  # Final target brightness in log10 scale
             'n_probes': 30e4,  # Target total number of probes across all genes
             'probe_wt': 1,  # Weight for probe count loss term
             'gene_constraint_wt': 1,  # Weight for gene constraint violation penalty
