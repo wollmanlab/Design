@@ -62,6 +62,15 @@ class EncodingDesigner(nn.Module):
             'sparsity_threshold': 0.01,  # Threshold below which weights are considered sparse (for sparsity calculation)
             'categorical_wt': 1,  # Weight for categorical classification loss
             'label_smoothing': 0.1,  # Label smoothing factor for cross-entropy loss
+            'gene_importance_wt': 0,  # Weight for gene importance loss term (penalizes genes contributing >25% to any bit)
+            'gene_importance': 0.25,  # Maximum allowed contribution percentage per gene per bit
+            'bit_usage_wt': 0,  # Weight for bit usage loss term (encourages decoder to use each bit)
+            'bit_usage': 0.01,  # Minimum decoder weight magnitude required for a bit to be considered "used"
+            'bit_corr_wt': 0,  # Weight for bit correlation loss term (penalizes high correlation between bits)
+            'bit_corr': 0.5,  # Maximum allowed correlation between any two bits (0-1)
+            'step_size_wt': 0,  # Weight for step size loss term (ensures minimum step sizes between cell types)
+            'step_size_threshold': 0.1,  # Minimum step size required between cell types (absolute value)
+            'step_size_n_steps': 0.1,  # Fraction of cell types to enforce minimum step size (0.1 = top 10% of steps)
             'best_model': 1,  # Whether to save the best model during training
             'device': 'cpu',  # Device to run computations on ('cpu' or 'cuda')
             'output': '/u/project/rwollman/rwollman/atlas_design/design_results',  # Output directory path
@@ -77,21 +86,21 @@ class EncodingDesigner(nn.Module):
             'P_scaling': 24,  # Scaling factor for sum normalization (defaults to n_bit)
             # Gene-level noise parameters
             'X_drp_s': 0,  # Initial proportion of genes to drop out (randomly set to 0)
-            'X_drp_e': 0.1,  # Final proportion of genes to drop out (randomly set to 0)
+            'X_drp_e': 0,  # Final proportion of genes to drop out (randomly set to 0)
             'X_noise_s': 0,  # Initial gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
-            'X_noise_e': 0.5,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
+            'X_noise_e': 0,  # Final gene expression noise level 0.5 -> 50% decrease to 200% increase (0-1)
             # Weight-level noise parameters
             'E_drp_s': 0,  # Initial proportion of encoding weights to drop out (randomly set to 0)
-            'E_drp_e': 0.1,  # Final proportion of encoding weights to drop out (randomly set to 0)
+            'E_drp_e': 0,  # Final proportion of encoding weights to drop out (randomly set to 0)
             'E_noise_s': 0,  # Initial encoding weight noise level (percentage decrease with minimum bound 0-1)
-            'E_noise_e': 0.1,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
+            'E_noise_e': 0,  # Final encoding weight noise level (percentage decrease with minimum bound 0-1)
             # Projection-level noise parameters
             'P_drp_s': 0,  # Initial proportion of projection values to drop out (randomly set to 0)
-            'P_drp_e': 0.1,  # Final proportion of projection values to drop out (randomly set to 0)
+            'P_drp_e': 0,  # Final proportion of projection values to drop out (randomly set to 0)
             'P_noise_s': 0,  # Initial projection measurement noise level (percentage accuracy error 0-1)
-            'P_noise_e': 0.1,  # Final projection measurement noise level (percentage accuracy error 0-1)
+            'P_noise_e': 0,  # Final projection measurement noise level (percentage accuracy error 0-1)
             # Decoder-level noise parameters
-            'D_drp_s': 0.1,  # Initial decoder dropout rate
+            'D_drp_s': 0,  # Initial decoder dropout rate
             'D_drp_e': 0,  # Final decoder dropout rate
             # Constant noise parameters
             'P_add_s': 1,  # Initial constant noise level (log10 scale, added to projections)
@@ -114,7 +123,7 @@ class EncodingDesigner(nn.Module):
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
         self._setup_output_and_symlinks(user_parameters_path)
-        self.learning_stats = {}
+        self.learning_stats = pd.DataFrame()
         self.saved_models = {}
         self.saved_optimizer_states = {}
         self.best_loss = float('inf')
@@ -307,8 +316,8 @@ class EncodingDesigner(nn.Module):
         max_range_idx = bit_dynamic_ranges.index(max(bit_dynamic_ranges))
         min_lower, min_median, min_upper = bit_percentiles[min_range_idx]
         max_lower, max_median, max_upper = bit_percentiles[max_range_idx]
-        current_stats['E_worst_bit' + suffix] = f"min:{max(min_lower, 1):.2e}, med:{max(min_median, 1):.2e}, max:{max(min_upper, 1):.2e}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
-        current_stats['E_best_bit' + suffix] = f"min:{max(max_lower, 1):.2e}, med:{max(max_median, 1):.2e}, max:{max(max_upper, 1):.2e}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
+        # current_stats['E_worst_bit' + suffix] = f"min:{max(min_lower, 1):.2e}, med:{max(min_median, 1):.2e}, max:{max(min_upper, 1):.2e}, fold:{bit_dynamic_ranges[min_range_idx]:.2f}"
+        # current_stats['E_best_bit' + suffix] = f"min:{max(max_lower, 1):.2e}, med:{max(max_median, 1):.2e}, max:{max(max_upper, 1):.2e}, fold:{bit_dynamic_ranges[max_range_idx]:.2f}"
         
         # --- Brightness loss ---
         target = 10**self.I['brightness']
@@ -365,12 +374,90 @@ class EncodingDesigner(nn.Module):
             p10,p50,p90 = torch.quantile(separations, torch.tensor([0.1, 0.5, 0.9]))
             best_separation = separations.max().item()
             current_stats['separation' + suffix] = round(p10.item(), 4)
-            current_stats['separation_report' + suffix] = f"min:{worst_separation:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_separation:.2f}"
+            # current_stats['separation_report' + suffix] = f"min:{worst_separation:.2f}, p10:{p10:.2f}, p50:{p50:.2f}, p90:{p90:.2f}, max:{best_separation:.2f}"
 
-        # --- Categorical loss ---
-        categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component
-        raw_losses['categorical_loss'] = categorical_loss_component
-        current_stats['accuracy' + suffix] = round(accuracy.item(), 4)
+        # --- Gene importance loss ---
+        if not hasattr(self, '_cached_avg_gene_expression'):
+            self._cached_avg_gene_expression = self.X_train.mean(dim=0)
+        avg_gene_expression = self._cached_avg_gene_expression
+        gene_contributions = avg_gene_expression.unsqueeze(1) * E_clean
+        gene_percentages = gene_contributions / gene_contributions.sum(dim=0, keepdim=True).clamp(min=1e-8)
+        target = self.I['gene_importance']
+        fold = (gene_percentages - target) / target
+        positive_fold = fold[fold > 0]
+        if positive_fold.numel() > 0:
+            raw_losses['gene_importance_loss'] = self.I['gene_importance_wt'] * positive_fold.sum()
+        else:
+            raw_losses['gene_importance_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        current_stats['gene_importance_violations' + suffix] = positive_fold.numel()
+        current_stats['gene_importance_max_pct' + suffix] = round(gene_percentages.max().item(), 4)
+        current_stats['gene_importance_mean_excess' + suffix] = round(positive_fold.mean().item() if positive_fold.numel() > 0 else 0, 4)
+
+        # --- Bit usage loss ---
+        first_layer = self.decoder[0]
+        if isinstance(first_layer, nn.Linear):
+            bit_importance = torch.abs(first_layer.weight.data).sum(dim=0)
+            total_importance = bit_importance.sum()
+            bit_percentage = bit_importance / total_importance.clamp(min=1e-8)
+            bit_utilization = bit_percentage * self.I['n_bit']
+            target = self.I['bit_usage']
+            fold = (target - bit_utilization) / target
+            positive_fold = fold[fold > 0]
+            if positive_fold.numel() > 0:
+                raw_losses['bit_usage_loss'] = self.I['bit_usage_wt'] * positive_fold.sum()
+            else:
+                raw_losses['bit_usage_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+            current_stats['bit_usage_unused_bits' + suffix] = positive_fold.numel()
+            current_stats['bit_usage_min_utilization' + suffix] = round(bit_utilization.min().item(), 4)
+            current_stats['bit_usage_mean_excess' + suffix] = round(positive_fold.mean().item() if positive_fold.numel() > 0 else 0, 4)
+        
+        # --- Bit correlation loss ---
+        P_sum_norm = P_clean / P_clean.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        P_centered = P_sum_norm - P_sum_norm.mean(dim=0, keepdim=True)
+        # Normalize by standard deviation for correlation calculation
+        P_std = P_centered.std(dim=0, keepdim=True).clamp(min=1e-8)
+        P_normalized = P_centered / P_std
+        # Compute correlation matrix: (n_bits, n_samples) @ (n_samples, n_bits) = (n_bits, n_bits)
+        correlation_matrix = (P_normalized.T @ P_normalized) / (P_normalized.shape[0] - 1)
+        upper_tri_mask = torch.triu(torch.ones_like(correlation_matrix), diagonal=1).bool()
+        correlations = correlation_matrix[upper_tri_mask]
+        target = self.I['bit_corr']
+        fold = (correlations - target) / target
+        positive_fold = fold[fold > 0]
+        if positive_fold.numel() > 0:
+            raw_losses['correlation_loss'] = self.I['bit_corr_wt'] * positive_fold.sum()
+        else:
+            raw_losses['correlation_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        current_stats['correlation_violations' + suffix] = positive_fold.numel()
+        current_stats['correlation_max' + suffix] = round(correlations.max().item(), 4)
+        current_stats['correlation_mean' + suffix] = round(correlations.mean().item(), 4)
+        current_stats['correlation_mean_excess' + suffix] = round(positive_fold.mean().item() if positive_fold.numel() > 0 else 0, 4)
+        
+        # --- Step size loss ---
+        step_size_loss = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
+        total_violations = 0
+        all_step_sizes = []
+        for bit_idx in range(P_clean.shape[1]):
+            bit_values = P_clean[:, bit_idx]
+            sorted_values = torch.sort(bit_values)[0]
+            steps = sorted_values[1:] - sorted_values[:-1]
+            all_step_sizes.append(steps)
+            n_steps_to_enforce = max(1, int(len(steps) * self.I['step_size_n_steps']))
+            top_steps, _ = torch.topk(steps, min(n_steps_to_enforce, len(steps)))
+            target = self.I['step_size_threshold']
+            fold = (target - top_steps) / target
+            positive_fold = fold[fold > 0]
+            if positive_fold.numel() > 0:
+                step_size_loss = step_size_loss + positive_fold.sum()
+                total_violations += positive_fold.numel()
+        raw_losses['step_size_loss'] = self.I['step_size_wt'] * step_size_loss
+        # Calculate overall statistics across all bits
+        all_steps = torch.cat(all_step_sizes)
+        current_stats['step_size_violations' + suffix] = total_violations
+        current_stats['step_size_max' + suffix] = round(all_steps.max().item(), 4)
+        current_stats['step_size_median' + suffix] = round(all_steps.median().item(), 4)
+        current_stats['step_size_mean' + suffix] = round(all_steps.mean().item(), 4)
+        current_stats['step_size_mean_excess' + suffix] = round(step_size_loss.item() / max(total_violations, 1), 4)
         
         # Calculate weight changes
         current_stats['E_change' + suffix] = 0.0
@@ -394,6 +481,11 @@ class EncodingDesigner(nn.Module):
                 current_stats['D_change' + suffix] = round(pct_changes.mean().item(), 4)
         if isinstance(module, nn.Linear):
             self.prev_decoder_weights = module.weight.data.clone().detach()
+
+        # --- Categorical loss ---
+        categorical_loss_component = self.I['categorical_wt'] * raw_categorical_loss_component
+        raw_losses['categorical_loss'] = categorical_loss_component
+        current_stats['accuracy' + suffix] = round(accuracy.item(), 4)
 
         for key, value in raw_losses.items():
             current_stats['$$$ - ' + key + suffix] = round(value.item(), 4)
@@ -516,7 +608,7 @@ class EncodingDesigner(nn.Module):
             self.log.error("Model is not initialized. Call initialize() before fit().")
             raise RuntimeError("Model is not initialized. Call initialize() before fit().")
         # Initialize training state variables
-        self.learning_stats = {} 
+        self.learning_stats = pd.DataFrame()
         self.saved_models = {}
         self.saved_optimizer_states = {}
         self.best_loss = float('inf')
@@ -529,7 +621,11 @@ class EncodingDesigner(nn.Module):
         try:
             for iteration in range(self.I['n_iters']):
                 self._update_parameters_for_iteration(iteration, self.I['n_iters'])
-                self.learning_stats[str(iteration)] = {}
+                # Initialize row for this iteration if DataFrame is empty
+                if self.learning_stats.empty:
+                    self.learning_stats = pd.DataFrame(index=pd.Index([str(iteration)]))
+                elif str(iteration) not in self.learning_stats.index:
+                    self.learning_stats.loc[str(iteration)] = pd.Series(dtype=object)
                 if iteration == 0:
                     self._setup_optimizer()
                 for param_group in self.optimizer_gen.param_groups: 
@@ -540,8 +636,10 @@ class EncodingDesigner(nn.Module):
                 self.optimizer_gen.zero_grad() 
                 total_loss, batch_stats = self.calculate_loss(
                     X_batch, y_batch, iteration, suffix='_train')
-                self.learning_stats[str(iteration)].update(batch_stats)
-                self.learning_stats[str(iteration)]['total_loss_train'] = total_loss.item()
+                # Add batch stats to the DataFrame row
+                for key, value in batch_stats.items():
+                    self.learning_stats.loc[str(iteration), key] = value
+                self.learning_stats.loc[str(iteration), 'total_loss_train'] = total_loss.item()
                 total_loss.backward() 
                 nan_detected = self._check_gradient_health(iteration)
                 if not nan_detected:
@@ -558,19 +656,18 @@ class EncodingDesigner(nn.Module):
                 # if (iteration + 1) % 10000 == 0:
                 #     self._save_checkpoint(iteration)
                 
-                # Run evaluation and visualization every 50k iterations
+                # Run evaluation and visualization every 10k iterations
                 if (iteration + 1) % 10000 == 0:
-                    self.save_eval_and_viz(iteration,eval_dir='eval_checkpoints')
+                    self.save_eval_and_viz(iteration)
                 
                 if delayed_perturbation_iter == iteration:
                     self.log.info(f"Performing delayed weight perturbation at iteration {iteration}")
                     self.perturb_E()
                     delayed_perturbation_iter = None
-                self._cleanup_old_checkpoints(iteration)
         except Exception as e:
             self.log.exception(f"Error during training loop at iteration {iteration}: {e}")
         finally:
-            self.save_eval_and_viz(iteration=self.I['n_iters']-1, eval_dir=None)
+            self.save_eval_and_viz(iteration=self.I['n_iters']-1)
 
     def evaluate(self):
         if self.encoder is None or self.decoder is None or \
@@ -606,12 +703,12 @@ class EncodingDesigner(nn.Module):
             results_dict['50th Percentile Signal'] = p50.item()
             results_dict['90th Percentile Signal'] = p90.item()
             for bit in range(avg_P_type.shape[1]):
-                results_dict[f"Number of Probes Bit {bit}"] = E_cpu[:, bit].sum().item()
+                results_dict[f"Number of Probes Bit {bit+1}"] = E_cpu[:, bit].sum().item()
                 # Calculate percentiles for each bit efficiently
                 bit_p10, bit_p50, bit_p90 = torch.quantile(avg_P_type[:, bit], torch.tensor([0.1, 0.5, 0.9]))
-                results_dict[f"10th Percentile Signal Bit {bit}"] = bit_p10.item()
-                results_dict[f"50th Percentile Signal Bit {bit}"] = bit_p50.item()
-                results_dict[f"90th Percentile Signal Bit {bit}"] = bit_p90.item()
+                results_dict[f"10th Percentile Signal Bit {bit+1}"] = bit_p10.item()
+                results_dict[f"50th Percentile Signal Bit {bit+1}"] = bit_p50.item()
+                results_dict[f"90th Percentile Signal Bit {bit+1}"] = bit_p90.item()
         else:
             self.log.warning("Could not calculate average P_type for evaluation stats.")
         self.log.info("--- Basic Evaluation Stats ---")
@@ -711,7 +808,7 @@ class EncodingDesigner(nn.Module):
                                 P_type_df = pd.DataFrame(
                                     P_type_rounded.numpy(),
                                     index=pd.Index(valid_type_labels),
-                                    columns=pd.Index([f"Bit_{b}" for b in range(n_bits)])
+                                    columns=pd.Index([f"Bit_{b+1}" for b in range(n_bits)])
                                 )
                                 p_type_path = os.path.join(self.I['output'], 'P_Type.csv')
                                 P_type_df.to_csv(p_type_path)
@@ -799,7 +896,7 @@ class EncodingDesigner(nn.Module):
                 if fig_cm is not None:
                     plt.close(fig_cm)
         # Generate learning curves
-        learning_curve = pd.DataFrame.from_dict(self.learning_stats, orient='index')
+        learning_curve = self.learning_stats
         unique_parameters = np.unique([i.replace('_test','').replace('_train','') for i in learning_curve.columns])
         unique_parameters = np.array([i for i in unique_parameters if (i+'_train' in learning_curve.columns) and (i+'_test' in learning_curve.columns)])
         numeric_parameters = np.array([i for i in unique_parameters if not isinstance(learning_curve[i+'_train'].iloc[1],str)])
@@ -844,7 +941,6 @@ class EncodingDesigner(nn.Module):
 
         # --- Visualization: Clustermap of E_clean (genes clustered, no labels/dendrogram) ---
         try:
-            import seaborn as sns
             # Convert E_clean to DataFrame for easier manipulation
             E_clean_np = E.detach().cpu().numpy().astype(int)
             used_WeightMat = pd.DataFrame(E_clean_np)
@@ -862,21 +958,26 @@ class EncodingDesigner(nn.Module):
             # Reorder the DataFrame based on the sorted genes
             reordered_df = used_WeightMat.loc[gene_order].copy()
             reordered_df.columns = [int(i)+1 for i in reordered_df.columns]
-
-            # Plot the clustermap (no clustering, just your order)
-            plt.figure(figsize=(10, 10))
-            sns.clustermap(
-                np.log10(reordered_df + 1),
-                cmap='Reds',
-                col_cluster=False,
-                row_cluster=False,
-                figsize=(10, 10),
-                yticklabels=[]
-            )
-            plt.savefig(os.path.join(self.I['output'], 'E.pdf'), dpi=200, bbox_inches='tight')
-            plt.close()
+            # show only non zero genes
+            reordered_df = reordered_df[reordered_df.sum(axis=1) > 0]
+            plot_weight_matrix(reordered_df, os.path.join(self.I['output'], 'E.pdf'), 
+                             title="Encoder Weights", cmap='Reds', log_scale=True, log=self.log)
         except Exception as e:
             self.log.error(f"Failed to plot E_clean clustermap: {e}")
+
+        # --- Visualization: Decoder weights for each layer ---
+        try:
+            linear_layers = [(i, module) for i, module in enumerate(self.decoder) if isinstance(module, nn.Linear)]
+            if linear_layers:
+                for layer_idx, layer in linear_layers:
+                    weights = layer.weight.data.detach().cpu().numpy()
+                    col_names = [f"Bit_{i+1}" if layer_idx == 0 and weights.shape[1] == self.I['n_bit'] else f"Input_{i+1}" for i in range(weights.shape[1])]
+                    weight_df = pd.DataFrame(weights, columns=pd.Index(col_names))
+                    plot_path = os.path.join(self.I['output'], f'D_{layer_idx}.pdf')
+                    plot_weight_matrix(weight_df, plot_path, 
+                                     title=f"Decoder Layer {layer_idx} Weights", log_scale=False, log=self.log)
+        except Exception as e:
+            self.log.error(f"Failed to plot decoder weights: {e}")
 
         with torch.no_grad():
             P = self.project_clean(X_data_vis, E)
@@ -915,6 +1016,101 @@ class EncodingDesigner(nn.Module):
             
 
         self.log.info("Visualization generation finished.")
+
+    def save_cell_type_averages(self):
+        """Save gene expression averages for each cell type from test data."""
+        self.log.info("--- Saving Cell Type Averages ---")
+        
+        if self.X_test is None or self.y_test is None:
+            self.log.error("Cannot save cell type averages: Test data not loaded.")
+            return
+        
+        # Define file paths
+        output_csv_path = os.path.join(self.I['output'], 'X_Type_test.csv')
+        output_pt_path = os.path.join(self.I['output'], 'X_Type_test.pt')
+        input_csv_path = os.path.join(self.I['input'], 'X_Type_test.csv')
+        input_pt_path = os.path.join(self.I['input'], 'X_Type_test.pt')
+        
+        # Check if files already exist in output directory
+        if os.path.exists(output_csv_path) and os.path.exists(output_pt_path):
+            self.log.info("Cell type averages already exist in output directory. Skipping calculation.")
+            return None, None
+        
+        # Check if files exist in input directory
+        if os.path.exists(input_csv_path) and os.path.exists(input_pt_path):
+            self.log.info("Cell type averages found in input directory. Loading and creating symlinks.")
+            try:
+                # Load the data from input directory
+                X_avg = torch.load(input_pt_path, map_location=self.I['device'])
+                df = pd.read_csv(input_csv_path, index_col=0)
+                cell_type_names = list(df.columns)
+                
+                # Create symlinks to output directory
+                if os.path.exists(output_csv_path):
+                    os.remove(output_csv_path)
+                if os.path.exists(output_pt_path):
+                    os.remove(output_pt_path)
+                
+                os.symlink(input_csv_path, output_csv_path)
+                os.symlink(input_pt_path, output_pt_path)
+                
+                self.log.info(f"Cell type averages loaded from input directory and symlinked to output:")
+                self.log.info(f"  CSV: {output_csv_path} -> {input_csv_path}")
+                self.log.info(f"  PT: {output_pt_path} -> {input_pt_path}")
+                self.log.info(f"Shape: {X_avg.shape} ({len(cell_type_names)} cell types × {X_avg.shape[1]} genes)")
+                
+                return X_avg, cell_type_names
+                
+            except Exception as e:
+                self.log.error(f"Failed to load cell type averages from input directory: {e}")
+                self.log.info("Will calculate cell type averages from test data.")
+        
+        # Calculate averages for each cell type
+        self.log.info("Calculating cell type averages from test data.")
+        unique_cell_types = torch.unique(self.y_test)
+        n_cell_types = len(unique_cell_types)
+        n_genes = self.X_test.shape[1]
+        X_sum = torch.zeros((n_cell_types, n_genes), device=self.X_test.device)
+        X_count = torch.zeros(n_cell_types, device=self.X_test.device)
+        idx_map = {cell_type.item(): i for i, cell_type in enumerate(unique_cell_types)}
+        for i in range(len(self.y_test)):
+            cell_type_idx = idx_map[self.y_test[i].item()]
+            X_sum[cell_type_idx] += self.X_test[i]
+            X_count[cell_type_idx] += 1
+        X_avg = X_sum / X_count.unsqueeze(1)
+        cell_type_names = []
+        for type_idx_tensor in unique_cell_types:
+            type_idx = type_idx_tensor.item()
+            cell_type_name = self.y_reverse_label_map.get(int(type_idx), f"Type_{type_idx}")
+            cell_type_names.append(cell_type_name)
+        X_avg_cpu = X_avg.cpu().numpy()
+        df = pd.DataFrame(
+            X_avg_cpu.T,  # Transpose to get genes as rows, cell types as columns
+            index=pd.Index(self.genes, name='Gene'),
+            columns=pd.Index(cell_type_names, name='Cell_Type')
+        )
+        
+        # Save to input directory for future use
+        df.to_csv(input_csv_path, float_format='%.2f')
+        torch.save(X_avg.cpu(), input_pt_path)
+        self.log.info(f"Cell type averages calculated and saved to input directory:")
+        self.log.info(f"  CSV: {input_csv_path}")
+        self.log.info(f"  PT: {input_pt_path}")
+        self.log.info(f"Shape: {X_avg.shape} ({n_cell_types} cell types × {n_genes} genes)")
+        
+        # Create symlinks to output directory
+        if os.path.exists(output_csv_path):
+            os.remove(output_csv_path)
+        if os.path.exists(output_pt_path):
+            os.remove(output_pt_path)
+        
+        os.symlink(input_csv_path, output_csv_path)
+        os.symlink(input_pt_path, output_pt_path)
+        self.log.info(f"Created symlinks to output directory:")
+        self.log.info(f"  CSV: {output_csv_path} -> {input_csv_path}")
+        self.log.info(f"  PT: {output_pt_path} -> {input_pt_path}")
+        
+        return X_avg, cell_type_names
 
     def calculate_bit_importance(self):
         """Calculate bit-wise importance scores using dynamic range from calculate_loss."""
@@ -1225,6 +1421,9 @@ class EncodingDesigner(nn.Module):
             raise ValueError(f"Testing data shape mismatch (X_test, y_test)")
         self.log.info("Data loaded and shapes validated.")
         self.log.info(f"Inferred {self.n_categories} cell type categories.")
+        
+        # Save cell type averages after data is loaded
+        self.save_cell_type_averages()
 
     def _load_constraints(self):
         """Load gene constraints from file."""
@@ -1249,10 +1448,21 @@ class EncodingDesigner(nn.Module):
         for root, dirs, files in os.walk(self.I['output']):
             if 'trimmed' in root:
                 continue
-            model_state_files = [os.path.join(root,i) for i in files if i.endswith('model_state.pt')]
-            learning_stats_files = [i for i in files if i.endswith('learning_stats.json')]
-            if (len(model_state_files)>0) and (len(learning_stats_files)>0):
-                model_files.extend(model_state_files) 
+            # Look for model state files in results directory
+            results_dirs = [d for d in dirs if d == 'results']
+            if results_dirs:
+                results_path = os.path.join(root, 'results')
+                if os.path.exists(results_path):
+                    results_files = os.listdir(results_path)
+                    model_state_files = [os.path.join(results_path, f) for f in results_files if f.endswith('model_state.pt')]
+                    if len(model_state_files) > 0:
+                        model_files.extend(model_state_files)
+            else:
+                # Fallback to old structure
+                model_state_files = [os.path.join(root,i) for i in files if i.endswith('model_state.pt')]
+                learning_stats_files = [i for i in files if i.endswith('learning_stats.csv')]
+                if (len(model_state_files)>0) and (len(learning_stats_files)>0):
+                    model_files.extend(model_state_files) 
         # Sort by modification time to get the newest
         if model_files:
             model_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
@@ -1268,16 +1478,28 @@ class EncodingDesigner(nn.Module):
                 self.is_initialized_from_file = True
                 self.log.info("Successfully loaded model state from file (strict=False).")
                 # Look for learning stats in the same directory as the model
-                learning_stats_path = os.path.join(model_dir, 'learning_stats.json')
+                learning_stats_path = os.path.join(model_dir, 'learning_stats.csv')
+                # Also check if we're in a results directory and look for learning stats there
+                if not os.path.exists(learning_stats_path) and model_dir.endswith('results'):
+                    # We're already in the results directory, so learning_stats.csv should be here
+                    pass
+                elif not os.path.exists(learning_stats_path) and os.path.exists(os.path.join(model_dir, '..', 'learning_stats.csv')):
+                    # Check parent directory for learning stats
+                    learning_stats_path = os.path.join(model_dir, '..', 'learning_stats.csv')
+                elif not os.path.exists(learning_stats_path):
+                    # Check if there's a results directory with learning stats
+                    results_dir = os.path.join(os.path.dirname(model_dir), 'results')
+                    if os.path.exists(results_dir):
+                        results_learning_stats_path = os.path.join(results_dir, 'learning_stats.csv')
+                        if os.path.exists(results_learning_stats_path):
+                            learning_stats_path = results_learning_stats_path
+                
                 if os.path.exists(learning_stats_path):
                     try:
-                        import json
-                        with open(learning_stats_path, 'r') as f:
-                            loaded_learning_stats = json.load(f)
-                        self.learning_stats = loaded_learning_stats
+                        self.learning_stats = pd.read_csv(learning_stats_path, index_col=0)
                         self.log.info(f"Successfully loaded learning stats from {learning_stats_path}")
                         max_iteration = -1
-                        for key in self.learning_stats.keys():
+                        for key in self.learning_stats.index:
                             if key.isdigit():
                                 max_iteration = max(max_iteration, int(key))
                         if max_iteration >= self.I['n_iters'] - 1:
@@ -1428,8 +1650,10 @@ class EncodingDesigner(nn.Module):
                     {'params': self.encoder.parameters(), 'lr': self.I['lr']},
                     {'params': self.decoder.parameters(), 'lr': self.I['lr']}
                 ])
-            self.learning_stats[str(iteration)] = {} 
-            self.learning_stats[str(iteration)]['status'] = f'Reverted from NaN at {iteration}'
+            # Initialize row for this iteration if it doesn't exist
+            if str(iteration) not in self.learning_stats.index:
+                self.learning_stats.loc[str(iteration)] = pd.Series(dtype=object)
+            self.learning_stats.loc[str(iteration), 'status'] = f'Reverted from NaN at {iteration}'
             return True
         else:
             self.log.error(f"NaNs/Infs detected in gradients at iter {iteration}, but no previous state found. Stopping.")
@@ -1442,7 +1666,9 @@ class EncodingDesigner(nn.Module):
             total_test_loss, test_stats = self.calculate_loss(
                 self.X_test, self.y_test, iteration, suffix='_test')
             test_stats['total_loss_test'] = total_test_loss.item()
-            self.learning_stats[str(iteration)].update(test_stats)
+            # Add test stats to the DataFrame row
+            for key, value in test_stats.items():
+                self.learning_stats.loc[str(iteration), key] = value
         current_time = time.time()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         elapsed_time = current_time - last_report_time
@@ -1455,9 +1681,11 @@ class EncodingDesigner(nn.Module):
         log_msg_lr = f"Current LR: {self.I['lr']:.6f}"
         self.log.info(log_msg_lr)
         train_loss_key = 'total_loss_train' 
-        if train_loss_key in self.learning_stats[str(iteration)]:
-            log_msg = f'{train_loss_key}: {round(self.learning_stats[str(iteration)][train_loss_key], 4)}'
-            self.log.info(log_msg)
+        if train_loss_key in self.learning_stats.columns and str(iteration) in self.learning_stats.index:
+            train_loss_value = self.learning_stats.loc[str(iteration), train_loss_key]
+            if pd.notna(train_loss_value):
+                log_msg = f'{train_loss_key}: {round(train_loss_value, 4)}'
+                self.log.info(log_msg)
         for name, item in test_stats.items():
             if isinstance(item, (float, int, np.number)) and not np.isnan(item):
                 log_msg = f'{name}: {round(float(item), 4)}'
@@ -1469,13 +1697,17 @@ class EncodingDesigner(nn.Module):
         return current_time, iteration
 
     def _save_checkpoint(self, iteration):
-        """Save a checkpoint with model state, optimizer state, and learning stats."""
+        """Save a checkpoint with model state, optimizer state, and learning stats to results directory."""
         try:
-            checkpoint_dir = os.path.join(self.I['output'], 'checkpoints')
-            os.makedirs(checkpoint_dir, exist_ok=True)
+            results_dir = os.path.join(self.I['output'], 'results')
+            # Remove existing results directory if it exists
+            if os.path.exists(results_dir):
+                import shutil
+                shutil.rmtree(results_dir)
+            os.makedirs(results_dir, exist_ok=True)
             
-            checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_iter_{iteration}.pt')
-            learning_stats_path = os.path.join(checkpoint_dir, f'checkpoint_iter_{iteration}_stats.json')
+            checkpoint_path = os.path.join(results_dir, 'checkpoint.pt')
+            learning_stats_path = os.path.join(results_dir, 'learning_stats.csv')
             
             # Save model state
             torch.save({
@@ -1487,10 +1719,8 @@ class EncodingDesigner(nn.Module):
                 'parameters': self.I
             }, checkpoint_path)
             
-            # Save learning stats
-            import json
-            with open(learning_stats_path, 'w') as f:
-                json.dump(self.learning_stats, f, indent=2)
+            # Save learning stats as CSV
+            self.learning_stats.to_csv(learning_stats_path)
             
             self.log.info(f"Saved checkpoint at iteration {iteration} to {checkpoint_path}")
             
@@ -1498,40 +1728,44 @@ class EncodingDesigner(nn.Module):
             self.log.error(f"Failed to save checkpoint at iteration {iteration}: {e}")
 
     def save_eval_and_viz(self, iteration, eval_dir=None):
-        """Save evaluation results and visualizations at specific iteration."""
+        """Save evaluation results and visualizations to results directory."""
         try:
-            if eval_dir is None:
-                eval_dir = self.I['output']
-            else:
-                eval_dir = os.path.join(self.I['output'], eval_dir)
-            os.makedirs(eval_dir, exist_ok=True)
-            iter_output_dir = os.path.join(eval_dir, f'iter_{iteration}')
-            os.makedirs(iter_output_dir, exist_ok=True)
+            results_dir = os.path.join(self.I['output'], 'results')
+            # Remove existing results directory if it exists
+            if os.path.exists(results_dir):
+                import shutil
+                shutil.rmtree(results_dir)
+            os.makedirs(results_dir, exist_ok=True)
+            
             original_output = self.I['output']
-            self.I['output'] = iter_output_dir
+            self.I['output'] = results_dir
             self.log.info(f"Running evaluation and visualization for iteration {iteration}")
             self.evaluate()
             self.visualize(show_plots=False)
             self.save_model()
             self.I['output'] = original_output
-            self.log.info(f"Saved evaluation, visualization, and model state for iteration {iteration} to {iter_output_dir}")
+            self.log.info(f"Saved evaluation, visualization, and model state for iteration {iteration} to {results_dir}")
             
         except Exception as e:
             self.log.error(f"Failed to save evaluation and visualization for iteration {iteration}: {e}")
             # Restore original output directory even if there's an error
             self.I['output'] = original_output
 
-    def _cleanup_old_checkpoints(self, iteration):
-        """Remove old model checkpoints to save memory."""
-        if iteration > 20:
-            keys_to_delete = sorted([k for k in self.saved_models if k < iteration - 20 and k != 0 and k != self.best_iteration])
-            for key_to_del in keys_to_delete:
-                self.saved_models.pop(key_to_del, None)
-                self.saved_optimizer_states.pop(key_to_del, None)
+
 
     def save_model(self):
-        """Save final model and perform cleanup."""
-        output_dir = self.I['output']
+        """Save final model and perform cleanup to results directory."""
+        # Ensure we're saving to the results directory
+        if not self.I['output'].endswith('results'):
+            output_dir = os.path.join(self.I['output'], 'results')
+            # Remove existing results directory if it exists
+            if os.path.exists(output_dir):
+                import shutil
+                shutil.rmtree(output_dir)
+            os.makedirs(output_dir, exist_ok=True)
+        else:
+            output_dir = self.I['output']
+            
         if self.I['best_model'] == 0:
             self.best_model_state_dict = None
             self.log.info("Best model turned off. Saving the final iteration state.")
@@ -1549,36 +1783,43 @@ class EncodingDesigner(nn.Module):
         else:
             self.log.warning("No best model state was saved during training. Saving the final iteration state.")
         model_path = os.path.join(output_dir, 'model_state.pt')
-        learning_stats_path = os.path.join(output_dir, 'learning_stats.json')
+        learning_stats_path = os.path.join(output_dir, 'learning_stats.csv')
         try:
             torch.save(self.state_dict(), model_path)
             self.log.info(f"Final model state dictionary saved to {model_path}")
-            import json
-            with open(learning_stats_path, 'w') as f:
-                json.dump(self.learning_stats, f, indent=2)
+            # Save learning stats as CSV
+            self.learning_stats.to_csv(learning_stats_path)
             self.log.info(f"Learning stats saved to {learning_stats_path}")
         except Exception as e:
             self.log.error(f"Failed to save final model state: {e}")
 
         self.eval()
         final_iter_key = 'Final'
-        self.learning_stats[final_iter_key] = {}
+        # Initialize row for final iteration if it doesn't exist
+        if final_iter_key not in self.learning_stats.index:
+            self.learning_stats.loc[final_iter_key] = pd.Series(dtype=object)
         with torch.no_grad():
             total_final_loss, final_stats_dict = self.calculate_loss(
                 self.X_test, self.y_test, iteration="Final", suffix='_test'
             )
-            self.learning_stats[final_iter_key].update(final_stats_dict)
-            self.learning_stats[final_iter_key]['total_loss_test_avg'] = total_final_loss.item()
+            # Add final stats to the DataFrame row
+            for key, value in final_stats_dict.items():
+                self.learning_stats.loc[final_iter_key, key] = value
+            self.learning_stats.loc[final_iter_key, 'total_loss_test_avg'] = total_final_loss.item()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         red_start = "\033[91m"; reset_color = "\033[0m"
         log_prefix = f"--- Final Eval Stats (Global Test Set) at {now_str} ---"
         self.log.info(log_prefix)
-        for name, item in self.learning_stats[final_iter_key].items():
-            if isinstance(item, (float, int, np.number)) and not np.isnan(item):
+        final_row = self.learning_stats.loc[final_iter_key]
+        for name, item in final_row.items():
+            if not pd.isna(item) and isinstance(item, (float, int, np.number)) and not np.isnan(item):
                 log_msg = f'{name}: {round(float(item), 4)}'
-            else:
+                self.log.info(log_msg)
+            elif pd.isna(item)==False:
                 log_msg = f'{name}: {item}'
-            self.log.info(log_msg)
+                self.log.info(log_msg)
+            else:
+                continue  # Skip NaN values
         self.log.info('------------------')
         self.eval() 
         with torch.no_grad():
@@ -1598,14 +1839,13 @@ class EncodingDesigner(nn.Module):
             self.E = E_final_constrained.clone().detach() 
             e_csv_path = os.path.join(output_dir, 'E_constrained.csv')
             e_pt_path = os.path.join(output_dir, 'E_constrained.pt')
-            pd.DataFrame(self.E.cpu().numpy(), index=self.genes).to_csv(e_csv_path)
+            pd.DataFrame(self.E.cpu().numpy().astype(int), index=self.genes).to_csv(e_csv_path)
             torch.save(self.E.cpu(), e_pt_path)
             self.log.info(f"Final constrained E matrix saved to {e_csv_path} and {e_pt_path}")
             self.log.info(f"Final constrained probe count: {self.E.sum().item():.2f}")
         try:
-            learning_df = pd.DataFrame.from_dict(self.learning_stats, orient='index')
             learning_curve_path = os.path.join(output_dir, 'learning_curve.csv')
-            learning_df.to_csv(learning_curve_path)
+            self.learning_stats.to_csv(learning_curve_path)
             self.log.info(f"Learning curve data saved to {learning_curve_path}")
         except Exception as e:
             self.log.error(f"Failed to save learning curve: {e}")
@@ -1702,7 +1942,7 @@ class EncodingDesigner(nn.Module):
         if not hasattr(self, 'optimizer_gen'):
             self._setup_optimizer()
         # overwrite the learning stats
-        self.learning_stats = {}
+        self.learning_stats = pd.DataFrame()
         # Set encoder learning rate to 0
         for param_group in self.optimizer_gen.param_groups:
             if 'encoder' in str(param_group['params'][0]):
@@ -1716,10 +1956,11 @@ class EncodingDesigner(nn.Module):
             y_predict, accuracy, total_loss = self.decode(P_noisy, y)
             total_loss.backward()
             self.optimizer_gen.step()
-            self.learning_stats[str(iteration)] = {
-                'accuracy_train': accuracy.item(),
-                'total_loss_train': total_loss.item()
-            }
+            # Initialize row for this iteration if it doesn't exist
+            if str(iteration) not in self.learning_stats.index:
+                self.learning_stats.loc[str(iteration)] = pd.Series(dtype=object)
+            self.learning_stats.loc[str(iteration), 'accuracy_train'] = accuracy.item()
+            self.learning_stats.loc[str(iteration), 'total_loss_train'] = total_loss.item()
             # Evaluate on test set periodically
             if iteration % 100 == 0 or iteration == n_iterations - 1:
                 self.eval()
@@ -1727,8 +1968,8 @@ class EncodingDesigner(nn.Module):
                     E_clean = self.get_E_clean()
                     P_clean = self.project_clean(self.X_test, E_clean)
                     y_predict_test, accuracy_test, total_loss_test = self.decode(P_clean, self.y_test)
-                    self.learning_stats[str(iteration)]['accuracy_test'] = accuracy_test.item()
-                    self.learning_stats[str(iteration)]['total_loss_test'] = total_loss_test.item()
+                    self.learning_stats.loc[str(iteration), 'accuracy_test'] = accuracy_test.item()
+                    self.learning_stats.loc[str(iteration), 'total_loss_test'] = total_loss_test.item()
                 self.train()
         self.eval()
         # Restore encoder learning rate
@@ -1758,6 +1999,57 @@ def sanitize_filename(name):
     name = re.sub(r'[\s/\\:]+', '_', name)
     name = re.sub(r'[<>:"|?*]+', '', name)
     return name
+
+def plot_weight_matrix(df, plot_path, title="Weight Matrix", cmap='coolwarm', log_scale=True, log=None):
+    """Plot a weight matrix as a heatmap with optional log scaling and sorting.
+    
+    Args:
+        df: pandas DataFrame with weights (rows=outputs, cols=inputs)
+        plot_path: path to save the plot
+        title: plot title
+        cmap: colormap to use
+        log_scale: whether to apply log10 scaling
+        log: logger instance
+    """
+    if log is None:
+        log = logging.getLogger("WeightMatrixPlotter")
+    
+    try:
+        import seaborn as sns
+        
+        # Sort by maximum weight magnitude for each output
+        sorted_idx = df.abs().max(axis=1).sort_values(ascending=False).index
+        df_sorted = df.loc[sorted_idx]
+        
+        # Apply log scaling if requested
+        plot_data = np.log10(df_sorted + 1) if log_scale else df_sorted
+        
+        plt.figure(figsize=(10, 10))
+        if cmap == 'coolwarm':
+            sns.clustermap(
+                plot_data,
+                cmap=cmap,
+                center=0,
+                col_cluster=False,
+                row_cluster=False,
+                figsize=(10, 10),
+                yticklabels=[]
+            )
+        else:
+            sns.clustermap(
+                plot_data,
+                cmap=cmap,
+                col_cluster=False,
+                row_cluster=False,
+                figsize=(10, 10),
+                yticklabels=[]
+            )
+        plt.savefig(plot_path, dpi=200, bbox_inches='tight')
+        plt.close()
+        log.info(f"Weight matrix saved to {plot_path}")
+        
+    except Exception as e:
+        log.error(f"Failed to plot weight matrix: {e}")
 
 def generate_intuitive_ticks(min_val, max_val, num_ticks=5):
     """Generate intuitive tick values that are easy to read."""
@@ -1947,11 +2239,11 @@ def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
         vmin, vmax = torch.quantile(sorted_data, torch.tensor([0.01, 0.99])).tolist()
         p_type_df = pd.DataFrame(sorted_data.numpy(),
                                  index=pd.Index(sorted_labels),
-                                 columns=pd.Index([f"Bit_{b}" for b in range(n_bits)]))
+                                 columns=pd.Index([f"Bit_{b+1}" for b in range(n_bits)]))
         
         heatmap_fig = plt.figure(figsize=(fig_width, fig_height))
         ax_heatmap = heatmap_fig.add_subplot(111)
-        if 'Bit' in plot_path:
+        if 'Bit' in plot_path.split('/')[-1]:
             center = 0
             cmap = 'coolwarm'
         else:
@@ -2088,7 +2380,11 @@ def plot_loss_contributions(learning_curve, output_dir, log=None):
     if log is None:
         log = logging.getLogger("LossContributionPlotter")
     loss_columns = [col for col in learning_curve.columns if 'train' in col.lower() and 'loss' in col.lower()]
-    total_loss_col = [col for col in learning_curve.columns if 'train' in col.lower() and 'loss' in col.lower()and 'total' in col.lower()][0]
+    total_loss_cols = [col for col in learning_curve.columns if 'train' in col.lower() and 'loss' in col.lower() and 'total' in col.lower()]
+    if not total_loss_cols:
+        log.warning("No total loss column found. Skipping loss contributions plot.")
+        return
+    total_loss_col = total_loss_cols[0]
     valid_iterations = [idx for idx in learning_curve.index if str(idx).replace('.', '').isdigit()]
     if not valid_iterations:
         log.warning("No valid numeric iterations found")
@@ -2216,19 +2512,19 @@ if __name__ == '__main__':
         print("Starting training...")
         model.fit()
     
-    # Check if trimming has been run and run it if not
-    trimmed_dir = os.path.join(model.I['output'], 'trimmed')
-    if not os.path.exists(trimmed_dir):
-        print("Trimming directory not found. Running iterative trimming...")
-        model.log.info("Trimming directory not found. Running iterative trimming...")
-        try:
-            # Default target is 12 bits, but can be adjusted based on model parameters
-            target_n_bits = min(12, model.I['n_bit'] // 2)  # Use 12 or half the current bits, whichever is smaller
-            model.iterative_trim_to_n_bits(target_n_bits=target_n_bits, max_iterations=10)
-            print(f"Iterative trimming completed. Final n_bits: {model.I['n_bit']}")
-        except Exception as e:
-            print(f"Error during trimming: {e}")
-            model.log.error(f"Error during trimming: {e}")
-    else:
-        print("Trimming directory found. Skipping trimming.")
-        model.log.info("Trimming directory found. Skipping trimming.")
+    # # Check if trimming has been run and run it if not
+    # trimmed_dir = os.path.join(model.I['output'], 'trimmed')
+    # if not os.path.exists(trimmed_dir):
+    #     print("Trimming directory not found. Running iterative trimming...")
+    #     model.log.info("Trimming directory not found. Running iterative trimming...")
+    #     try:
+    #         # Default target is 12 bits, but can be adjusted based on model parameters
+    #         target_n_bits = min(12, model.I['n_bit'] // 2)  # Use 12 or half the current bits, whichever is smaller
+    #         model.iterative_trim_to_n_bits(target_n_bits=target_n_bits, max_iterations=10)
+    #         print(f"Iterative trimming completed. Final n_bits: {model.I['n_bit']}")
+    #     except Exception as e:
+    #         print(f"Error during trimming: {e}")
+    #         model.log.error(f"Error during trimming: {e}")
+    # else:
+    #     print("Trimming directory found. Skipping trimming.")
+    #     model.log.info("Trimming directory found. Skipping trimming.")
