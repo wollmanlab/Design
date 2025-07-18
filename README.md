@@ -22,6 +22,7 @@ To set up the necessary environment, follow these steps:
     pip install ipykernel
     pip install matplotlib
     pip install seaborn
+    pip install scanpy
     ```
 
 ## To Run Single Jobs
