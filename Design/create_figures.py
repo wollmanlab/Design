@@ -1,7 +1,6 @@
 # %%
 
 import os
-from sre_parse import CHARSET
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -24,7 +23,7 @@ def readable_run_name(run, varying_keys):
 # conda activate designer_3.12 ; python '/u/home/z/zeh/rwollman/zeh/Repos/Design/Design/create_figures.py' 
 if __name__ == '__main__':
     output = {}
-    for notebook_name in ['Run31']: # 88
+    for notebook_name in ['Run1']: # 88
         # notebook_name = f'Run{notebook_name}'
 
         base_path = f"/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/{notebook_name}/"
@@ -40,26 +39,11 @@ if __name__ == '__main__':
             else:
                 continue
             # next check if the run is done
-            if 'Results.csv' in os.listdir(os.path.join(design_results,run)):
-                results = pd.read_csv(os.path.join(design_results,run,'Results.csv'),index_col=0)
+            if 'Results.csv' in os.listdir(os.path.join(design_results,run,'results')):
+                results = pd.read_csv(os.path.join(design_results,run,'results','Results.csv'),index_col=0)
                 # print(f"Run {run} was completed")
             else:
-                # check if there is a checkpoint that is done
-                checkpoint_path = os.path.join(design_results,run,'eval_checkpoints')
-                if not os.path.exists(checkpoint_path):
-                    # print(f"Run {run} was not done but no checkpoint directory was found")
-                    continue
-                checkpoint_files = os.listdir(checkpoint_path)
-                if len(checkpoint_files) == 0:
-                    # print(f"Run {run} was not done but no checkpoint was found")
-                    continue
-                checkpoint_path = 'iter_'+str(max([int(f.split('iter_')[1].split('.')[0]) for f in checkpoint_files]))
-                if 'Results.csv' in os.listdir(os.path.join(design_results,run,'eval_checkpoints',checkpoint_path)):
-                    results = pd.read_csv(os.path.join(design_results,run,'eval_checkpoints',checkpoint_path,'Results.csv'),index_col=0)
-                    # print(f"Run {run} was not done but checkpoint {checkpoint_path} was found")
-                else:
-                    # print(f"Run {run} was not done but checkpoint {checkpoint_path} was found but no Results.csv was found")
-                    continue
+                continue
             results = results.loc[['Number of Probes (Constrained)','No Noise Accuracy', 'No Noise Separation','No Noise Dynamic Range']]
             results.index = ['Probes','Accuracy','Separation','Dynamic Range']
             results = results.to_dict()['values']
