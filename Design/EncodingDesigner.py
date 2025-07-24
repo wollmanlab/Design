@@ -119,6 +119,7 @@ class EncodingDesigner(nn.Module):
             'bit_norm': 0,  # Whether to normalize projection by bit-wise statistics
             'continue_training': 1,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training) 
             'use_noise': 1,  # Whether to apply noise/dropout during training (0 = no noise, 1 = use noise)
+            'central_brain': 0,  # Whether to only use central brain data (0 = no, 1 = yes)
         }
         self._setup_logging(user_parameters_path)
         self._load_and_process_parameters(user_parameters_path)
@@ -1405,6 +1406,31 @@ class EncodingDesigner(nn.Module):
         y_converter_dict = dict(zip(y_converter_df.index, y_converter_df['label'])) 
         self.y_label_map = {k: self.updated_y_label_map[j] for k, j in y_converter_dict.items()}
         self.y_reverse_label_map = {j: k for k, j in self.y_label_map.items()}
+
+        # Central Brain Only
+        if self.I['central_brain'] == 1:
+            import anndata
+            adata = anndata.read_h5ad(os.path.join(self.I['input'],'minimal_spatial_data.h5ad'),backed='r')
+            pivot_table = pd.read_csv(os.path.join(self.I['input'],'pivot_table.csv'),index_col=0)
+            cluster_alias_to_subclass = dict(zip(pivot_table.index.astype(str),pivot_table['subclass']))
+            ccf_x_min_threshold = 4.5
+            ccf_x_max_threshold = 9.5
+            good_cluster_aliases = adata.obs['cluster_alias'].map(cluster_alias_to_subclass)[(adata.obs['ccf_x']>ccf_x_min_threshold) & (adata.obs['ccf_x']<ccf_x_max_threshold)].value_counts()
+            bad_cluster_aliases = adata.obs['cluster_alias'].map(cluster_alias_to_subclass)[(adata.obs['ccf_x']<ccf_x_min_threshold) | (adata.obs['ccf_x']>ccf_x_max_threshold)].value_counts()
+            del adata, pivot_table, cluster_alias_to_subclass
+            good_cluster_aliases.name = 'good'
+            bad_cluster_aliases.name = 'bad'
+            cluster_aliases = pd.concat([good_cluster_aliases, bad_cluster_aliases],axis=1).fillna(0)
+            cluster_aliases = cluster_aliases/cluster_aliases.sum(axis=1).values[:,None]
+            selected_y_labels = [self.y_reverse_label_map[i] for i in cluster_aliases[cluster_aliases>0.05].index]
+            self.log.info(f"Selected {len(selected_y_labels)} cell types for training and testing For Central Brain Only.")
+            test_m = np.isin(self.y_test,selected_y_labels)
+            train_m = np.isin(self.y_train,selected_y_labels)
+            self.X_train = self.X_train[train_m]
+            self.y_train = self.y_train[train_m]
+            self.X_test = self.X_test[test_m]
+            self.y_test = self.y_test[test_m]
+
         # Determine number of categories
         all_y_labels_for_n_categories = torch.cat((self.y_train, self.y_test)) 
         unique_y_labels_tensor = torch.unique(all_y_labels_for_n_categories)
