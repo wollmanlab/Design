@@ -151,7 +151,8 @@ user_parameters = {
             'continue_training': 0,  # Whether to continue training if model is loaded from file (0 = skip training, 1 = continue training)
             'use_noise': 1,  # Whether to apply noise/dropout during training (0 = no noise, 1 = use noise) 
             'fig':'',
-            'replicate':''
+            'replicate':'',
+            'central_brain':0,
         }
 
 user_parameters['input'] = input_dir
@@ -159,119 +160,134 @@ user_parameters['input'] = input_dir
 
 parameter_variant_list = []
 
-parameter_variant_list.append(
-    {
-    'fig':['Bit Number Tradeoff (Accuracy Only)'],
-    'decoder_n_lyr':[0,1],
-    'gene_constraint_wt':[0],
-    'probe_wt':[0],
-    'brightness_wt':[0],
-    'dynamic_wt':[0],
-    'separation_wt':[0],
-    'gene_importance_wt':[0],
-    'bit_corr_wt':[0],
-    'n_bit':[3,6,12,18,24,36,48,72,96],
-    'replicate':[1,2,3],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Bit Number Tradeoff (Accuracy Only)'],
+#     'decoder_n_lyr':[0,1],
+#     'gene_constraint_wt':[0],
+#     'probe_wt':[0],
+#     'brightness_wt':[0],
+#     'dynamic_wt':[0],
+#     'separation_wt':[0],
+#     'gene_importance_wt':[0],
+#     'bit_corr_wt':[0],
+#     'n_bit':[3,6,12,18,24,36,48,72,96],
+#     'replicate':[1,2,3],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Bit Number Tradeoff (No Hybridization Constraints)'],
-    'decoder_n_lyr':[0,1],
-    'gene_constraint_wt':[0],
-    'probe_wt':[0],
-    'n_bit':[3,6,12,18,24,36,48,72,96],
-    'replicate':[1,2,3],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Bit Number Tradeoff (Gene Constraints Only)'],
+#     'decoder_n_lyr':[0,1],
+#     'gene_constraint_wt':[1],
+#     'probe_wt':[0],
+#     'brightness_wt':[1],
+#     'dynamic_wt':[0],
+#     'separation_wt':[0],
+#     'gene_importance_wt':[0],
+#     'bit_corr_wt':[0],
+#     'n_bit':[3,6,12,18,24,36,48,72,96],
+#     'replicate':[1,2,3],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Bit Number Tradeoff'],
-    'decoder_n_lyr':[0,1],
-    'n_bit':[3,6,12,18,24,36,48,72,96],
-    'replicate':[1,2,3],
-    'probe_wt':[0],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Bit Number Tradeoff (No Hybridization Constraints)'],
+#     'decoder_n_lyr':[0,1],
+#     'gene_constraint_wt':[0],
+#     'probe_wt':[0],
+#     'n_bit':[3,6,12,18,24,36,48,72,96],
+#     'replicate':[1,2,3],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Probe Number Tradeoff (36 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
-    'n_bit':[36],
-    'replicate':[1,2,3],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Bit Number Tradeoff'],
+#     'decoder_n_lyr':[0,1],
+#     'n_bit':[3,6,12,18,24,36,48,72,96],
+#     'replicate':[1,2,3],
+#     'probe_wt':[0],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Brightness Tradeoff (36 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'brightness':[2.5,3,3.5,4,4.5,5],
-    'P_add':[2],
-    'n_bit':[36],
-    'replicate':[1,2,3],
-    'probe_wt':[0],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Probe Number Tradeoff (36 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
+#     'n_bit':[36],
+#     'replicate':[1,2,3],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Probe Number Tradeoff (18 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
-    'n_bit':[18],
-    'replicate':[1,2,3],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Brightness Tradeoff (36 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'brightness':[2.5,3,3.5,4,4.5,5],
+#     'P_add':[2],
+#     'n_bit':[36],
+#     'replicate':[1,2,3],
+#     'probe_wt':[0],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Brightness Tradeoff (18 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'brightness':[2.5,3,3.5,4,4.5,5],
-    'P_add':[2],
-    'n_bit':[18],
-    'replicate':[1,2,3],
-    'probe_wt':[0],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Probe Number Tradeoff (18 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
+#     'n_bit':[18],
+#     'replicate':[1,2,3],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Probe Number Tradeoff (24 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
-    'n_bit':[24],
-    'replicate':[1,2,3],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Brightness Tradeoff (18 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'brightness':[2.5,3,3.5,4,4.5,5],
+#     'P_add':[2],
+#     'n_bit':[18],
+#     'replicate':[1,2,3],
+#     'probe_wt':[0],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Brightness Tradeoff (24 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'brightness':[2.5,3,3.5,4,4.5,5],
-    'P_add':[2],
-    'n_bit':[24],
-    'replicate':[1,2,3],
-    'probe_wt':[0],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Probe Number Tradeoff (24 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
+#     'n_bit':[24],
+#     'replicate':[1,2,3],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Probe Number Tradeoff (48 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
-    'n_bit':[48],
-    'replicate':[1,2,3],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Brightness Tradeoff (24 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'brightness':[2.5,3,3.5,4,4.5,5],
+#     'P_add':[2],
+#     'n_bit':[24],
+#     'replicate':[1,2,3],
+#     'probe_wt':[0],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Brightness Tradeoff (48 Bits)'],
-    'decoder_n_lyr':[0,1],
-    'brightness':[2.5,3,3.5,4,4.5,5],
-    'P_add':[2],
-    'n_bit':[48],
-    'replicate':[1,2,3],
-    'probe_wt':[0],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Probe Number Tradeoff (48 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
+#     'n_bit':[48],
+#     'replicate':[1,2,3],
+#     })
+
+# parameter_variant_list.append(
+#     {
+#     'fig':['Brightness Tradeoff (48 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'brightness':[2.5,3,3.5,4,4.5,5],
+#     'P_add':[2],
+#     'n_bit':[48],
+#     'replicate':[1,2,3],
+#     'probe_wt':[0],
+#     })
 
 
 # parameter_variant_list.append(
@@ -292,6 +308,35 @@ parameter_variant_list.append(
 #     'n_bit':[3,6,12,24,36,48,72,96],
 #     'replicate':[1,2,3],
 #     })
+
+# parameter_variant_list.append(
+#     {
+#     'fig':['Probe Number Tradeoff (48 Bits)'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[1000,5000,10000,50000,100000,250000,500000,1000000],
+#     'n_bit':[48],
+#     'replicate':[1,2,3],
+#     })
+
+parameter_variant_list.append(
+    {
+    'fig':['Central Brain Bit Number (50k Probes)'],
+    'decoder_n_lyr':[0,1],
+    'n_probes':[50000],
+    'n_bit':[3,6,12,18,24,36],
+    'replicate':[1,2,3],
+    'central_brain':[1],
+    })
+
+parameter_variant_list.append(
+    {
+    'fig':['Central Brain Bit Number (250k Probes)'],
+    'decoder_n_lyr':[0,1],
+    'n_probes':[250000],
+    'n_bit':[3,6,12,18,24,36],
+    'replicate':[1,2,3],
+    'central_brain':[1],
+    })
 
 # conda activate designer_3.12 ; python '/u/home/z/zeh/rwollman/zeh/Repos/Design/Design/create_parameter_file.py' 
 # add an option to have _s and _e be the same value
