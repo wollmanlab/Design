@@ -1394,27 +1394,33 @@ class EncodingDesigner(nn.Module):
         self.X_test = load_tensor(self.I['X_test'], torch.float32, self.I['device'])
         self.y_train = load_tensor(self.I['y_train'], torch.long, self.I['device'])
         self.y_test = load_tensor(self.I['y_test'], torch.long, self.I['device'])
-        # Process labels
-        all_y_labels = torch.cat((self.y_train, self.y_test))
-        self.updated_y_label_map = {label.item(): i for i, label in enumerate(torch.unique(all_y_labels))}
-        self.y_train = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_train], dtype=torch.long, device=self.I['device'])
-        self.y_test = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_test], dtype=torch.long, device=self.I['device'])
-        # Load label converter
         y_converter_path = self.I['y_label_converter_path']
         self.log.info(f"Loading y label converter from: {y_converter_path}")
         y_converter_df = pd.read_csv(y_converter_path, index_col=0) 
-        y_converter_dict = dict(zip(y_converter_df.index, y_converter_df['label'])) 
-        self.y_label_map = {k: self.updated_y_label_map[j] for k, j in y_converter_dict.items()}
-        self.y_reverse_label_map = {j: k for k, j in self.y_label_map.items()}
-
+        y_converter_dict = dict(zip(y_converter_df.index, y_converter_df['label']))
+        y_reverse_label_map = {v: k for k, v in y_converter_dict.items()}
         # Central Brain Only
         if self.I['central_brain'] == 1:
+            self.log.info(f"Selecting cell types for Central Brain Only.")
             import anndata
-            adata = anndata.read_h5ad(os.path.join(self.I['input'],'minimal_spatial_data.h5ad'),backed='r')
+            # issues if another code is using this file
+            file_loaded = False
+            attempt = 0
+            while not file_loaded:
+                try:
+                    adata = anndata.read_h5ad(os.path.join(self.I['input'],'minimal_spatial_data.h5ad'),backed='r')
+                    file_loaded = True
+                except:
+                    self.log.error(f"Failed to load adata from {os.path.join(self.I['input'],'minimal_spatial_data.h5ad')}. Likely due to another code using this file.")
+                    time.sleep(60)
+                    attempt += 1
+                    if attempt > 50:
+                        raise Exception(f"Failed to load adata from {os.path.join(self.I['input'],'minimal_spatial_data.h5ad')}. Max attempts reached.")
             pivot_table = pd.read_csv(os.path.join(self.I['input'],'pivot_table.csv'),index_col=0)
             cluster_alias_to_subclass = dict(zip(pivot_table.index.astype(str),pivot_table['subclass']))
             ccf_x_min_threshold = 4.5
             ccf_x_max_threshold = 9.5
+            self.log.info(f"Selecting cell types for Central Brain Only. CCF x range: [{ccf_x_min_threshold}, {ccf_x_max_threshold}]")
             good_cluster_aliases = adata.obs['cluster_alias'].map(cluster_alias_to_subclass)[(adata.obs['ccf_x']>ccf_x_min_threshold) & (adata.obs['ccf_x']<ccf_x_max_threshold)].value_counts()
             bad_cluster_aliases = adata.obs['cluster_alias'].map(cluster_alias_to_subclass)[(adata.obs['ccf_x']<ccf_x_min_threshold) | (adata.obs['ccf_x']>ccf_x_max_threshold)].value_counts()
             del adata, pivot_table, cluster_alias_to_subclass
@@ -1422,7 +1428,12 @@ class EncodingDesigner(nn.Module):
             bad_cluster_aliases.name = 'bad'
             cluster_aliases = pd.concat([good_cluster_aliases, bad_cluster_aliases],axis=1).fillna(0)
             cluster_aliases = cluster_aliases/cluster_aliases.sum(axis=1).values[:,None]
-            selected_y_labels = [self.y_reverse_label_map[i] for i in cluster_aliases[cluster_aliases>0.05].index]
+            self.log.info(f"Selected {np.sum(cluster_aliases>0.05)} cell types for training and testing For Central Brain Only.")
+            cluster_aliases = cluster_aliases.loc[[i for i in cluster_aliases.index if i in y_converter_dict.keys()]]
+            self.log.info(f"Selected {np.sum(cluster_aliases>0.05)} cell types for training and testing For Central Brain Only.")
+            self.log.info(cluster_aliases[cluster_aliases>0.05].index)
+            self.log.info(y_converter_dict)
+            selected_y_labels = [y_converter_dict[i] for i in cluster_aliases[cluster_aliases['good']>0.05].index]
             self.log.info(f"Selected {len(selected_y_labels)} cell types for training and testing For Central Brain Only.")
             test_m = np.isin(self.y_test,selected_y_labels)
             train_m = np.isin(self.y_train,selected_y_labels)
@@ -1430,6 +1441,14 @@ class EncodingDesigner(nn.Module):
             self.y_train = self.y_train[train_m]
             self.X_test = self.X_test[test_m]
             self.y_test = self.y_test[test_m]
+
+        # Process labels
+        all_y_labels = torch.cat((self.y_train, self.y_test))
+        self.updated_y_label_map = {label.item(): i for i, label in enumerate(torch.unique(all_y_labels))}
+        self.y_train = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_train], dtype=torch.long, device=self.I['device'])
+        self.y_test = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_test], dtype=torch.long, device=self.I['device'])
+        self.y_label_map = {k: self.updated_y_label_map[j] for k, j in y_converter_dict.items()}
+        self.y_reverse_label_map = {j: k for k, j in self.y_label_map.items()}
 
         # Determine number of categories
         all_y_labels_for_n_categories = torch.cat((self.y_train, self.y_test)) 
