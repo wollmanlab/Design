@@ -338,6 +338,18 @@ parameter_variant_list.append(
     'central_brain':[1],
     })
 
+
+# parameter_variant_list.append(
+#     {
+#     'fig':['test'],
+#     'decoder_n_lyr':[0],
+#     'n_probes':[50000],
+#     'n_bit':[24],
+#     'replicate':[1],
+#     'central_brain':[1],
+#     'n_iters':[1000],
+#     })
+
 # conda activate designer_3.12 ; python '/u/home/z/zeh/rwollman/zeh/Repos/Design/Design/create_parameter_file.py' 
 # add an option to have _s and _e be the same value
 same_se = True

@@ -136,30 +136,16 @@ class EncodingDesigner(nn.Module):
 
     def initialize(self):
         self.log.info("--- Starting Initialization ---")
-        try:
-            self.log.info("Loading Gene Constraints")
-            self._load_constraints()
-            self._load_data()
-            if self.I['top_n_genes'] > 0 and self.I['top_n_genes'] < self.n_genes:
-                self.train_gene_importance_decoder()
-            self._initialize_encoder()
-            self._initialize_decoder()
-            self._load_pretrained_model()
-            self.log.info("--- Initialization Complete ---")
-            return True
-
-        except FileNotFoundError as e:
-            self.log.error(f"Initialization failed: Input file not found. {e}")
-            return False
-        except KeyError as e:
-            self.log.error(f"Initialization failed: Missing expected column or key. {e}")
-            return False
-        except ValueError as e:
-            self.log.error(f"Initialization failed: Data validation error. {e}")
-            return False
-        except Exception as e:
-            self.log.exception(f"An unexpected error occurred during initialization: {e}")
-            return False
+        self.log.info("Loading Gene Constraints")
+        self._load_constraints()
+        self._load_data()
+        if self.I['top_n_genes'] > 0 and self.I['top_n_genes'] < self.n_genes:
+            self.train_gene_importance_decoder()
+        self._initialize_encoder()
+        self._initialize_decoder()
+        self._load_pretrained_model()
+        self.log.info("--- Initialization Complete ---")
+        return True
 
     def get_E_clean(self):
         """Get encoding weights without noise/dropout for loss calculations."""
@@ -1397,8 +1383,9 @@ class EncodingDesigner(nn.Module):
         y_converter_path = self.I['y_label_converter_path']
         self.log.info(f"Loading y label converter from: {y_converter_path}")
         y_converter_df = pd.read_csv(y_converter_path, index_col=0) 
-        y_converter_dict = dict(zip(y_converter_df.index, y_converter_df['label']))
-        y_reverse_label_map = {v: k for k, v in y_converter_dict.items()}
+        y_converter_dict = dict(zip(y_converter_df.index, y_converter_df['label'])) # Readable to numerical
+        self.log.info(f"{y_converter_dict}")
+        y_reverse_converter_dict = {v: k for k, v in y_converter_dict.items()} # Numerical to readable
         # Central Brain Only
         if self.I['central_brain'] == 1:
             self.log.info(f"Selecting cell types for Central Brain Only.")
@@ -1428,26 +1415,32 @@ class EncodingDesigner(nn.Module):
             bad_cluster_aliases.name = 'bad'
             cluster_aliases = pd.concat([good_cluster_aliases, bad_cluster_aliases],axis=1).fillna(0)
             cluster_aliases = cluster_aliases/cluster_aliases.sum(axis=1).values[:,None]
-            self.log.info(f"Selected {np.sum(cluster_aliases>0.05)} cell types for training and testing For Central Brain Only.")
-            cluster_aliases = cluster_aliases.loc[[i for i in cluster_aliases.index if i in y_converter_dict.keys()]]
-            self.log.info(f"Selected {np.sum(cluster_aliases>0.05)} cell types for training and testing For Central Brain Only.")
-            self.log.info(cluster_aliases[cluster_aliases>0.05].index)
-            self.log.info(y_converter_dict)
-            selected_y_labels = [y_converter_dict[i] for i in cluster_aliases[cluster_aliases['good']>0.05].index]
+            cluster_aliases = cluster_aliases[cluster_aliases['good']>0.05]
+            selected_y_labels_readable = list(cluster_aliases.index)
+            self.log.info(f"Selected {len(selected_y_labels_readable)} cell types for training and testing For Central Brain Only.")
+            selected_y_labels = [y_converter_dict[readable] for readable in selected_y_labels_readable if readable in y_converter_dict.keys()]
             self.log.info(f"Selected {len(selected_y_labels)} cell types for training and testing For Central Brain Only.")
+            
+            # cluster_aliases = cluster_aliases.loc[[i for i in cluster_aliases.index if i in y_converter_dict.keys()]]
+            # self.log.info(f"Selected {np.sum(cluster_aliases>0.05)} cell types for training and testing For Central Brain Only.")
+            # self.log.info(cluster_aliases[cluster_aliases>0.05].index)
+            # self.log.info(y_converter_dict)
+            # selected_y_labels = [y_converter_dict[i] for i in cluster_aliases[cluster_aliases['good']>0.05].index]
+            # self.log.info(f"Selected {len(selected_y_labels)} cell types for training and testing For Central Brain Only.")
             test_m = np.isin(self.y_test,selected_y_labels)
             train_m = np.isin(self.y_train,selected_y_labels)
+            self.log.info(f"Selected {np.mean(train_m)} training samples and {np.mean(test_m)} testing samples for Central Brain Only.")
             self.X_train = self.X_train[train_m]
             self.y_train = self.y_train[train_m]
             self.X_test = self.X_test[test_m]
             self.y_test = self.y_test[test_m]
 
-        # Process labels
+        # Process labels update numerics to not have gaps
         all_y_labels = torch.cat((self.y_train, self.y_test))
-        self.updated_y_label_map = {label.item(): i for i, label in enumerate(torch.unique(all_y_labels))}
-        self.y_train = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_train], dtype=torch.long, device=self.I['device'])
-        self.y_test = torch.tensor([self.updated_y_label_map[y.item()] for y in self.y_test], dtype=torch.long, device=self.I['device'])
-        self.y_label_map = {k: self.updated_y_label_map[j] for k, j in y_converter_dict.items()}
+        self.updated_y_label_map = {old_numeric.item(): new_numeric for new_numeric, old_numeric in enumerate(torch.unique(all_y_labels))} # old Numerical to new Numerical
+        self.y_train = torch.tensor([self.updated_y_label_map[old_numeric.item()] for old_numeric in self.y_train], dtype=torch.long, device=self.I['device'])
+        self.y_test = torch.tensor([self.updated_y_label_map[old_numeric.item()] for old_numeric in self.y_test], dtype=torch.long, device=self.I['device'])
+        self.y_label_map = {y_reverse_converter_dict[old_numeric.item()]:self.updated_y_label_map[old_numeric.item()] for old_numeric in all_y_labels}
         self.y_reverse_label_map = {j: k for k, j in self.y_label_map.items()}
 
         # Determine number of categories
