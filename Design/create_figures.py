@@ -23,7 +23,7 @@ def readable_run_name(run, varying_keys):
 # conda activate designer_3.12 ; python '/u/home/z/zeh/rwollman/zeh/Repos/Design/Design/create_figures.py' 
 if __name__ == '__main__':
     output = {}
-    for notebook_name in ['Run1']: # 88
+    for notebook_name in ['Run2']: # 88
         # notebook_name = f'Run{notebook_name}'
 
         base_path = f"/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/{notebook_name}/"
