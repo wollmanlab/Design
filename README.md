@@ -149,14 +149,14 @@ These losses enforce constraints related to probe design and hybridization:
 These losses ensure that the projections can be accurately measured in experimental conditions:
 
 7. **Brightness Loss** (`brightness_wt`)
-   - **Target**: `brightness` (log10 scale, e.g., 4.5 = 10^4.5 signal intensity)
+   - **Target**: `brightness` (bitwise median signal brightness in log10 scale, e.g., 4.5 = 10^4.5 signal intensity)
    - **Dynamic**: Has `brightness_s` / `brightness_e` for linear interpolation during training
    - Penalizes when median signal brightness is below target
    - Once target is reached, loss becomes zero
    - Prevents signals from being too dim to detect experimentally
 
 8. **Dynamic Range Loss** (`dynamic_wt`)
-   - **Target**: `dynamic_fold` (fold-change between low and high expression levels)
+   - **Target**: `dynamic_fold` (bitwise fold-change between low and high expression levels)
    - **Dynamic**: Has `dynamic_fold_s` / `dynamic_fold_e` for linear interpolation
    - Penalizes when dynamic range is below target
    - Once target is reached, loss becomes zero
@@ -369,7 +369,23 @@ To set up the necessary environment, follow these steps:
 
 ## Usage
 
-### Running Single Jobs
+### Quick Start: Simple Notebook (Recommended for First-Time Users)
+
+For a simple, self-contained workflow that doesn't require shell scripts, use the provided Jupyter notebook:
+
+**`Design/run_cipher_simple.ipynb`** - A complete notebook that includes:
+1. Data formatting (loads h5ad files and formats them for CIPHER)
+2. Parameter setup (configurable parameters with sensible defaults)
+3. Running CIPHER (initialization, training, and evaluation)
+
+**To use the notebook:**
+1. Open the notebook on your compute node (with conda environment activated)
+2. Update the paths in Step 2 to point to your data files
+3. Run all cells sequentially
+
+The notebook handles all data formatting, parameter file creation, and CIPHER execution in one place, making it ideal for interactive use or when you don't want to use shell scripts.
+
+### Running Single Jobs (Command Line)
 
 Follow these steps to execute CIPHER on a single parameter configuration:
 
