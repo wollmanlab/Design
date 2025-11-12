@@ -33,6 +33,8 @@ Additionally, CIPHER includes **robustness/training rules** that don't directly 
 
 ## Architecture
 
+![CIPHER Architecture](Design/CIPHER_diagram.png)
+
 CIPHER consists of two main components:
 
 ### 1. Encoder (Projection Layer)
