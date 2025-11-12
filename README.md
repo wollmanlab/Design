@@ -1,5 +1,7 @@
 # Design
 
+**Author:** Zachary Hemminger (zehemminger@gmail.com)
+
 ## Overview
 
 This repository contains **CIPHER** (Cell Identity Projection using Hybridization Encoding Rules), a deep learning framework for designing multiplexed in situ hybridization (ISH) probe sets that can accurately identify cell types from gene expression data.
@@ -33,7 +35,7 @@ Additionally, CIPHER includes **robustness/training rules** that don't directly 
 
 ## Architecture
 
-![CIPHER Architecture](Design/CIPHER_diagram.jpg)
+![CIPHER Architecture](Design/CIPHER_diagram.png)
 
 
 CIPHER consists of two main components:
@@ -345,9 +347,23 @@ These parameters support dynamic targets that change during training:
 
 ## Installation
 
-### Create Conda Environment
+### Option 1: Using pip (Recommended)
 
-To set up the necessary environment, follow these steps:
+The easiest way to install CIPHER and its dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Or install as a package:
+
+```bash
+pip install -e .
+```
+
+### Option 2: Using Conda Environment
+
+To set up the necessary environment with Conda:
 
 1. **Create the Conda environment:**
    ```bash
@@ -361,14 +377,21 @@ To set up the necessary environment, follow these steps:
 
 3. **Install required packages:**
    ```bash
-   pip install torch
-   pip install scikit-learn
-   pip install anndata
-   pip install ipykernel
-   pip install matplotlib
-   pip install seaborn
-   pip install scanpy
+   pip install -r requirements.txt
    ```
+
+### Dependencies
+
+CIPHER requires:
+- Python >= 3.8
+- PyTorch >= 2.0.0
+- pandas >= 1.5.0
+- numpy >= 1.21.0
+- matplotlib >= 3.5.0
+- seaborn >= 0.12.0
+- scikit-learn >= 1.0.0
+- anndata >= 0.8.0 (for h5ad file support)
+- ipykernel >= 6.0.0 (for Jupyter notebook support)
 
 ## Usage
 
@@ -548,3 +571,21 @@ The projections represent the expected signal for each bit:
 - **Low accuracy**: Increase `categorical_wt`, check data quality, or increase model capacity
 - **Out of memory**: Reduce batch size, number of genes, or reduce `n_cpu` threads
 - **Noise too high**: Reduce noise parameters or set `use_noise=0` for debugging
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Citation
+
+If you use CIPHER in your research, please cite:
+
+```
+Hemminger, Z. (2024). CIPHER: Cell Identity Projection using Hybridization Encoding Rules. 
+[Add publication details when available]
+```
+
+## Contact
+
+For questions, issues, or contributions, please contact:
+- **Zachary Hemminger**: zehemminger@gmail.com
