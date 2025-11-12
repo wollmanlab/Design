@@ -88,28 +88,40 @@ These losses enforce constraints related to probe design and hybridization:
    - Enforces per-gene probe limits
 
 6. **Probe Count Loss** (`probe_wt`)
-   - Penalizes deviations from target total probe count (`n_probes`)
+   - **Target**: `n_probes` (total number of probes across all genes)
+   - Penalizes when total probe count exceeds the target
    - Uses ELU activation to allow flexibility while encouraging target
-   - Enforces total probe budget constraint
+   - Once target is reached, loss becomes zero and model can focus on other objectives
 
 ### LM: Measurability Rules
 
 These losses ensure that the projections can be accurately measured in experimental conditions:
 
 7. **Brightness Loss** (`brightness_wt`)
-   - Ensures median signal brightness reaches target level (log10 scale)
+   - **Target**: `brightness` (log10 scale, e.g., 4.5 = 10^4.5 signal intensity)
+   - **Dynamic**: Has `brightness_s` / `brightness_e` for linear interpolation during training
+   - Penalizes when median signal brightness is below target
+   - Once target is reached, loss becomes zero
    - Prevents signals from being too dim to detect experimentally
 
 8. **Dynamic Range Loss** (`dynamic_wt`)
-   - Encourages sufficient fold-change between low and high expression levels
+   - **Target**: `dynamic_fold` (fold-change between low and high expression levels)
+   - **Dynamic**: Has `dynamic_fold_s` / `dynamic_fold_e` for linear interpolation
+   - Penalizes when dynamic range is below target
+   - Once target is reached, loss becomes zero
    - Ensures bits can distinguish different expression states
 
 9. **Separation Loss** (`separation_wt`)
-   - Ensures minimum fold-change between different cell type projections
+   - **Target**: `separation_fold` (minimum fold-change between cell type projections)
+   - **Dynamic**: Has `separation_fold_s` / `separation_fold_e` for linear interpolation
+   - Penalizes when separation between cell types is below target
+   - Once target is reached, loss becomes zero
    - Critical for distinguishing cell types
 
 10. **Step Size Loss** (`step_size_wt`)
-    - Ensures minimum step sizes between cell types in projection space
+    - **Target**: `step_size_threshold` (minimum step size between cell types in projection space)
+    - Penalizes when step sizes are below target
+    - Once target is reached, loss becomes zero
     - Improves separability and ensures measurable differences between cell types
 
 ### Robustness and Training Rules
@@ -117,22 +129,31 @@ These losses ensure that the projections can be accurately measured in experimen
 These rules don't directly affect accuracy, hybridization, or measurability but ensure robust design and prevent overfitting:
 
 10. **Bit Usage Loss** (`bit_usage_wt`)
-    - Encourages decoder to use all bits
+    - **Target**: `bit_usage` (minimum utilization threshold, fraction of expected utilization)
+    - Penalizes when bit utilization is below target
+    - Once target is reached, loss becomes zero
     - Prevents bit collapse and ensures all bits contribute to classification
     - Promotes robust encoding by preventing unused bits
 
 11. **Bit Correlation Loss** (`bit_corr_wt`)
-    - Penalizes high correlation between bits
+    - **Target**: `bit_corr` (maximum allowed correlation between bits, 0-1, default 0.8)
+    - Penalizes when correlation between any two bits exceeds target
+    - Once all bit pairs are below target, loss becomes zero
     - Ensures bits capture independent information
     - Prevents redundant encoding and improves generalization
 
 12. **Sparsity Loss** (`sparsity_wt`)
-    - Encourages sparse encoding weights (many zeros)
+    - **Target**: `sparsity` (fraction of encoding weights that should be near zero)
+    - **Dynamic**: Has `sparsity_s` / `sparsity_e` for linear interpolation
+    - Penalizes when sparsity ratio is below target
+    - Once target is reached, loss becomes zero
     - Reduces complexity and probe requirements
     - Promotes simpler, more generalizable designs
 
 13. **Gene Importance Loss** (`gene_importance_wt`)
-    - Prevents any single gene from dominating a bit (>25% contribution)
+    - **Target**: `gene_importance` (maximum allowed contribution percentage per gene per bit, default 0.25 = 25%)
+    - Penalizes when any gene contributes more than the target percentage to any bit
+    - Once all genes are below target, loss becomes zero
     - Promotes distributed encoding and reduces dependency on single genes
     - Improves robustness to gene expression variation
 
@@ -147,6 +168,62 @@ CIPHER includes extensive noise injection during training to simulate experiment
 - **Decoder dropout**: `D_drp_s/e`
 
 These noise terms force the model to learn robust encodings that work under various experimental conditions, minimizing overfitting to the training data.
+
+### Target-Based Losses and Dynamic Training
+
+Many of CIPHER's loss functions use **target-based optimization**, which provides important benefits for multi-objective training:
+
+**Benefits of Target-Based Losses:**
+- Once a target is reached, the loss for that objective becomes zero, allowing the model to focus on objectives that haven't been met yet
+- This prevents the model from over-optimizing a few loss terms while ignoring others
+- The model naturally balances multiple objectives as it progresses through training
+
+**How Targets Work:**
+Most target-based losses only penalize when the current value is **below** (or above) the target. For example:
+- If brightness is above the target → loss = 0 (no penalty)
+- If brightness is below the target → loss > 0 (penalty proportional to how far below)
+- Once brightness reaches the target, the model can focus on other objectives
+
+**Dynamic Targets with _s/_e Parameters:**
+Many targets can change linearly during training using `_s` (start) and `_e` (end) parameters:
+- `brightness_s` / `brightness_e`: Target brightness at start vs. end of training
+- `dynamic_fold_s` / `dynamic_fold_e`: Target dynamic range fold-change
+- `separation_fold_s` / `separation_fold_e`: Target separation fold-change
+- `sparsity_s` / `sparsity_e`: Target sparsity ratio
+- `lr_s` / `lr_e`: Learning rate schedule
+- All noise parameters (`X_drp_s/e`, `E_noise_s/e`, etc.)
+
+**Saturation Parameter:**
+The `saturation` parameter (0.0-1.0) controls **when** the final (`_e`) values are reached:
+- `saturation = 0.5`: All `_s/_e` parameters reach their `_e` values at 50% of training
+- `saturation = 1.0`: Parameters reach `_e` values at the end of training (default)
+- `saturation = 0.75`: Parameters reach `_e` values at 75% of training
+
+The interpolation formula is: `param = param_s + (param_e - param_s) * progress`, where `progress` is clipped by `saturation`.
+
+**Example:** If `brightness_s = 3.0`, `brightness_e = 4.5`, and `saturation = 0.5`:
+- At iteration 0: target brightness = 3.0
+- At 25% of training: target brightness = 3.75
+- At 50% of training: target brightness = 4.5 (reached early due to saturation)
+- At 50-100% of training: target brightness = 4.5 (stays constant)
+
+This allows the model to start with easier targets and gradually increase difficulty, or to reach final targets early and maintain them throughout the rest of training.
+
+**Loss Terms with Targets:**
+
+1. **Probe Count Loss** - Target: `n_probes` (total number of probes)
+2. **Brightness Loss** - Target: `brightness` (log10 scale, has `_s/_e`)
+3. **Dynamic Range Loss** - Target: `dynamic_fold` (fold-change, has `_s/_e`)
+4. **Separation Loss** - Target: `separation_fold` (fold-change, has `_s/_e`)
+5. **Sparsity Loss** - Target: `sparsity` (fraction of zeros, has `_s/_e`)
+6. **Gene Importance Loss** - Target: `gene_importance` (max 25% contribution per gene per bit)
+7. **Bit Usage Loss** - Target: `bit_usage` (minimum utilization threshold)
+8. **Bit Correlation Loss** - Target: `bit_corr` (maximum allowed correlation, 0-1)
+9. **Step Size Loss** - Target: `step_size_threshold` (minimum step size between cell types)
+
+**Loss Terms Without Targets:**
+- **Categorical Classification Loss**: Continuous optimization (no target, always active)
+- **Gene Constraint Loss**: Hard constraint violation (penalty only when violated)
 
 ## Key Parameters
 
