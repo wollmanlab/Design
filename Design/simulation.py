@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # Standard library imports
+# conda activate dredfish_3.9 ; python /scratchdata1/GeneralStorage/Zach/Designs/Sync/code/simulation.py "/scratchdata1/GeneralStorage/Zach/Designs/Sync/params_fig_Probe Number Tradeoff (36 Bits)_decoder_n_lyr_0_n_probes_50000_n_bit_36_replicate_1"
 import os
 import json
 import logging
@@ -30,9 +31,9 @@ def parse_arguments():
                        help='Path to the design results directory')
     parser.add_argument('--data_path', type=str, default='/u/home/z/zeh/rwollman/data',
                        help='Path to external data directory (default: /scratchdata1/ExternalData)')
-    parser.add_argument('--ccf_x_min', type=float, default=4.5,
+    parser.add_argument('--ccf_x_min', type=float, default=0,
                        help='Minimum CCF x coordinate (default: 4.5)')
-    parser.add_argument('--ccf_x_max', type=float, default=9.5,
+    parser.add_argument('--ccf_x_max', type=float, default=20,
                        help='Maximum CCF x coordinate (default: 9.5)')
     return parser.parse_args()
 
@@ -60,12 +61,14 @@ paths['WeightMat'] = f"{input_path}/results/E_constrained.csv"
 paths['Design'] = f"{data_path}/Allen_Cortex_Hippocampus_SmartSeq_2023Sep07"
 paths['Reference'] = f"{data_path}/Allen_WMB_2024Mar06"
 paths['Simulation'] = f"{data_path}/Zhaung_WMB/"
-paths['Save'] = f"{input_path}/Simulation"
-
 for key,val in paths.items():
     if not os.path.exists(val):
         logger.error(f"Path {val} does not exist.")
         raise ValueError(f"Path {val} does not exist.")
+
+paths['Save'] = f"{input_path}/Simulation"
+if not os.path.exists(paths['Save']):
+    os.mkdir(paths['Save'])
 paths['Output'] = {}
 for path in ['Design','Reference','Simulation','Results']:
     paths['Output'][path] = os.path.join(paths['Save'],path)
@@ -147,6 +150,11 @@ def process_single_file(file_name, current_dataset_path, current_cell_annotation
         logger.info(f"File {file_name}: Writing output to: {out_path}")
         out_data.write(out_path)
         logger.info(f"Finished processing {file_name}")
+        
+        # Explicit cleanup to prevent memory leaks
+        del data, filtered_data, filtered_WeightMat_local, ordered_filtered_WeightMat, projected_X
+        gc.collect()
+        
         return out_data
     except Exception as e:
         logger.error(f"Error processing file {file_name}: {e}")
@@ -158,8 +166,15 @@ def process_single_file(file_name, current_dataset_path, current_cell_annotation
 if not os.path.exists(os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")):
     logger.info("Starting main processing: Combined reference file does not exist.")
     logger.info("Loading 10X data manifest and metadata...")
-    url = 'https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/releases/%s/manifest.json' % '20230830'
-    manifest = json.loads(requests.get(url).text)
+    manifest_path = os.path.join(paths['Reference'], 'manifest.json')
+    try:
+        manifest = json.load(open(manifest_path))
+    except:
+        logger.info(f"Manifest file does not exist. Downloading from AWS. {manifest_path}")
+        url = 'https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/releases/%s/manifest.json' % '20230830'
+        manifest = json.loads(requests.get(url).text)
+        with open(manifest_path, 'w') as f:
+            json.dump(manifest, f)
     
     metadata = manifest['file_listing']['WMB-10X']['metadata']
     rpath_cell_meta = metadata['cell_metadata']['files']['csv']['relative_path']
@@ -217,7 +232,17 @@ if not os.path.exists(os.path.join(paths['Output']['Reference'], f"{design_name}
             logger.warning(f"No valid .h5ad files found to process for key {key} in {dataset_path_for_key}")
             continue
         current_batch_processed_data = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        
+        # Log memory usage before starting batch
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            logger.info(f"Memory usage before batch {dataset_batch}: {memory_mb:.1f} MB")
+        except:
+            pass
+            
+        with ThreadPoolExecutor(max_workers=1) as executor:
             logger.info(f"Submitting {len(tasks_for_executor)} files for processing using 5 threads for batch {dataset_batch}...")
             future_to_task_args = {executor.submit(process_single_file, *task_args): task_args for task_args in tasks_for_executor}
             for i, future in tqdm(enumerate(as_completed(future_to_task_args)), total=len(future_to_task_args), desc=f"Processing files in batch {dataset_batch}"):
@@ -232,6 +257,9 @@ if not os.path.exists(os.path.join(paths['Output']['Reference'], f"{design_name}
                     logger.error(f"File {file_name_done} generated an exception during future.result(): {exc}")
                     import traceback
                     traceback.print_exc()
+            # Clean up futures and task args to free memory
+            del future_to_task_args
+            gc.collect()
         if current_batch_processed_data:
             logger.info(f"Concatenating {len(current_batch_processed_data)} processed files for batch {dataset_batch}...")
             try:
@@ -243,6 +271,9 @@ if not os.path.exists(os.path.join(paths['Output']['Reference'], f"{design_name}
                 concatenated_data_for_batch.write(out_path_batch_combined)
                 all_concatenated_data_batches.append(concatenated_data_for_batch)
                 logger.info(f"Finished processing and combining for batch {dataset_batch}")
+                # Clean up batch data to free memory
+                del current_batch_processed_data, concatenated_data_for_batch
+                gc.collect()
             except Exception as e_concat:
                 logger.error(f"Error concatenating batch {dataset_batch}: {e_concat}")
                 import traceback
@@ -279,13 +310,41 @@ def chunk_data(fname):
     n_cells = adata.shape[0]
     n_chunks = int(np.ceil(n_cells / 50000))
     for i in trange(n_chunks):
-        if os.path.exists(fname.replace('.h5ad', f'_chunk{i}.h5ad')):
+        chunk_fname = fname.replace('.h5ad', f'_chunk{i}.h5ad')
+        logger.info(f"Checking chunk {i}... {chunk_fname}")
+        # Check if file exists and has reasonable size (> 1KB) before trying to read
+        if os.path.exists(chunk_fname):
             try:
-                temp_adata = anndata.read_h5ad(fname.replace('.h5ad', f'_chunk{i}.h5ad'),backed='r')
-                logger.info(f"Chunk {i} already exists, skipping.")
-                continue
-            except:
-                logger.info(f"Chunk {i} does not exist, creating it.")
+                # Check file size to ensure it's not empty/corrupted
+                file_size = os.path.getsize(chunk_fname)
+                if file_size < 1024:  # Less than 1KB, likely corrupted
+                    logger.info(f"Chunk {i} exists but is too small ({file_size} bytes), recreating it.")
+                    os.remove(chunk_fname)  # Remove corrupted file
+                else:
+                    # Try to read with timeout using ThreadPoolExecutor
+                    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(anndata.read_h5ad, chunk_fname, backed='r')
+                        try:
+                            logger.info(f"Chunk {i} exists trying to read...")
+                            temp_adata = future.result(timeout=60)  # 60 second timeout
+                            logger.info(f"Chunk {i} already exists and is valid, skipping.")
+                            continue
+                        except TimeoutError:
+                            logger.info(f"Chunk {i} exists but reading timed out, recreating it.")
+                            os.remove(chunk_fname)
+                        except Exception as e:
+                            logger.info(f"Chunk {i} exists but is corrupted ({e}), recreating it.")
+                            os.remove(chunk_fname)
+            except Exception as e:
+                logger.info(f"Error checking chunk {i} file: {e}, will recreate it.")
+                if os.path.exists(chunk_fname):
+                    try:
+                        os.remove(chunk_fname)
+                    except:
+                        pass
+        
+        logger.info(f"Creating chunk {i}...")
         start_idx = i * 50000
         end_idx = min((i + 1) * 50000, n_cells)
         chunk_adata = anndata.AnnData(
@@ -294,9 +353,11 @@ def chunk_data(fname):
             var=adata.var,
         )
         chunk_adata.obsm['X_CCF'] = adata.obsm['X_CCF'][start_idx:end_idx]
-        chunk_adata.write(fname.replace('.h5ad', f'_chunk{i}.h5ad'))
+        logger.info(f"Writing chunk {i} to {chunk_fname}")
+        chunk_adata.write(chunk_fname)
+        del chunk_adata
 for i in ['anterior','posterior']:
-    chunk_data(os.path.join(paths['Output']['Simulation'], f"WB_imputation_animal1_coronal_{i}.h5ad"))
+    chunk_data(os.path.join(paths['Simulation'], f"WB_imputation_animal1_coronal_{i}.h5ad"))
 
 def process_chunk_item(chunk_h5ad_path, WeightMat_main, ccf_x_min_val, ccf_x_max_val):
     """Processes a single data chunk file."""
@@ -339,7 +400,11 @@ def process_chunk_item(chunk_h5ad_path, WeightMat_main, ccf_x_min_val, ccf_x_max
         projected_var_df['readout'] = [f"readout{i}" for i in range(num_readouts)]
         projected_var_df['hybe'] = [f"hybe{i}" for i in range(num_readouts)]
         projected_var_df['channel'] = [f"FarRed" for i in range(num_readouts)]
-        return anndata.AnnData(X=P.numpy(), obs=projected_obs_df.copy(), var=projected_var_df.copy())
+        adata = anndata.AnnData(X=P.numpy(), obs=projected_obs_df.copy(), var=projected_var_df.copy())
+        # Clean up intermediate variables (but keep P for the return)
+        # del adata, WeightMat_chunk_specific, E, X, X_data, ccf_coords, P, projected_obs_df, projected_var_df
+        gc.collect()
+        return adata
     except Exception as e:
         logger.error(f"Error processing {os.path.basename(chunk_h5ad_path)}: {e}")
         return None
@@ -348,16 +413,20 @@ def process_chunk_item(chunk_h5ad_path, WeightMat_main, ccf_x_min_val, ccf_x_max
 output_file = os.path.join(paths['Output']['Simulation'], f"{design_name}.h5ad")
 if not os.path.exists(output_file):
     all_projected_adatas = []
-    chunk_file_paths_to_process = [i for i in os.listdir(paths['Simulation']) if ('chunk' in i)]
+    chunk_file_paths_to_process = [os.path.join(paths['Simulation'], i) for i in os.listdir(paths['Simulation']) if ('chunk' in i)]
     if not chunk_file_paths_to_process:
         logger.warning("No chunk files found to process.")
     else:
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        logger.info(f"Found {len(chunk_file_paths_to_process)} chunk files to process")
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = [executor.submit(process_chunk_item, cfp, WeightMat, ccf_x_min, ccf_x_max) for cfp in chunk_file_paths_to_process]
             for future in tqdm(as_completed(futures), total=len(futures), desc="Processing chunks"):
                 result = future.result()
                 if result is not None:
                     all_projected_adatas.append(result)
+            # Clean up futures to free memory
+            del futures
+            gc.collect()
         if all_projected_adatas:
             final_projected_adata = anndata.concat(all_projected_adatas, axis=0, join='outer', merge='same')
             final_projected_adata.write_h5ad(output_file)
@@ -365,6 +434,7 @@ if not os.path.exists(output_file):
             del final_projected_adata, all_projected_adatas, WeightMat
         else:
             logger.warning("No data was successfully processed from chunks.")
+            raise ValueError("No data was successfully processed from chunks.")
 else:
     logger.info(f"Output file {output_file} already exists. Skipping.")
 
@@ -501,7 +571,8 @@ class KDESpatialPriors(object):
     ref='/scratchdata2/MouseBrainAtlases/MouseBrainAtlases_V0/Allen/',
     ref_levels=['class', 'subclass'],neuron=None,kernel = (0.25,0.1,0.1),
     border=1,binsize=0.1,bins=None,gates=None,types=None,symetric=False):
-        self.out_path = f"/scratchdata1/KDE_kernel_{kernel[0]}_{kernel[1]}_{kernel[2]}_border_{border}_binsize_{binsize}_level_{ref_levels[-1]}_neuron_{neuron}_symetric_{symetric}.pkl"
+        self.out_path = f"/u/home/z/zeh/rwollman/data/KDE_kernel_{kernel[0]}_{kernel[1]}_{kernel[2]}_border_{border}_binsize_{binsize}_level_{ref_levels[-1]}_neuron_{neuron}_symetric_{symetric}.pkl"
+        logger.info(f"KDESpatialPriors: {self.out_path}")
         self.symetric = symetric
         if os.path.exists(self.out_path):
             temp = pickle.load(open(self.out_path,'rb'))
