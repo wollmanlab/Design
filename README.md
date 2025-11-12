@@ -33,7 +33,7 @@ Additionally, CIPHER includes **robustness/training rules** that don't directly 
 
 ## Architecture
 
-<img src="Design/CIPHER_diagram.png" alt="CIPHER Architecture" style="background-color: white; padding: 10px;">
+![CIPHER Architecture](Design/CIPHER_diagram.jpg)
 
 
 CIPHER consists of two main components:
