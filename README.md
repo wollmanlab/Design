@@ -17,7 +17,19 @@ This repository contains **CIPHER** (Cell Identity Projection using Hybridizatio
 - **Encoding**: Maps gene expression vectors (n_genes dimensions) to bit projections (n_bit dimensions, typically 3-96 bits)
 - **Projection**: The bit values represent the expected signal intensity for each bit in the multiplexed ISH experiment
 - **Decoding**: Reconstructs cell type identity from the bit projections
-- **Hybridization Rules**: The encoding weights represent probe fractions that respect hybridization constraints
+
+CIPHER enforces three sets of rules through its loss functions:
+
+1. **LA (Accuracy Rules)**: Ensures the ability to decode the correct cell type from the projections
+2. **LH (Hybridization Rules)**: Enforces constraints on gene-level probe limits and total number of probes
+3. **LM (Measurability Rules)**: Ensures the projections can be accurately measured experimentally:
+   - **Brightness**: Signal intensity must reach detectable levels
+   - **Dynamic Range**: Sufficient fold-change between low and high expression levels
+   - **Separability**: Different cell types must have sufficiently distinct projection patterns
+
+Additionally, CIPHER includes **robustness/training rules** that don't directly affect accuracy, hybridization, or measurability but ensure robust design and prevent overfitting:
+- **Training regularization**: Bit usage, bit correlation, sparsity, and gene importance constraints
+- **Noise injection**: Various noise terms applied during training to simulate experimental conditions and minimize overfitting
 
 ## Architecture
 
@@ -55,55 +67,86 @@ Gene Expression (X) → Encoder (E) → Projection (P) → Decoder → Cell Type
 
 ## Loss Functions and Optimization Objectives
 
-CIPHER optimizes multiple objectives simultaneously through a weighted loss function:
+CIPHER optimizes multiple objectives simultaneously through a weighted loss function. The losses are organized into three main rule categories (LA, LH, LM) plus additional robustness/training rules:
 
-### Primary Objectives
+### LA: Accuracy Rules
+
+These losses focus on the ability to decode the correct cell type from the projections:
 
 1. **Categorical Classification Loss** (`categorical_wt`)
    - Cross-entropy loss with label smoothing
    - Ensures accurate cell type identification from projections
+   - Primary measure of classification accuracy
 
-2. **Probe Count Loss** (`probe_wt`)
-   - Penalizes deviations from target total probe count (`n_probes`)
-   - Uses ELU activation to allow flexibility while encouraging target
+### LH: Hybridization Rules
 
-3. **Gene Constraint Loss** (`gene_constraint_wt`)
+These losses enforce constraints related to probe design and hybridization:
+
+5. **Gene Constraint Loss** (`gene_constraint_wt`)
    - Ensures no gene exceeds its maximum allowed probe count
    - Critical for respecting biological/experimental constraints
+   - Enforces per-gene probe limits
 
-4. **Brightness Loss** (`brightness_wt`)
+6. **Probe Count Loss** (`probe_wt`)
+   - Penalizes deviations from target total probe count (`n_probes`)
+   - Uses ELU activation to allow flexibility while encouraging target
+   - Enforces total probe budget constraint
+
+### LM: Measurability Rules
+
+These losses ensure that the projections can be accurately measured in experimental conditions:
+
+7. **Brightness Loss** (`brightness_wt`)
    - Ensures median signal brightness reaches target level (log10 scale)
-   - Prevents signals from being too dim to detect
+   - Prevents signals from being too dim to detect experimentally
 
-5. **Dynamic Range Loss** (`dynamic_wt`)
+8. **Dynamic Range Loss** (`dynamic_wt`)
    - Encourages sufficient fold-change between low and high expression levels
-   - Ensures bits can distinguish different expression levels
+   - Ensures bits can distinguish different expression states
 
-6. **Separation Loss** (`separation_wt`)
+9. **Separation Loss** (`separation_wt`)
    - Ensures minimum fold-change between different cell type projections
    - Critical for distinguishing cell types
 
-### Regularization Objectives
+10. **Step Size Loss** (`step_size_wt`)
+    - Ensures minimum step sizes between cell types in projection space
+    - Improves separability and ensures measurable differences between cell types
 
-7. **Sparsity Loss** (`sparsity_wt`)
-   - Encourages sparse encoding weights (many zeros)
-   - Reduces complexity and probe requirements
+### Robustness and Training Rules
 
-8. **Gene Importance Loss** (`gene_importance_wt`)
-   - Prevents any single gene from dominating a bit (>25% contribution)
-   - Promotes distributed encoding
+These rules don't directly affect accuracy, hybridization, or measurability but ensure robust design and prevent overfitting:
 
-9. **Bit Usage Loss** (`bit_usage_wt`)
-   - Encourages decoder to use all bits
-   - Prevents bit collapse
+10. **Bit Usage Loss** (`bit_usage_wt`)
+    - Encourages decoder to use all bits
+    - Prevents bit collapse and ensures all bits contribute to classification
+    - Promotes robust encoding by preventing unused bits
 
-10. **Bit Correlation Loss** (`bit_corr_wt`)
+11. **Bit Correlation Loss** (`bit_corr_wt`)
     - Penalizes high correlation between bits
     - Ensures bits capture independent information
+    - Prevents redundant encoding and improves generalization
 
-11. **Step Size Loss** (`step_size_wt`)
-    - Ensures minimum step sizes between cell types in projection space
-    - Improves separability
+12. **Sparsity Loss** (`sparsity_wt`)
+    - Encourages sparse encoding weights (many zeros)
+    - Reduces complexity and probe requirements
+    - Promotes simpler, more generalizable designs
+
+13. **Gene Importance Loss** (`gene_importance_wt`)
+    - Prevents any single gene from dominating a bit (>25% contribution)
+    - Promotes distributed encoding and reduces dependency on single genes
+    - Improves robustness to gene expression variation
+
+### Noise Terms (Regularization, Not Loss Terms)
+
+CIPHER includes extensive noise injection during training to simulate experimental conditions and prevent overfitting. These are not loss terms but regularization mechanisms:
+
+- **Gene-level noise**: `X_drp_s/e` (dropout), `X_noise_s/e` (expression noise)
+- **Weight-level noise**: `E_drp_s/e` (encoding weight dropout), `E_noise_s/e` (weight noise)
+- **Projection-level noise**: `P_drp_s/e` (projection dropout), `P_noise_s/e` (measurement noise)
+- **Constant noise**: `P_add_s/e` (background signal, log10 scale)
+- **Decoder dropout**: `D_drp_s/e`
+
+These noise terms force the model to learn robust encodings that work under various experimental conditions, minimizing overfitting to the training data.
 
 ## Key Parameters
 
