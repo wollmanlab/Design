@@ -31,6 +31,31 @@ except ImportError:
 
 
 class CIPHER(nn.Module):
+    """
+    CIPHER (Cell Identity Projection using Hybridization Encoding Rules) Model.
+    
+    A PyTorch neural network that learns to encode high-dimensional gene expression data
+    into low-dimensional bit projections for multiplexed in situ hybridization probe design.
+    The model simultaneously optimizes probe allocation, cell type classification accuracy,
+    and experimental constraints.
+    
+    Attributes:
+        I (Dict[str, Any]): Dictionary containing all model parameters and configuration
+        encoder (nn.Embedding): Encoder layer that maps genes to bit contributions
+        decoder (nn.Sequential): Decoder network that maps projections to cell type predictions
+        constraints (torch.Tensor): Maximum allowed probes per gene
+        X_train, X_test (torch.Tensor): Training and test gene expression matrices
+        y_train, y_test (torch.Tensor): Training and test cell type labels
+        n_genes (int): Number of genes in the dataset
+        n_bit (int): Number of bits in the encoding
+        n_categories (int): Number of cell type categories
+        learning_stats (pd.DataFrame): Training statistics recorded during training
+        log (logging.Logger): Logger instance for training logs
+    
+    Args:
+        user_parameters_path (Optional[str]): Path to CSV file containing user-defined parameters.
+            If None, uses default parameters. Parameters in the CSV override defaults.
+    """
     def __init__(self, user_parameters_path: Optional[str] = None):
         super().__init__() 
         self.I: Dict[str, Any] = {
@@ -134,7 +159,25 @@ class CIPHER(nn.Module):
         self.prev_encoder_weights = None
         self.prev_decoder_weights = None
 
-    def initialize(self):
+    def initialize(self) -> bool:
+        """
+        Initialize the CIPHER model by loading data, constraints, and setting up encoder/decoder.
+        
+        This method performs the following steps:
+        1. Loads gene constraints from file
+        2. Loads training and test data (gene expression and labels)
+        3. Optionally filters to top N genes if top_n_genes > 0
+        4. Initializes encoder with proper weight initialization
+        5. Initializes decoder with specified architecture
+        6. Loads pretrained model if available
+        
+        Returns:
+            bool: True if initialization succeeded, False otherwise
+            
+        Raises:
+            FileNotFoundError: If required data files are missing
+            ValueError: If data shapes are inconsistent
+        """
         self.log.info("--- Starting Initialization ---")
         self.log.info("Loading Gene Constraints")
         self._load_constraints()
@@ -147,8 +190,26 @@ class CIPHER(nn.Module):
         self.log.info("--- Initialization Complete ---")
         return True
 
-    def get_E_clean(self):
-        """Get encoding weights without noise/dropout for loss calculations."""
+    def get_E_clean(self) -> torch.Tensor:
+        """
+        Get encoding weights without noise/dropout for loss calculations.
+        
+        Applies the encoder activation function to raw weights and multiplies by gene constraints
+        to get the final probe allocation matrix. This is the "clean" version used for
+        loss calculations to ensure consistent evaluation.
+        
+        Returns:
+            torch.Tensor: Encoding weights E of shape (n_genes, n_bit) representing
+                the number of probes allocated from each gene to each bit.
+                Values are constrained by gene limits and activation function ranges.
+                
+        Note:
+            The activation function converts raw weights to probe fractions:
+            - tanh: maps to [0, 1] via (tanh(x) + 1) / 2
+            - sigmoid: maps to [0, 1]
+            - linear: uses weights directly
+            - relu: maps to [0, ∞)
+        """
         if self.I['encoder_act'] == 'sigmoid':
             E = torch.sigmoid(self.encoder.weight) * self.constraints.unsqueeze(1)
         elif self.I['encoder_act'] == 'tanh':
@@ -162,8 +223,23 @@ class CIPHER(nn.Module):
             raise ValueError(f"Invalid activation function: {self.I['encoder_act']}")
         return E
 
-    def get_E(self):
-        """Get encoding weights with noise/dropout for training."""
+    def get_E(self) -> torch.Tensor:
+        """
+        Get encoding weights with noise/dropout applied for training.
+        
+        This method applies noise and dropout to encoding weights during training to
+        improve robustness and prevent overfitting. The noise simulates experimental
+        variability in probe binding.
+        
+        Returns:
+            torch.Tensor: Encoding weights E of shape (n_genes, n_bit) with noise/dropout
+                applied if training mode is enabled and use_noise=1.
+                
+        Note:
+            - Only applies noise if self.training is True and use_noise=1
+            - E_drp: Randomly sets some weights to 0 (dropout)
+            - E_noise: Applies multiplicative noise with minimum bound
+        """
         E = self.get_E_clean()
         if self.I['use_noise'] == 0:
             return E
@@ -176,13 +252,46 @@ class CIPHER(nn.Module):
             E = E * (((1 - min_val) * torch.rand_like(E)) + min_val)
         return E
 
-    def project_clean(self, X, E):
-        """Project data without noise/dropout for loss calculations."""
+    def project_clean(self, X: torch.Tensor, E: torch.Tensor) -> torch.Tensor:
+        """
+        Project gene expression data to bit space without noise for loss calculations.
+        
+        Computes the matrix multiplication X @ E to get bit projections. This clean version
+        is used for loss calculations to ensure consistent evaluation metrics.
+        
+        Args:
+            X (torch.Tensor): Gene expression matrix of shape (n_samples, n_genes)
+            E (torch.Tensor): Encoding weights of shape (n_genes, n_bit)
+            
+        Returns:
+            torch.Tensor: Projections P of shape (n_samples, n_bit) representing
+                expected signal intensity for each bit for each sample.
+        """
         P = X.mm(E)
         return P
 
-    def project(self, X, E):
-        """Project data with noise/dropout for training."""
+    def project(self, X: torch.Tensor, E: torch.Tensor) -> torch.Tensor:
+        """
+        Project gene expression data to bit space with noise/dropout for training.
+        
+        Computes projections with various noise types applied to simulate experimental
+        conditions. This noisy version is used during training to improve robustness.
+        
+        Args:
+            X (torch.Tensor): Gene expression matrix of shape (n_samples, n_genes)
+            E (torch.Tensor): Encoding weights of shape (n_genes, n_bit)
+            
+        Returns:
+            torch.Tensor: Projections P of shape (n_samples, n_bit) with noise applied.
+            
+        Note:
+            Noise types applied (if training and use_noise=1):
+            - X_noise: Multiplicative noise on gene expression
+            - X_drp: Dropout on gene expression (randomly set to 0)
+            - P_noise: Measurement accuracy error on projections
+            - P_add: Constant background signal (log10 scale)
+            - P_drp: Dropout on projections
+        """
         if self.I['use_noise'] == 0:
             return X.mm(E)
         if self.training and self.I['X_noise'] != 0:
@@ -201,7 +310,28 @@ class CIPHER(nn.Module):
             P = P * (torch.rand_like(P) > self.I['P_drp']).float()
         return P
 
-    def decode(self, P, y):
+    def decode(self, P: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Decode bit projections to cell type predictions.
+        
+        Applies optional normalization, then passes projections through the decoder network
+        to get cell type logits. Computes predictions, accuracy, and categorical loss.
+        
+        Args:
+            P (torch.Tensor): Bit projections of shape (n_samples, n_bit)
+            y (torch.Tensor): True cell type labels of shape (n_samples,)
+            
+        Returns:
+            tuple containing:
+                - y_predict (torch.Tensor): Predicted cell type indices of shape (n_samples,)
+                - accuracy (torch.Tensor): Classification accuracy (scalar)
+                - categorical_loss (torch.Tensor): Cross-entropy loss with label smoothing
+                
+        Note:
+            Normalization options:
+            - sum_norm: Normalizes by sum across bits (P_scaling * P / sum(P))
+            - bit_norm: Z-score normalizes each bit across samples
+        """
         if self.I['sum_norm'] != 0:
             P = self.I['P_scaling'] * P / P.sum(1).unsqueeze(1).clamp(min=1e-8)
             # P = (P - P.mean(1).unsqueeze(1)) / P.std(1).unsqueeze(1).clamp(min=1e-8)
@@ -219,7 +349,39 @@ class CIPHER(nn.Module):
             categorical_loss = torch.tensor(0, device=R.device, dtype=torch.float32, requires_grad=True)
         return y_predict, accuracy, categorical_loss
 
-    def calculate_loss(self, X, y, iteration, suffix='') -> tuple[torch.Tensor, dict]:
+    def calculate_loss(self, X: torch.Tensor, y: torch.Tensor, iteration: int, suffix: str = '') -> tuple[torch.Tensor, dict]:
+        """
+        Calculate total loss and all loss components for a batch of data.
+        
+        Computes all loss terms (LA, LH, LM, and robustness losses) and returns the
+        total weighted loss along with detailed statistics. Uses clean encoding weights
+        for loss calculations but noisy projections for decoder training.
+        
+        Args:
+            X (torch.Tensor): Gene expression matrix of shape (n_samples, n_genes)
+            y (torch.Tensor): Cell type labels of shape (n_samples,)
+            iteration (int): Current training iteration (for parameter updates)
+            suffix (str): Suffix to append to statistic names (e.g., '_train', '_test')
+            
+        Returns:
+            tuple containing:
+                - total_loss (torch.Tensor): Sum of all weighted loss terms
+                - current_stats (dict): Dictionary of statistics for this batch including:
+                    - Loss values: '$$$ - <loss_name>' for each loss term
+                    - Accuracy: 'accuracy'
+                    - Probe counts: 'E_n_probes'
+                    - Brightness metrics: 'lower brightness', 'median brightness', etc.
+                    - Dynamic range: 'dynamic_fold'
+                    - Separation: 'separation'
+                    - And many other training metrics
+                    
+        Note:
+            Loss categories:
+            - LA (Accuracy): categorical_loss
+            - LH (Hybridization): probe_wt_loss, gene_constraint_loss
+            - LM (Measurability): brightness_loss, dynamic_loss, separation_loss, step_size_loss
+            - Robustness: sparsity_loss, gene_importance_loss, bit_usage_loss, correlation_loss
+        """
         # Get clean versions for loss calculations
         E_clean = self.get_E_clean()
         P_clean = self.project_clean(X, E_clean)
@@ -487,8 +649,24 @@ class CIPHER(nn.Module):
         
         return total_loss, current_stats
 
-    def train_gene_importance_decoder(self):
-        """Train a simple linear decoder from genes to cell types to identify important genes."""
+    def train_gene_importance_decoder(self) -> torch.Tensor:
+        """
+        Train a simple linear decoder from genes to cell types to identify important genes.
+        
+        This method trains a linear classifier directly from gene expression to cell types
+        to identify which genes are most important for classification. The top N genes (based
+        on top_n_genes parameter) are then selected for the main CIPHER model.
+        
+        Returns:
+            torch.Tensor: Gene importance scores of shape (n_genes,) indicating the
+                importance of each gene for cell type classification.
+                
+        Note:
+            - Saves gene importance scores to 'gene_importance_scores.csv'
+            - Saves gene mask to 'gene_mask.pt'
+            - Filters X_train, X_test, constraints, and genes based on top genes
+            - Creates training plots showing loss and accuracy over epochs
+        """
         self.log.info("Training gene importance decoder...")
         device = self.X_train.device
         n_genes = self.X_train.shape[1]
@@ -566,7 +744,20 @@ class CIPHER(nn.Module):
         self.log.info(f"Gene filtering complete: {self.n_genes} genes retained")
         return gene_importance_scores
 
-    def perturb_E(self):
+    def perturb_E(self) -> None:
+        """
+        Randomly perturb a fraction of encoder weights to escape local minima.
+        
+        Selects a random subset of encoder weights (E_perb_prct) and reinitializes them
+        to random values within the perturbation range. This helps the model escape
+        local minima during training.
+        
+        Note:
+            - Only perturbs weights if E_perturb_rt > 0
+            - Perturbation range: [E_perturb_min, E_perturb_max]
+            - Weights are transformed to pre-activation space before perturbation
+            - Logs the number and percentage of weights perturbed
+        """
         with torch.no_grad():
             mask = (torch.rand_like(self.encoder.weight.data) < self.I['E_perb_prct']).float()
             random_wts = torch.rand_like(self.encoder.weight.data)
@@ -590,7 +781,29 @@ class CIPHER(nn.Module):
             num_perturbed = mask.sum().item()
             self.log.info(f"Perturbed {num_perturbed} weights out of {self.encoder.weight.data.numel()} total weights ({num_perturbed/self.encoder.weight.data.numel()*100:.2f}%)")
 
-    def fit(self):
+    def fit(self) -> None:
+        """
+        Train the CIPHER model for the specified number of iterations.
+        
+        Main training loop that:
+        1. Updates dynamic parameters (_s/_e parameters) based on training progress
+        2. Samples training batches
+        3. Computes loss and backpropagates
+        4. Applies gradient clipping
+        5. Updates model weights
+        6. Evaluates on test set periodically
+        7. Saves checkpoints and visualizations
+        
+        Raises:
+            RuntimeError: If model is not initialized (missing data or components)
+            
+        Note:
+            - Training progress is logged every report_rt iterations
+            - Best model is saved if best_model=1
+            - Weight perturbation occurs every E_perturb_rt iterations
+            - Evaluation and visualization saved every 10k iterations
+            - Handles NaN/Inf gradients by reverting to previous state
+        """
         if self.X_train is None or self.y_train is None or self.constraints is None or self.decoder is None : 
             self.log.error("Model is not initialized. Call initialize() before fit().")
             raise RuntimeError("Model is not initialized. Call initialize() before fit().")
@@ -656,7 +869,27 @@ class CIPHER(nn.Module):
         finally:
             self.save_eval_and_viz(iteration=self.I['n_iters']-1)
 
-    def evaluate(self):
+    def evaluate(self) -> None:
+        """
+        Evaluate the model on test data under various noise conditions.
+        
+        Computes evaluation metrics including:
+        - Probe counts and distributions
+        - Signal percentiles (10th, 50th, 90th)
+        - Classification accuracy under different noise levels
+        - Separation and dynamic range metrics
+        
+        The evaluation is performed under four noise conditions:
+        - No Noise: Clean evaluation
+        - Low Noise: Minimal experimental noise
+        - Medium Noise: Moderate experimental noise
+        - High Noise: High experimental noise
+        
+        Results are saved to 'Results.csv' in the output directory.
+        
+        Raises:
+            RuntimeError: If model is not initialized or trained
+        """
         if self.encoder is None or self.decoder is None or \
            self.X_train is None or self.X_test is None or self.y_train is None or \
            self.y_test is None : 
@@ -823,7 +1056,28 @@ class CIPHER(nn.Module):
         results_df.to_csv(results_path)
         self.log.info(f"Evaluation results saved to {results_path}")
 
-    def visualize(self, show_plots=False): 
+    def visualize(self, show_plots: bool = False) -> None:
+        """
+        Generate comprehensive visualizations of model performance and learned representations.
+        
+        Creates the following visualizations:
+        1. Confusion matrix for test set predictions
+        2. Learning curves for all tracked metrics (train vs test)
+        3. Loss contribution plots showing relative importance of each loss term
+        4. Comprehensive performance plot (accuracy, separation, dynamic range)
+        5. Constraints vs probes per gene scatter plot
+        6. Encoder weight matrix (E) heatmap
+        7. Decoder weight matrices for each layer
+        8. P_type heatmaps for different normalization strategies
+        9. P_type correlation heatmaps
+        10. Projection space density plots
+        
+        Args:
+            show_plots (bool): Whether to display plots interactively (currently not used)
+            
+        Raises:
+            RuntimeError: If model is not initialized or trained
+        """
         import seaborn as sns
         self.log.info("Starting visualization generation...")
         if self.encoder is None or self.decoder is None or \
@@ -1004,8 +1258,25 @@ class CIPHER(nn.Module):
 
         self.log.info("Visualization generation finished.")
 
-    def save_cell_type_averages(self):
-        """Save gene expression averages for each cell type from test data."""
+    def save_cell_type_averages(self) -> tuple[Optional[torch.Tensor], Optional[List[str]]]:
+        """
+        Save gene expression averages for each cell type from test data.
+        
+        Computes the mean gene expression for each cell type in the test set and saves
+        the results. If files already exist in input or output directories, loads them
+        instead of recomputing.
+        
+        Returns:
+            tuple containing:
+                - X_avg (Optional[torch.Tensor]): Average gene expression per cell type,
+                    shape (n_cell_types, n_genes), or None if computation failed
+                - cell_type_names (Optional[List[str]]): List of cell type names
+                    
+        Note:
+            - Saves to 'X_Type_test.csv' and 'X_Type_test.pt'
+            - Creates symlinks from output to input directory
+            - Returns None, None if test data is not loaded
+        """
         self.log.info("--- Saving Cell Type Averages ---")
         
         if self.X_test is None or self.y_test is None:
@@ -1099,8 +1370,29 @@ class CIPHER(nn.Module):
         
         return X_avg, cell_type_names
 
-    def calculate_bit_importance(self):
-        """Calculate bit-wise importance scores using dynamic range from calculate_loss."""
+    def calculate_bit_importance(self) -> Dict[str, np.ndarray]:
+        """
+        Calculate bit-wise importance scores using multiple criteria.
+        
+        Computes importance scores for each bit based on:
+        1. Probe efficiency: probe strength per gene usage
+        2. Decoder importance: magnitude of decoder weights
+        3. Dynamic range: fold change between percentiles
+        
+        Returns:
+            dict containing:
+                - 'importance_scores' (np.ndarray): Combined importance scores (n_bit,)
+                - 'sorted_indices' (np.ndarray): Bit indices sorted by importance (descending)
+                - 'probe_efficiency' (np.ndarray): Probe efficiency scores (n_bit,)
+                - 'decoder_importance' (np.ndarray): Decoder weight magnitudes (n_bit,)
+                - 'dynamic_ranges' (np.ndarray): Dynamic range fold changes (n_bit,)
+                - 'gene_usage_per_bit' (np.ndarray): Number of genes used per bit (n_bit,)
+                - 'bit_strengths' (np.ndarray): Total probe count per bit (n_bit,)
+                
+        Note:
+            Importance score = 0.4 * probe_efficiency + 0.3 * decoder_importance + 0.3 * dynamic_ranges
+            All components are normalized to [0, 1] before combination
+        """
         self.log.info("--- Calculating Bit Importance Scores ---")
         E_clean = self.get_E_clean()
         n_bits = E_clean.shape[1]
@@ -1147,7 +1439,17 @@ class CIPHER(nn.Module):
             'bit_strengths': bit_strengths.detach().cpu().numpy()
         }
 
-    def _setup_logging(self, user_parameters_path):
+    def _setup_logging(self, user_parameters_path: Optional[str]) -> None:
+        """
+        Set up logging configuration for the CIPHER model.
+        
+        Configures logging to write to both console and a log file. The log file is
+        named based on the user parameters file name and saved in the output directory.
+        
+        Args:
+            user_parameters_path (Optional[str]): Path to user parameters file.
+                Used to name the log file. If None, uses "default" as the name.
+        """
         if user_parameters_path is not None:
             try:
                 df_temp = pd.read_csv(user_parameters_path, index_col=0, low_memory=False)
@@ -1170,7 +1472,24 @@ class CIPHER(nn.Module):
             datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
         self.log = logging.getLogger("Designer")
 
-    def _load_and_process_parameters(self, user_parameters_path):
+    def _load_and_process_parameters(self, user_parameters_path: Optional[str]) -> None:
+        """
+        Load and process user-defined parameters from CSV file.
+        
+        Loads parameters from a CSV file and merges them with default parameters.
+        Handles type conversion, path construction, and parameter validation.
+        
+        Args:
+            user_parameters_path (Optional[str]): Path to CSV file with parameters.
+                CSV should have 'values' column and parameter names as index.
+                If None, uses only default parameters.
+                
+        Note:
+            - Parameters ending in '_s' automatically create corresponding parameter without '_s'
+            - File paths are constructed relative to input directory if not absolute
+            - Integer parameters are converted from float if they are whole numbers
+            - Sets PyTorch thread count based on n_cpu parameter
+        """
         loaded_user_parameters = {}
         if user_parameters_path is not None:
             self.log.info(f"Loading user parameters from: {user_parameters_path}")
@@ -1234,7 +1553,23 @@ class CIPHER(nn.Module):
         self.log.info(f"Limiting Torch to {self.I['n_cpu']} threads")
         torch.set_num_threads(self.I['n_cpu'])
 
-    def _setup_output_and_symlinks(self, user_parameters_path):
+    def _setup_output_and_symlinks(self, user_parameters_path: Optional[str]) -> None:
+        """
+        Set up output directory and create symlinks to input files.
+        
+        Creates the output directory if it doesn't exist, saves used parameters,
+        and creates symlinks from output directory to input files for easy reference.
+        
+        Args:
+            user_parameters_path (Optional[str]): Path to user parameters file.
+                This file is also symlinked to the output directory.
+                
+        Note:
+            Symlinks are created for:
+            - Input data files (constraints, X_train, X_test, y_train, y_test, etc.)
+            - User parameters file
+            - Used parameters file (saved in output directory)
+        """
         if not os.path.exists(self.I['output']):
             os.makedirs(self.I['output'])
             self.log.info(f"Created output directory: {self.I['output']}")
@@ -1286,7 +1621,17 @@ class CIPHER(nn.Module):
                 error_count += 1
         self.log.info(f"Symlinking complete. Created: {linked_count}, Skipped: {skipped_count}, Errors: {error_count}")
 
-    def convert_param_to_int(self, param_key):
+    def convert_param_to_int(self, param_key: str) -> None:
+        """
+        Convert a parameter value to integer if it's a whole number.
+        
+        Args:
+            param_key (str): Key of the parameter in self.I to convert
+            
+        Raises:
+            KeyError: If parameter doesn't exist
+            ValueError: If parameter value cannot be converted to integer
+        """
         try:
             original_value = self.I[param_key]
             float_value = float(original_value)
@@ -1301,8 +1646,21 @@ class CIPHER(nn.Module):
             self.log.error(f"Error converting parameter '{param_key}' to int. Value was '{original_value}' (type: {type(original_value).__name__}). Error: {e}")
             raise ValueError(f"Could not convert parameter '{param_key}' to integer. Invalid value: '{original_value}'.")
 
-    def _initialize_encoder(self):
-        """Initialize the encoder with proper weight initialization."""
+    def _initialize_encoder(self) -> None:
+        """
+        Initialize the encoder with proper weight initialization.
+        
+        Creates an nn.Embedding layer that maps genes to bit contributions.
+        Initializes weights in pre-activation space such that after applying
+        the activation function and constraints, probe fractions fall within
+        the specified initialization range [E_init_min, E_init_max].
+        
+        Note:
+            - Encoder shape: (n_genes, n_bit)
+            - Weights are initialized to produce probe fractions in [E_init_min, E_init_max]
+            - Activation function is applied during forward pass (via get_E_clean)
+            - Logs the final weight range and total probe count after initialization
+        """
         self.encoder = nn.Embedding(self.n_genes, self.I['n_bit']).to(self.I['device'])
         with torch.no_grad():
             random_wts = torch.rand_like(self.encoder.weight.data)
@@ -1327,8 +1685,21 @@ class CIPHER(nn.Module):
             self.log.info(f"Encoder initialization: range [{final_wts.min().item():.3f}, {final_wts.max().item():.3f}], total probes: {final_total_probes.item():.1f}")
         self.log.info(f"Initialized encoder with improved weight initialization.")
 
-    def _initialize_decoder(self):
-        """Initialize the decoder with specified architecture."""
+    def _initialize_decoder(self) -> None:
+        """
+        Initialize the decoder network with specified architecture.
+        
+        Creates a decoder network that maps bit projections to cell type logits.
+        Architecture depends on decoder_n_lyr:
+        - If decoder_n_lyr == 0: Single linear layer (n_bit -> n_categories)
+        - If decoder_n_lyr > 0: Multiple hidden layers with BatchNorm, activation, and dropout
+        
+        Note:
+            - Hidden dimension is 3 * n_bit
+            - Activation function specified by decoder_act parameter
+            - Dropout only applied if use_noise=1
+            - Final layer always outputs n_categories logits
+        """
         decoder_modules = []
         current_decoder_layer_input_dim = self.I['n_bit']
         if self.I['decoder_n_lyr'] == 0:
@@ -1364,9 +1735,38 @@ class CIPHER(nn.Module):
         self.log.info(f"Initialized decoder.")
         self.log.info(log_msg_decoder_structure)
 
-    def _load_data(self):
-        """Load and validate all data files."""
-        def load_tensor(path, dtype, device):
+    def _load_data(self) -> None:
+        """
+        Load and validate all data files required for training.
+        
+        Loads training and test data (gene expression and labels), processes labels,
+        and optionally filters to central brain data if central_brain=1.
+        
+        Raises:
+            FileNotFoundError: If required data files are missing
+            ValueError: If data shapes are inconsistent
+            
+        Note:
+            - Remaps cell type labels to consecutive integers (no gaps)
+            - If central_brain=1, filters data to cell types in central brain region
+            - Validates that X_train and X_test have matching gene dimensions
+            - Saves cell type averages after loading
+        """
+        def load_tensor(path: str, dtype: torch.dtype, device: str) -> torch.Tensor:
+            """
+            Load a tensor from a .pt file with error handling.
+            
+            Args:
+                path (str): Path to the .pt file
+                dtype (torch.dtype): Desired data type for the tensor
+                device (str): Device to load tensor onto ('cpu' or 'cuda')
+                
+            Returns:
+                torch.Tensor: Loaded tensor on specified device with specified dtype
+                
+            Raises:
+                FileNotFoundError: If the file doesn't exist
+            """
             self.log.info(f"Loading {os.path.basename(path)} from {path}")
             if not os.path.exists(path):
                 raise FileNotFoundError(f"Data file not found: {path}")
@@ -1463,8 +1863,21 @@ class CIPHER(nn.Module):
         # Save cell type averages after data is loaded
         self.save_cell_type_averages()
 
-    def _load_constraints(self):
-        """Load gene constraints from file."""
+    def _load_constraints(self) -> None:
+        """
+        Load gene constraints from CSV file.
+        
+        Loads maximum allowed probes per gene from a CSV file. If gene_constraint_wt=0,
+        sets all constraints to 1000 (effectively unconstrained).
+        
+        Raises:
+            KeyError: If 'constraints' column is missing from the CSV file
+            
+        Note:
+            - CSV should have gene names as index and 'constraints' column
+            - Sets self.genes and self.n_genes based on loaded constraints
+            - Constraints are stored as torch.Tensor on the specified device
+        """
         constraints_df = pd.read_csv(self.I['constraints'], index_col=0)
         self.genes = np.array(constraints_df.index)
         self.n_genes = len(self.genes)  # Set n_genes first
@@ -1480,8 +1893,21 @@ class CIPHER(nn.Module):
             self.constraints = torch.tensor(constraints_df['constraints'].values, dtype=torch.float32, device=self.I['device'])
             self.log.info(f"Loaded {self.n_genes} genes from constraints file.")
 
-    def _load_pretrained_model(self):
-        """Load pretrained model state, learning stats, and gene mask if available."""
+    def _load_pretrained_model(self) -> None:
+        """
+        Load pretrained model state, learning stats, and gene mask if available.
+        
+        Searches for saved model state files in the output directory and loads the
+        most recent one. Also loads learning statistics and gene mask if available.
+        Sets training_completed flag if training appears to be finished.
+        
+        Note:
+            - Searches for files ending in 'model_state.pt'
+            - Looks for 'learning_stats.csv' in the same or parent directory
+            - If gene_mask.pt exists, applies gene filtering
+            - Sets is_initialized_from_file flag to True if model loaded successfully
+            - Reinitializes encoder if gene mask is applied (to match filtered dimensions)
+        """
         model_files = []
         for root, dirs, files in os.walk(self.I['output']):
             if 'trimmed' in root:
@@ -1589,8 +2015,25 @@ class CIPHER(nn.Module):
             self.training_completed = False
             return
 
-    def _update_parameters_for_iteration(self, iteration, n_iterations):
-        """Update parameters based on training progress."""
+    def _update_parameters_for_iteration(self, iteration: int, n_iterations: int) -> None:
+        """
+        Update dynamic parameters (_s/_e parameters) based on training progress.
+        
+        Linearly interpolates between start (_s) and end (_e) values for all parameters
+        that have both _s and _e versions. The interpolation is controlled by the
+        saturation parameter, which determines when the final values are reached.
+        
+        Args:
+            iteration (int): Current training iteration
+            n_iterations (int): Total number of training iterations
+            
+        Note:
+            - Progress is calculated as iteration / (n_iterations - 1)
+            - Progress is scaled by saturation: progress = progress / saturation
+            - If saturation=0, immediately uses final (_e) values
+            - Parameters updated: brightness, dynamic_fold, separation_fold, lr, sparsity,
+              and all noise parameters (X_drp, X_noise, E_drp, E_noise, P_drp, P_noise, etc.)
+        """
         progress = iteration / (n_iterations - 1) if n_iterations > 1 else 0
         if self.I.get('saturation', 1.0) == 0:
             progress = 1.0
@@ -1600,8 +2043,17 @@ class CIPHER(nn.Module):
         for param in parameters_to_update:
             self.I[param] = (self.I[f'{param}_s'] + (self.I[f'{param}_e'] - self.I[f'{param}_s']) * progress)
 
-    def _setup_optimizer(self):
-        """Setup optimizer for training."""
+    def _setup_optimizer(self) -> None:
+        """
+        Set up the Adam optimizer for training encoder and decoder.
+        
+        Creates separate parameter groups for encoder and decoder, both with the
+        same learning rate. Uses betas=(0.9, 0.9) for momentum.
+        
+        Note:
+            - Encoder and decoder can have different learning rates if modified later
+            - Optimizer state can be saved/loaded for resuming training
+        """
         if not self.is_initialized_from_file:
             self.log.info("Model not initialized from file, using randomly initialized weights.")
         else:
@@ -1613,8 +2065,20 @@ class CIPHER(nn.Module):
         ], betas=(0.9, 0.9))
         self.optimizer_gen = optimizer_gen
 
-    def _get_training_batch(self, iteration, batch_size, n_train_samples):
-        """Get training batch for current iteration."""
+    def _get_training_batch(self, iteration: int, batch_size: int, n_train_samples: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Get a batch of training data for the current iteration.
+        
+        Args:
+            iteration (int): Current training iteration (not used, for consistency)
+            batch_size (int): Desired batch size. If 0 or >= n_train_samples, uses full dataset
+            n_train_samples (int): Total number of training samples
+            
+        Returns:
+            tuple containing:
+                - X_batch (torch.Tensor): Gene expression batch of shape (batch_size, n_genes)
+                - y_batch (torch.Tensor): Cell type labels batch of shape (batch_size,)
+        """
         if (batch_size > 0) and (batch_size < n_train_samples):
             idxs = np.random.choice(n_train_samples, batch_size, replace=False)
             X_batch = self.X_train[idxs]
@@ -1626,8 +2090,20 @@ class CIPHER(nn.Module):
                 self.log.debug(f"Batch size {batch_size} >= dataset size {n_train_samples}. Using full dataset for iteration {iteration}.")
         return X_batch, y_batch
 
-    def _check_gradient_health(self, iteration):
-        """Check for NaN or Inf values in gradients."""
+    def _check_gradient_health(self, iteration: int) -> bool:
+        """
+        Check for NaN or Inf values in model gradients.
+        
+        Args:
+            iteration (int): Current training iteration (for logging)
+            
+        Returns:
+            bool: True if NaN/Inf detected, False otherwise
+            
+        Note:
+            If NaN/Inf is detected, zeros gradients and logs a warning.
+            The training loop should then revert to a previous state.
+        """
         nan_detected = False
         for name, param in self.named_parameters():
             if param.grad is not None and (torch.isnan(param.grad).any() or torch.isinf(param.grad).any()):
@@ -1637,13 +2113,35 @@ class CIPHER(nn.Module):
                 break
         return nan_detected
 
-    def _apply_gradient_clipping(self):
-        """Apply gradient clipping if enabled."""
+    def _apply_gradient_clipping(self) -> None:
+        """
+        Apply gradient clipping to prevent exploding gradients.
+        
+        Clips gradients to have maximum norm of gradient_clip. Only applies if
+        gradient_clip > 0.
+        
+        Note:
+            Uses torch.nn.utils.clip_grad_norm_ with max_norm=gradient_clip
+        """
         if self.I.get('gradient_clip', 1.0)  > 0:
             torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.I.get('gradient_clip', 1.0) )
 
-    def _handle_weight_perturbation(self, iteration, report_rt, delayed_perturbation_iter):
-        """Handle weight perturbation logic."""
+    def _handle_weight_perturbation(self, iteration: int, report_rt: int, delayed_perturbation_iter: Optional[int]) -> Optional[int]:
+        """
+        Handle weight perturbation scheduling with delay logic.
+        
+        Determines when to perturb encoder weights. If perturbation would occur
+        close to a test evaluation, delays it until after the evaluation.
+        
+        Args:
+            iteration (int): Current training iteration
+            report_rt (int): How often test evaluations occur
+            delayed_perturbation_iter (Optional[int]): Previously scheduled delayed perturbation,
+                or None if no delay is scheduled
+                
+        Returns:
+            Optional[int]: Next delayed perturbation iteration, or None
+        """
         if self.I['E_perturb_rt'] > 0:
             if iteration % self.I['E_perturb_rt'] == 0:
                 next_test_iter = ((iteration // report_rt) + 1) * report_rt
@@ -1654,8 +2152,19 @@ class CIPHER(nn.Module):
                     self.perturb_E()
         return delayed_perturbation_iter
 
-    def _update_best_model(self, iteration, total_loss):
-        """Update best model if current loss is better."""
+    def _update_best_model(self, iteration: int, total_loss: torch.Tensor) -> None:
+        """
+        Update the best model state if current loss is lower.
+        
+        Args:
+            iteration (int): Current training iteration
+            total_loss (torch.Tensor): Current total loss value
+            
+        Note:
+            - Only updates if loss is finite and lower than previous best
+            - Saves model state_dict to CPU to save memory
+            - Logs when a new best model is found
+        """
         current_loss_item = total_loss.item()
         if not np.isnan(current_loss_item) and current_loss_item < self.best_loss:
             self.best_loss = current_loss_item
@@ -1663,8 +2172,27 @@ class CIPHER(nn.Module):
             self.best_iteration = iteration
             self.log.info(f"*** New best model found at iteration {iteration} (Train Loss: {self.best_loss:.4f}) ***")
 
-    def _revert_to_previous_state(self, iteration):
-        """Revert to previous model state when NaN/Inf detected."""
+    def _revert_to_previous_state(self, iteration: int) -> bool:
+        """
+        Revert model and optimizer to a previous saved state.
+        
+        Called when NaN/Inf gradients are detected. Loads the most recent saved
+        state from before the current iteration.
+        
+        Args:
+            iteration (int): Current iteration where NaN/Inf was detected
+            
+        Returns:
+            bool: True if revert succeeded, False otherwise
+            
+        Raises:
+            ValueError: If no previous state is available to revert to
+            
+        Note:
+            - Reinitializes optimizer after loading state
+            - Moves optimizer state tensors to correct device
+            - Logs a status message in learning_stats
+        """
         valid_iters = [k for k in self.saved_models if k < iteration]
         if valid_iters:
             revert_iter = max(valid_iters)
@@ -1697,8 +2225,25 @@ class CIPHER(nn.Module):
             self.log.error(f"NaNs/Infs detected in gradients at iter {iteration}, but no previous state found. Stopping.")
             raise ValueError("NaNs/Infs encountered and cannot revert.")
 
-    def _evaluate_on_test_set(self, iteration, last_report_time, last_report_iteration):
-        """Evaluate model on test set and log results."""
+    def _evaluate_on_test_set(self, iteration: int, last_report_time: float, last_report_iteration: int) -> tuple[float, int]:
+        """
+        Evaluate model on test set and log detailed results.
+        
+        Args:
+            iteration (int): Current training iteration
+            last_report_time (float): Timestamp of last report (for timing calculations)
+            last_report_iteration (int): Iteration of last report
+            
+        Returns:
+            tuple containing:
+                - current_time (float): Current timestamp
+                - iteration (int): Current iteration
+                
+        Note:
+            - Computes test loss and all statistics
+            - Logs average time per iteration since last report
+            - Logs all test statistics with formatted output
+        """
         self.eval()
         with torch.no_grad():
             total_test_loss, test_stats = self.calculate_loss(
@@ -1734,8 +2279,21 @@ class CIPHER(nn.Module):
         
         return current_time, iteration
 
-    def _save_checkpoint(self, iteration):
-        """Save a checkpoint with model state, optimizer state, and learning stats to results directory."""
+    def _save_checkpoint(self, iteration: int) -> None:
+        """
+        Save a checkpoint with model state, optimizer state, and learning stats.
+        
+        Saves everything needed to resume training from this point. Creates a new
+        results directory, removing any existing one.
+        
+        Args:
+            iteration (int): Current training iteration
+            
+        Note:
+            - Saves to 'results/checkpoint.pt' and 'results/learning_stats.csv'
+            - Checkpoint includes: iteration, model_state_dict, optimizer_state_dict,
+              best_loss, best_iteration, and all parameters
+        """
         try:
             results_dir = os.path.join(self.I['output'], 'results')
             # Remove existing results directory if it exists
@@ -1765,8 +2323,23 @@ class CIPHER(nn.Module):
         except Exception as e:
             self.log.error(f"Failed to save checkpoint at iteration {iteration}: {e}")
 
-    def save_eval_and_viz(self, iteration, eval_dir=None):
-        """Save evaluation results and visualizations to results directory."""
+    def save_eval_and_viz(self, iteration: int, eval_dir: Optional[str] = None) -> None:
+        """
+        Save evaluation results and visualizations to results directory.
+        
+        Runs full evaluation and visualization, then saves the model state.
+        Creates a new results directory, removing any existing one.
+        
+        Args:
+            iteration (int): Current training iteration
+            eval_dir (Optional[str]): Subdirectory name for evaluation (not currently used)
+            
+        Note:
+            - Temporarily changes output directory to results/
+            - Runs evaluate() and visualize()
+            - Saves model state via save_model()
+            - Restores original output directory after completion
+        """
         try:
             results_dir = os.path.join(self.I['output'], 'results')
             # Remove existing results directory if it exists
@@ -1791,8 +2364,20 @@ class CIPHER(nn.Module):
 
 
 
-    def save_model(self):
-        """Save final model and perform cleanup to results directory."""
+    def save_model(self) -> None:
+        """
+        Save final model state and constrained encoder weights.
+        
+        Saves the best model (if best_model=1) or final model state, along with
+        learning statistics. Also enforces constraints on final encoder weights
+        and saves the constrained E matrix.
+        
+        Note:
+            - Saves to 'results/model_state.pt' and 'results/learning_stats.csv'
+            - Creates 'E_constrained.csv' and 'E_constrained.pt' with final probe allocations
+            - Constraints are enforced by scaling down genes that exceed limits
+            - Logs final evaluation statistics
+        """
         # Ensure we're saving to the results directory
         if not self.I['output'].endswith('results'):
             output_dir = os.path.join(self.I['output'], 'results')
@@ -1889,8 +2474,25 @@ class CIPHER(nn.Module):
         except Exception as e:
             self.log.error(f"Failed to save learning curve: {e}")
 
-    def trim_bits(self, n_keep=None):
-        """Trim the model to keep the top n_keep most important bits (default: trim 1 bit)."""
+    def trim_bits(self, n_keep: Optional[int] = None) -> np.ndarray:
+        """
+        Trim the model to keep only the top n_keep most important bits.
+        
+        Removes the least important bits from both encoder and decoder, reducing
+        model complexity. Bit importance is calculated using calculate_bit_importance().
+        
+        Args:
+            n_keep (Optional[int]): Number of bits to keep. If None, keeps all but 1 bit.
+            
+        Returns:
+            np.ndarray: Indices of kept bits (sorted)
+            
+        Note:
+            - Updates encoder weights to remove columns for trimmed bits
+            - Updates decoder first layer to remove input features for trimmed bits
+            - Updates n_bit parameter
+            - Logs which bits were kept and removed
+        """
         bit_info = self.calculate_bit_importance()
         sorted_indices = bit_info['sorted_indices']
         n_bits = len(sorted_indices)
@@ -1918,8 +2520,24 @@ class CIPHER(nn.Module):
         self.I['n_bit'] = self.encoder.weight.shape[1]
         self.log.info(f"Trimmed to {self.I['n_bit']} bits. Kept bits: {keep_indices}. Removed bits: {remove_indices}")
 
-    def iterative_trim_to_n_bits(self, target_n_bits=12, max_iterations=10):
-        """Iteratively trim bits down to target_n_bits over max_iterations using linear spacing."""
+    def iterative_trim_to_n_bits(self, target_n_bits: int = 12, max_iterations: int = 10) -> None:
+        """
+        Iteratively trim bits down to target_n_bits over multiple iterations.
+        
+        Progressively reduces the number of bits, retraining the decoder after each
+        trim to maintain performance. Creates a plot showing accuracy vs bit count.
+        
+        Args:
+            target_n_bits (int): Target number of bits to reach
+            max_iterations (int): Maximum number of trimming iterations
+            
+        Note:
+            - Trims bits using linear spacing from current n_bit to target_n_bits
+            - Retrains decoder for 10k iterations after each trim
+            - Saves evaluation and visualization after each trim
+            - Creates accuracy_vs_bits plot showing performance degradation
+            - Saves results to 'trimmed' subdirectory
+        """
         if self.I['n_bit'] > target_n_bits:
             n_keeps = np.unique(np.linspace(target_n_bits, self.I['n_bit']-1, max_iterations).astype(int))[::-1]
             bit_counts = []
@@ -1945,8 +2563,21 @@ class CIPHER(nn.Module):
                 self.plot_accuracy_vs_bits(bit_counts, accuracies)
             self.log.info(f"Iterative trimming complete. Final n_bits: {self.I['n_bit']}")
 
-    def plot_accuracy_vs_bits(self, bit_counts, accuracies):
-        """Plot accuracy vs bit count after trimming."""
+    def plot_accuracy_vs_bits(self, bit_counts: List[int], accuracies: List[float]) -> None:
+        """
+        Plot accuracy vs bit count after iterative trimming.
+        
+        Creates a line plot showing how accuracy changes as bits are removed.
+        Annotates the first, last, and maximum accuracy points.
+        
+        Args:
+            bit_counts (List[int]): Number of bits at each trimming step
+            accuracies (List[float]): Test accuracy at each trimming step
+            
+        Note:
+            - Saves plot to 'trimmed/accuracy_vs_bits.pdf'
+            - Saves data to 'trimmed/accuracy_vs_bits.csv'
+        """
         try:
             plt.figure(figsize=(10, 6))
             plt.plot(bit_counts, accuracies, 'bo-', linewidth=2, markersize=8, label='Test Accuracy')
@@ -1975,8 +2606,22 @@ class CIPHER(nn.Module):
         except Exception as e:
             self.log.error(f"Error creating accuracy vs bits plot: {e}")
 
-    def train_decoder_only(self, n_iterations=1000):
-        """Train only the decoder for n_iterations using only categorical loss."""
+    def train_decoder_only(self, n_iterations: int = 1000) -> None:
+        """
+        Train only the decoder while keeping encoder weights fixed.
+        
+        Useful for fine-tuning the decoder after encoder weights have been learned
+        or after bit trimming. Only optimizes the categorical classification loss.
+        
+        Args:
+            n_iterations (int): Number of training iterations
+            
+        Note:
+            - Sets encoder learning rate to 0
+            - Only uses categorical loss (no probe/hybridization/measurability losses)
+            - Evaluates on test set every 100 iterations
+            - Restores encoder learning rate after training
+        """
         self.log.info(f"--- Starting Decoder-Only Training for {n_iterations} iterations ---")
         if not hasattr(self, 'optimizer_gen'):
             self._setup_optimizer()
@@ -2018,37 +2663,77 @@ class CIPHER(nn.Module):
         self.log.info("--- Decoder-Only Training Complete ---")
 
 # Helper function for smooth, non-negative penalty
-def swish(fold, scale=3.0, shift=-1.278, offset=0.3):
+def swish(fold: torch.Tensor, scale: float = 3.0, shift: float = -1.278, offset: float = 0.3) -> torch.Tensor:
     """
     Smooth, non-negative penalty function for soft constraints.
+    
+    Implements a Swish-like activation function that provides smooth penalties
+    for constraint violations. The function is non-negative and has minimum at fold=0.
+    
     Args:
-        fold: Tensor of normalized constraint violations (e.g., (value - bound) / bound)
-        scale: Controls sharpness of penalty ramp-up
-        shift: Shifts minimum to zero (default -1.278 for Swish)
-        offset: Makes minimum value zero (default 0.278 for Swish)
+        fold (torch.Tensor): Normalized constraint violations, typically computed as
+            (value - bound) / bound. Positive values indicate violations.
+        scale (float): Controls sharpness of penalty ramp-up. Higher values create
+            steeper penalties. Default: 3.0
+        shift (float): Shifts the function so minimum is at fold=0. Default: -1.278
+        offset (float): Makes minimum value zero. Default: 0.3
+            
     Returns:
-        penalty: Tensor of penalties, minimum at fold=0, non-negative
+        torch.Tensor: Penalty values, minimum at fold=0, non-negative.
+            Shape matches input fold tensor.
+            
+    Note:
+        Formula: z = scale * fold + shift
+        Result: z * sigmoid(z) + offset
+        This ensures smooth, differentiable penalties that are zero when fold=0.
     """
     z = scale * fold + shift
     return z * torch.sigmoid(z) + offset
 
-def sanitize_filename(name):
-    """Removes or replaces characters invalid for filenames."""
+def sanitize_filename(name: str) -> str:
+    """
+    Remove or replace characters invalid for filenames.
+    
+    Sanitizes a string to be safe for use as a filename by replacing
+    problematic characters with underscores and removing others.
+    
+    Args:
+        name (str): Original filename string that may contain invalid characters
+        
+    Returns:
+        str: Sanitized filename safe for filesystem use
+        
+    Note:
+        - Replaces whitespace, slashes, backslashes, and colons with underscores
+        - Removes characters: < > : " | ? *
+        - Strips leading/trailing whitespace
+    """
     name = name.strip()
     name = re.sub(r'[\s/\\:]+', '_', name)
     name = re.sub(r'[<>:"|?*]+', '', name)
     return name
 
-def plot_weight_matrix(df, plot_path, title="Weight Matrix", cmap='coolwarm', log_scale=True, log=None):
-    """Plot a weight matrix as a heatmap with optional log scaling and sorting.
+def plot_weight_matrix(df: pd.DataFrame, plot_path: str, title: str = "Weight Matrix", cmap: str = 'coolwarm', log_scale: bool = True, log: Optional[logging.Logger] = None) -> None:
+    """
+    Plot a weight matrix as a heatmap with optional log scaling and sorting.
+    
+    Creates a clustered heatmap visualization of a weight matrix, useful for
+    visualizing encoder or decoder weights. Sorts rows by maximum weight magnitude.
     
     Args:
-        df: pandas DataFrame with weights (rows=outputs, cols=inputs)
-        plot_path: path to save the plot
-        title: plot title
-        cmap: colormap to use
-        log_scale: whether to apply log10 scaling
-        log: logger instance
+        df (pd.DataFrame): Weight matrix with rows as outputs and columns as inputs
+        plot_path (str): Path where the plot will be saved (PDF format)
+        title (str): Plot title. Default: "Weight Matrix"
+        cmap (str): Colormap name for the heatmap. Default: 'coolwarm'
+        log_scale (bool): Whether to apply log10 scaling to weights. Default: True
+        log (Optional[logging.Logger]): Logger instance for logging messages.
+            If None, creates a default logger.
+            
+    Note:
+        - Sorts rows by maximum absolute weight value (descending)
+        - Applies log10(x + 1) transformation if log_scale=True
+        - Disables row/column clustering for deterministic ordering
+        - Saves as PDF with 200 DPI
     """
     if log is None:
         log = logging.getLogger("WeightMatrixPlotter")
@@ -2090,8 +2775,26 @@ def plot_weight_matrix(df, plot_path, title="Weight Matrix", cmap='coolwarm', lo
     except Exception as e:
         log.error(f"Failed to plot weight matrix: {e}")
 
-def generate_intuitive_ticks(min_val, max_val, num_ticks=5):
-    """Generate intuitive tick values that are easy to read."""
+def generate_intuitive_ticks(min_val: float, max_val: float, num_ticks: int = 5) -> np.ndarray:
+    """
+    Generate intuitive tick values that are easy to read.
+    
+    Creates tick values using "nice" numbers (1, 2, 2.5, 5 times powers of 10)
+    that are close to the desired number of ticks and easy for humans to read.
+    
+    Args:
+        min_val (float): Minimum value for the axis
+        max_val (float): Maximum value for the axis
+        num_ticks (int): Desired number of ticks. Default: 5
+        
+    Returns:
+        np.ndarray: Array of tick values between min_val and max_val
+        
+    Note:
+        - Uses powers of 10 multiplied by 1, 2, 2.5, or 5
+        - Selects step size closest to desired number of ticks
+        - Handles edge case where min_val == max_val
+    """
     if min_val == max_val:return np.array([min_val])
     range_val = max_val - min_val
     initial_step = range_val/num_ticks
@@ -2115,7 +2818,30 @@ def generate_intuitive_ticks(min_val, max_val, num_ticks=5):
         step = potential_step2
     return ticks
 
-def plot_projection_space_density(P,y_labels,plot_path,sum_norm=False,log=None,use_log10_scale=False):
+def plot_projection_space_density(P: np.ndarray, y_labels: np.ndarray, plot_path: str, sum_norm: bool = False, log: Optional[logging.Logger] = None, use_log10_scale: bool = False) -> None:
+    """
+    Plot 2D density plots of projection space for all bit pairs.
+    
+    Creates a grid of 2D density plots showing the distribution of samples in
+    projection space. Each plot shows a pair of bits, with both overall density
+    and cell-type-specific density overlays.
+    
+    Args:
+        P (np.ndarray): Projection matrix of shape (n_samples, n_bits)
+        y_labels (np.ndarray): Cell type labels of shape (n_samples,)
+        plot_path (str): Path to save the plot (PDF format)
+        sum_norm (bool): Whether to apply sum normalization. Default: False
+        log (Optional[logging.Logger]): Logger instance. If None, creates default logger.
+        use_log10_scale (bool): Whether to use log10 scale for axes. Default: False
+            
+    Note:
+        - Creates plots for all bit pairs (arranged in 2 columns)
+        - Left column: Overall density heatmap
+        - Right column: Cell-type-specific colored overlays
+        - Uses 2D histograms with 100 bins per axis
+        - Applies percentile-based clipping to handle outliers
+        - Saves as PDF with 300 DPI
+    """
     if log is None:
         log = logging.getLogger("ProjectionPlotDensity")
     log.info(f"Generating projection space density plot: {plot_path}")
@@ -2263,8 +2989,26 @@ def plot_projection_space_density(P,y_labels,plot_path,sum_norm=False,log=None,u
     finally:
         plt.close(fig)
 
-def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
-    """Generate P_type heatmap."""
+def plot_P_Type(P_type_data: torch.Tensor, valid_type_labels: List[str], plot_path: str, log: logging.Logger) -> None:
+    """
+    Generate a heatmap of average projections per cell type (P_type).
+    
+    Creates a heatmap showing the average bit projection values for each cell type.
+    Useful for visualizing how different cell types are encoded in the bit space.
+    
+    Args:
+        P_type_data (torch.Tensor): Average projections per cell type,
+            shape (n_cell_types, n_bits)
+        valid_type_labels (List[str]): Cell type names corresponding to rows
+        plot_path (str): Path to save the plot (PDF format)
+        log (logging.Logger): Logger instance for logging messages
+            
+    Note:
+        - Sorts cell types alphabetically
+        - Uses 1st and 99th percentiles for color scale
+        - Automatically adjusts figure size based on number of cell types and bits
+        - Saves as PDF with 300 DPI
+    """
     n_bits = P_type_data.shape[1]
     fig_width = min(max(6, n_bits / 1.5), 25)
     fig_height = min(max(6, len(valid_type_labels) / 2), 25)
@@ -2310,8 +3054,26 @@ def plot_P_Type(P_type_data, valid_type_labels, plot_path, log):
         if heatmap_fig is not None:
             plt.close(heatmap_fig)
 
-def plot_P_Type_correlation(P_type_data, valid_type_labels, plot_path, log):
-    """Generate type-by-type correlation heatmap."""
+def plot_P_Type_correlation(P_type_data: torch.Tensor, valid_type_labels: List[str], plot_path: str, log: logging.Logger) -> None:
+    """
+    Generate a correlation heatmap between cell types based on their projections.
+    
+    Computes pairwise correlations between cell types' average bit projections
+    and visualizes them as a heatmap. High correlation indicates similar encoding.
+    
+    Args:
+        P_type_data (torch.Tensor): Average projections per cell type,
+            shape (n_cell_types, n_bits)
+        valid_type_labels (List[str]): Cell type names corresponding to rows
+        plot_path (str): Path to save the plot (PDF format)
+        log (logging.Logger): Logger instance for logging messages
+            
+    Note:
+        - Computes correlation after z-score normalizing each cell type's projections
+        - Correlation range: -1 to 1 (centered colormap)
+        - Sorts cell types alphabetically
+        - Saves as PDF with 300 DPI
+    """
     n_bits = P_type_data.shape[1]
     fig_width = min(max(8, len(valid_type_labels) / 1.5), 25)
     fig_height = min(max(6, len(valid_type_labels) / 2), 25)
@@ -2352,35 +3114,83 @@ def plot_P_Type_correlation(P_type_data, valid_type_labels, plot_path, log):
         if corr_fig is not None:
             plt.close(corr_fig)
 
-def sum_normalize_p_type(P_type_data):
-    """Sum normalize P_type data to average sum."""
+def sum_normalize_p_type(P_type_data: torch.Tensor) -> torch.Tensor:
+    """
+    Sum normalize P_type data to average sum across cell types.
+    
+    Normalizes each cell type's projections so that the sum across bits equals
+    the average sum across all cell types. This makes projections comparable
+    across cell types regardless of total signal intensity.
+    
+    Args:
+        P_type_data (torch.Tensor): P_type matrix of shape (n_cell_types, n_bits)
+        
+    Returns:
+        torch.Tensor: Sum-normalized P_type matrix of same shape
+    """
     P_type_sum_norm = P_type_data.clone()
     avg_sum = P_type_sum_norm.sum(dim=1).mean()
     P_type_sum_norm = P_type_sum_norm * (avg_sum / P_type_sum_norm.sum(dim=1, keepdim=True).clamp(min=1e-8))
     return P_type_sum_norm
 
-def bitwise_center_p_type(P_type_data):
-    """Bitwise center P_type data by median."""
+def bitwise_center_p_type(P_type_data: torch.Tensor) -> torch.Tensor:
+    """
+    Bitwise center P_type data by subtracting the median across cell types.
+    
+    For each bit, subtracts the median value across all cell types. This centers
+    the data around zero for each bit independently.
+    
+    Args:
+        P_type_data (torch.Tensor): P_type matrix of shape (n_cell_types, n_bits)
+        
+    Returns:
+        torch.Tensor: Bitwise-centered P_type matrix of same shape
+    """
     P_type_bit_center = P_type_data.clone()
     median_values = P_type_bit_center.median(dim=0, keepdim=True).values  # Extract values from named tuple
     P_type_bit_center = P_type_bit_center - median_values
     return P_type_bit_center
 
-def bitwise_normalize_p_type(P_type_data):
-    """Bitwise z-score normalize P_type data."""
+def bitwise_normalize_p_type(P_type_data: torch.Tensor) -> torch.Tensor:
+    """
+    Bitwise z-score normalize P_type data.
+    
+    For each bit, applies z-score normalization: (value - mean) / std across
+    all cell types. This standardizes the scale of each bit independently.
+    
+    Args:
+        P_type_data (torch.Tensor): P_type matrix of shape (n_cell_types, n_bits)
+        
+    Returns:
+        torch.Tensor: Z-score normalized P_type matrix of same shape
+        
+    Note:
+        - Uses clamp(min=1e-8) on std to avoid division by zero
+    """
     P_type_bit_norm = P_type_data.clone()
     P_type_bit_norm = (P_type_bit_norm - P_type_bit_norm.mean(dim=0, keepdim=True)) / P_type_bit_norm.std(dim=0, keepdim=True).clamp(min=1e-8)
     return P_type_bit_norm
 
-def plot_single_learning_curve(parameter, learning_curve, output_dir, log=None):
+def plot_single_learning_curve(parameter: str, learning_curve: pd.DataFrame, output_dir: str, log: Optional[logging.Logger] = None) -> None:
     """
-    Plot learning curve for a single parameter (training vs test).
+    Plot learning curve for a single parameter comparing training vs test.
+    
+    Creates a scatter plot showing how a metric evolves during training,
+    with separate series for training and test sets.
     
     Args:
-        parameter (str): Parameter name (without _train or _test suffix)
+        parameter (str): Parameter name without '_train' or '_test' suffix
+            (e.g., 'accuracy' for 'accuracy_train' and 'accuracy_test')
         learning_curve (pd.DataFrame): DataFrame containing learning statistics
-        output_dir (str): Directory to save the learning curve plot
-        log (logging.Logger, optional): Logger instance for logging messages
+            with columns like '{parameter}_train' and '{parameter}_test'
+        output_dir (str): Directory to save the plot (PDF format)
+        log (Optional[logging.Logger]): Logger instance. If None, creates default logger.
+            
+    Note:
+        - Saves to '{output_dir}/learning_curve_{parameter}.pdf'
+        - Uses 1st and 99th percentiles for y-axis limits
+        - Skips plotting if insufficient valid data
+        - Saves as PDF with 300 DPI
     """
     if log is None:
         log = logging.getLogger("LearningCurvePlotter")
@@ -2414,8 +3224,27 @@ def plot_single_learning_curve(parameter, learning_curve, output_dir, log=None):
     else:
         log.warning(f"Skipping learning curve for {parameter}: insufficient valid data")
 
-def plot_loss_contributions(learning_curve, output_dir, log=None):
-    """Plot relative contribution of each loss term to total loss across training epochs."""
+def plot_loss_contributions(learning_curve: pd.DataFrame, output_dir: str, log: Optional[logging.Logger] = None) -> None:
+    """
+    Plot relative contribution of each loss term to total loss across training.
+    
+    Creates a stacked area plot showing how the relative importance of each
+    loss term changes during training. Useful for understanding which objectives
+    dominate at different stages.
+    
+    Args:
+        learning_curve (pd.DataFrame): DataFrame containing learning statistics
+            with columns like '$$$ - <loss_name>_train' and 'total_loss_train'
+        output_dir (str): Directory to save the plot (PDF format)
+        log (Optional[logging.Logger]): Logger instance. If None, creates default logger.
+            
+    Note:
+        - Computes relative contributions as loss_term / total_loss
+        - Creates stacked area plot with all loss terms
+        - Y-axis range: 0 to 1 (100% of total loss)
+        - Saves to '{output_dir}/loss_contributions.pdf' with 300 DPI
+        - Skips if no total loss column found
+    """
     if log is None:
         log = logging.getLogger("LossContributionPlotter")
     loss_columns = [col for col in learning_curve.columns if 'train' in col.lower() and 'loss' in col.lower()]
@@ -2464,8 +3293,28 @@ def plot_loss_contributions(learning_curve, output_dir, log=None):
     plt.close()
     log.info(f"Saved loss contributions plot to {plot_path}")
 
-def plot_comprehensive_performance(learning_curve, output_dir, log=None):
-    """Plot accuracy, separation, and dynamic range metrics with three y-axes on the left side."""
+def plot_comprehensive_performance(learning_curve: pd.DataFrame, output_dir: str, log: Optional[logging.Logger] = None) -> None:
+    """
+    Plot accuracy, separation, and dynamic range metrics on a single figure.
+    
+    Creates a multi-axis plot showing three key performance metrics simultaneously:
+    accuracy (left y-axis), separation (right y-axis), and dynamic range (right y-axis).
+    Each metric shows both training and test performance.
+    
+    Args:
+        learning_curve (pd.DataFrame): DataFrame containing learning statistics
+            with columns for accuracy, separation, and dynamic_range (with _train/_test suffixes)
+        output_dir (str): Directory to save the plot (PDF format)
+        log (Optional[logging.Logger]): Logger instance. If None, creates default logger.
+            
+    Note:
+        - Uses different colors for each metric (orange, purple, cyan)
+        - Accuracy y-axis: 0 to 1
+        - Separation and dynamic range: 0 to 99th percentile
+        - Dynamic range uses scientific notation
+        - Saves to '{output_dir}/comprehensive_performance.pdf' with 300 DPI
+        - Includes color-coded legend boxes
+    """
     if log is None:
         log = logging.getLogger("ComprehensivePerformancePlotter")
     metrics = {
