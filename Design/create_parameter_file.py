@@ -160,6 +160,15 @@ user_parameters['input'] = input_dir
 
 parameter_variant_list = []
 
+parameter_variant_list.append(
+    {
+    'fig':['Decoder Complexity Bit Number Tradeoff'],
+    'decoder_n_lyr':[0,1,2,3],
+    'n_bit':[3,6,12,18,24,36],
+    'n_probes':[50000],
+    'replicate':[1,2,3],
+    })
+
 # parameter_variant_list.append(
 #     {
 #     'fig':['Bit Number Tradeoff (Accuracy Only)'],
@@ -318,25 +327,25 @@ parameter_variant_list = []
 #     'replicate':[1,2,3],
 #     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Central Brain Bit Number 50k Probes'],
-    'decoder_n_lyr':[0,1],
-    'n_probes':[50000],
-    'n_bit':[3,6,12,18,24,36,48],
-    'replicate':[1,2,3],
-    'central_brain':[1],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Central Brain Bit Number 50k Probes'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[50000],
+#     'n_bit':[3,6,12,18,24,36,48],
+#     'replicate':[1],
+#     'central_brain':[1],
+#     })
 
-parameter_variant_list.append(
-    {
-    'fig':['Central Brain Bit Number 250k Probes'],
-    'decoder_n_lyr':[0,1],
-    'n_probes':[250000],
-    'n_bit':[3,6,12,18,24,36,48],
-    'replicate':[1,2,3],
-    'central_brain':[1],
-    })
+# parameter_variant_list.append(
+#     {
+#     'fig':['Central Brain Bit Number 250k Probes'],
+#     'decoder_n_lyr':[0,1],
+#     'n_probes':[250000],
+#     'n_bit':[3,6,12,18,24,36,48],
+#     'replicate':[1],
+#     'central_brain':[1],
+#     })
 
 
 # parameter_variant_list.append(
