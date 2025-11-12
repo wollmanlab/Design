@@ -227,65 +227,67 @@ This allows the model to start with easier targets and gradually increase diffic
 
 ## Key Parameters
 
+This section provides a quick reference for key parameters. For detailed explanations of loss functions, targets, and dynamic parameters, see the "Loss Functions and Optimization Objectives" section above.
+
 ### Core Model Parameters
 
-- `n_cpu`: Number of CPU threads to use for PyTorch (typically 3-12). Note: This codebase runs on CPU, not GPU/CUDA
-- `n_bit`: Number of bits in the encoding (dimensionality of projection space). Typical values: 3-96
-- `n_iters`: Total number of training iterations. Typical values: 10,000-100,000+
-- `batch_size`: Batch size for training (0 = use full dataset)
-- `n_probes`: Target total number of probes across all genes (e.g., 50,000, 500,000)
-- `decoder_n_lyr`: Number of hidden layers in decoder (0-3+)
+- `n_cpu`: Number of CPU threads (typically 3-12). Note: CPU-only execution
+- `n_bit`: Number of bits in encoding (typically 3-96)
+- `n_iters`: Total training iterations (typically 10,000-100,000+)
+- `batch_size`: Batch size (0 = use full dataset)
+- `n_probes`: Target total number of probes (e.g., 50,000, 500,000)
+- `decoder_n_lyr`: Number of decoder hidden layers (0-3+)
 
 ### Loss Function Weights
 
-- `categorical_wt`: Weight for classification accuracy (typically 1-3)
-- `probe_wt`: Weight for probe count constraint (typically 0-1)
-- `gene_constraint_wt`: Weight for gene constraint violations (typically 1)
-- `brightness_wt`: Weight for target brightness (typically 1)
-- `dynamic_wt`: Weight for dynamic range (typically 0-1)
-- `separation_wt`: Weight for cell type separation (typically 1)
+All loss weights control the relative importance of each objective:
+- `categorical_wt`, `probe_wt`, `gene_constraint_wt`, `brightness_wt`, `dynamic_wt`, `separation_wt`
+- `sparsity_wt`, `gene_importance_wt`, `bit_usage_wt`, `bit_corr_wt`, `step_size_wt`
 
-### Training Parameters
+See "Loss Functions and Optimization Objectives" for details on each loss.
 
-- `lr_s` / `lr_e`: Initial and final learning rates (linear interpolation)
+### Training Control
+
+- `lr_s` / `lr_e`: Learning rate schedule (see "Target-Based Losses" for _s/_e explanation)
+- `saturation`: When _s/_e parameters reach final values (0.0-1.0, see detailed explanation above)
 - `gradient_clip`: Maximum gradient norm for clipping
-- `saturation`: When to reach final values for all _s/_e parameters (0.0-1.0)
-- `report_rt`: How often to report training progress (iterations)
+- `report_rt`: Training progress reporting frequency (iterations)
 
-### Brightness and Signal Parameters
+### Target Parameters (with _s/_e support)
 
-- `brightness_s` / `brightness_e`: Initial and final target brightness (log10 scale)
-- `dynamic_fold_s` / `dynamic_fold_e`: Initial and final target fold change for dynamic range
-- `separation_fold_s` / `separation_fold_e`: Initial and final minimum fold change between cell types
+These parameters support dynamic targets that change during training:
+- `brightness_s/e`: Target brightness (log10 scale)
+- `dynamic_fold_s/e`: Target dynamic range fold-change
+- `separation_fold_s/e`: Target separation fold-change
+- `sparsity_s/e`: Target sparsity ratio
+- All noise parameters: `X_drp_s/e`, `X_noise_s/e`, `E_drp_s/e`, `E_noise_s/e`, `P_drp_s/e`, `P_noise_s/e`, `P_add_s/e`, `D_drp_s/e`
 
-### Noise Parameters (for Robustness)
+### Target Parameters (static)
 
-CIPHER includes extensive noise modeling to simulate experimental conditions:
+- `n_probes`: Target total probe count
+- `gene_importance`: Max gene contribution per bit (default 0.25)
+- `bit_usage`: Minimum bit utilization threshold
+- `bit_corr`: Max allowed bit correlation (default 0.8)
+- `step_size_threshold`: Minimum step size between cell types
 
-- **Gene-level noise**: `X_drp_s/e` (dropout), `X_noise_s/e` (expression noise)
-- **Weight-level noise**: `E_drp_s/e` (encoding weight dropout), `E_noise_s/e` (weight noise)
-- **Projection-level noise**: `P_drp_s/e` (projection dropout), `P_noise_s/e` (measurement noise)
-- **Constant noise**: `P_add_s/e` (background signal, log10 scale)
-- **Decoder dropout**: `D_drp_s/e`
+### Data and File Paths
 
-### Data Parameters
+- `X_train` / `X_test`: Training/test feature tensors (.pt files)
+- `y_train` / `y_test`: Training/test label tensors (.pt files)
+- `constraints`: Gene constraints CSV file
+- `y_label_converter_path`: Label mapping CSV
+- `top_n_genes`: Number of top genes to keep (0 = all)
 
-- `X_train` / `X_test`: Paths to training/test feature tensors (.pt files)
-- `y_train` / `y_test`: Paths to training/test label tensors (.pt files)
-- `constraints`: Path to gene constraints CSV file
-- `y_label_converter_path`: Path to categorical label mapping CSV
-- `top_n_genes`: Number of top genes to keep (0 = keep all)
+### Model Configuration
 
-### Advanced Parameters
-
-- `device`: Device to run computations on ('cpu' - default, this codebase is designed for CPU execution)
-- `encoder_act`: Activation function for encoding weights ('tanh', 'sigmoid', 'linear', 'relu')
-- `decoder_act`: Activation function for decoder ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
-- `sum_norm`: Whether to normalize projection by sum (0 or 1)
-- `bit_norm`: Whether to normalize projection by bit-wise statistics (0 or 1)
-- `use_noise`: Whether to apply noise/dropout during training (0 or 1)
-- `continue_training`: Whether to continue training if model loaded from file (0 or 1)
-- `best_model`: Whether to save the best model during training (0 or 1)
+- `device`: Computation device ('cpu' - default)
+- `encoder_act`: Encoder activation ('tanh', 'sigmoid', 'linear', 'relu')
+- `decoder_act`: Decoder activation ('relu', 'leaky_relu', 'gelu', 'swish', 'tanh')
+- `sum_norm`: Sum normalization (0 or 1)
+- `bit_norm`: Bit-wise normalization (0 or 1)
+- `use_noise`: Enable noise during training (0 or 1)
+- `continue_training`: Continue if model loaded (0 or 1)
+- `best_model`: Save best model checkpoint (0 or 1)
 
 ## Installation
 
