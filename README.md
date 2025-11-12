@@ -36,7 +36,7 @@ Follow these steps to execute the designer:
 3.  **Run Executable:**
     Execute the main script using the following command in your terminal, replacing `"path/to/parameters/file"` with the actual path to your parameters file:
     ```bash
-    python /Design/EncodingDesigner.py "path/to/parameters/file"
+    python /Design/CIPHER.py "path/to/parameters/file"
     ```
 
 ## To Run Multiple Jobs
@@ -61,7 +61,7 @@ Follow these steps to execute the designer:
         * This script now automatically calls `sub_multi_param_file_optimization.sh` after creating the parameter files, so you only need to run one command.
     * `sub_multi_param_file_optimization.sh` - This script has a dual purpose:
         1. Creates the jobs.
-        2. Executes the jobs by running `EncodingDesigner.py`.
+        2. Executes the jobs by running `CIPHER.py`.
         * **Parameters to change:** `OPT_DIR`, `CODE_DIR`, replace Run0 
         * **Note:** This script is now automatically called by `create_parameter_file.py`, but can still be run manually if needed:
         ```bash

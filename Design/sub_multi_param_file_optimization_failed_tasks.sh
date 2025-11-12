@@ -147,7 +147,7 @@ if [[ -n "$SGE_TASK_ID" ]]; then
     sed -i "s|^output,.*|output,${FULL_OUTPUT_DIR}|" "$FILE_PATH"
     
     # Run the calculation with the job file directly
-    python -u "${CODE_DIR}/EncodingDesigner.py" "$FILE_PATH" 
+    python -u "${CODE_DIR}/CIPHER.py" "$FILE_PATH" 
     
     EXIT_CODE=$?
     echo "Job completed with exit code $EXIT_CODE"

@@ -68,7 +68,7 @@ echo "Hostname: $(hostname)"
 echo "Start time: $(date)"
 
 # Run the calculation
-python -u "${CODE_DIR}/EncodingDesigner.py" "$PARAM_FILE"
+python -u "${CODE_DIR}/CIPHER.py" "$PARAM_FILE"
 
 EXIT_CODE=$?
 echo "Job completed with exit code $EXIT_CODE"

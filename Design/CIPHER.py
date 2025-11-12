@@ -30,7 +30,7 @@ except ImportError:
     _IPYTHON_AVAILABLE = False
 
 
-class EncodingDesigner(nn.Module):
+class CIPHER(nn.Module):
     def __init__(self, user_parameters_path: Optional[str] = None):
         super().__init__() 
         self.I: Dict[str, Any] = {
@@ -2535,7 +2535,7 @@ if __name__ == '__main__':
     parser.add_argument("user_parameters_path", type=str, help="Path to csv containing parameters for model")
     args = parser.parse_args()
     user_parameters_path = args.user_parameters_path
-    model = EncodingDesigner(user_parameters_path=user_parameters_path)
+    model = CIPHER(user_parameters_path=user_parameters_path)
     if not model.initialize():
         print("Initialization failed. Check the log file for details.")
         exit(1)

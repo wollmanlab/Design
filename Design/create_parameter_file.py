@@ -403,7 +403,7 @@ for parameter_variants in parameter_variant_list:
         # This ensures consistency with how sub_multi_param_file_optimization.sh constructs paths.
         param_file_name_base = f"params_{run_specific_identifier}" 
         # Update the 'output' path to be unique for this parameter combination.
-        # This path will be written into the CSV and is what EncodingDesigner.py will use.
+        # This path will be written into the CSV and is what CIPHER.py will use.
         # It should be: <base_dir>/design_results/params_<run_specific_identifier>
         correct_output_dir = os.path.join(base_dir, 'design_results', param_file_name_base)
         current_params['output'] = correct_output_dir

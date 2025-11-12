@@ -124,7 +124,7 @@ if [[ -n "$SGE_TASK_ID" ]]; then
     fi
 
     # Run the calculation with the parameter file
-    python -u "${CODE_DIR}/EncodingDesigner.py" "$FILE_PATH" 
+    python -u "${CODE_DIR}/CIPHER.py" "$FILE_PATH" 
     
     EXIT_CODE=$?
     echo "Job completed with exit code $EXIT_CODE"
