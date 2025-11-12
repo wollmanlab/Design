@@ -1,7 +1,5 @@
 # Design
 
-**Author:** Zachary Hemminger (zehemminger@gmail.com)
-
 ## Overview
 
 This repository contains **CIPHER** (Cell Identity Projection using Hybridization Encoding Rules), a deep learning framework for designing multiplexed in situ hybridization (ISH) probe sets that can accurately identify cell types from gene expression data.
@@ -366,17 +364,17 @@ pip install -e .
 To set up the necessary environment with Conda:
 
 1. **Create the Conda environment:**
-   ```bash
-   conda create -n "designer_3.12" python=3.12
-   ```
+    ```bash
+    conda create -n "designer_3.12" python=3.12
+    ```
 
 2. **Activate the Conda environment:**
-   ```bash
-   conda activate designer_3.12
-   ```
+    ```bash
+    conda activate designer_3.12
+    ```
 
 3. **Install required packages:**
-   ```bash
+    ```bash
    pip install -r requirements.txt
    ```
 
@@ -425,9 +423,9 @@ Follow these steps to execute CIPHER on a single parameter configuration:
 
 3. **Run CIPHER:**
    - Execute the main script using the following command, replacing `"path/to/parameters/file"` with the actual path to your parameters CSV file:
-   ```bash
-   python /Design/CIPHER.py "path/to/parameters/file"
-   ```
+    ```bash
+    python /Design/CIPHER.py "path/to/parameters/file"
+    ```
 
    The script will:
    - Load parameters from the CSV file
@@ -444,18 +442,18 @@ For systematic exploration of parameter space, use the batch processing workflow
    - `data_format.py` - Formats the data for the reference dataset
      - **Parameters to change:** `data_path`, `output_path`, `csv_file`
      - ```bash
-       conda activate designer_3.12
-       python ./Design/data_format.py
-       ```
+        conda activate designer_3.12
+        python ./Design/data_format.py
+        ```
    - `create_type_tree.py` - Creates the type tree for the reference (if needed)
 
 2. **Create Parameter Files and Submit Jobs:**
    - `create_parameter_file.py` - Creates parameter files for all combinations and automatically submits jobs
      - **Parameters to change:** `base_dir`, `parameter_variant_list` (in the script)
      - ```bash
-       conda activate designer_3.12
-       python ./Design/create_parameter_file.py [Run#]
-       ```
+        conda activate designer_3.12
+        python ./Design/create_parameter_file.py [Run#]
+        ```
      - **Run number:** You can specify a run number (e.g., `Run0`, `Run1`) or let the script automatically find the next available run number
      - This script:
        - Generates all parameter combinations from `parameter_variant_list`
@@ -466,8 +464,8 @@ For systematic exploration of parameter space, use the batch processing workflow
      - **Parameters to change:** `OPT_DIR`, `CODE_DIR`, replace `Run0` with your run number
      - **Note:** This script is automatically called by `create_parameter_file.py`, but can be run manually:
      - ```bash
-       ./Design/sub_multi_param_file_optimization.sh Run0
-       ```
+        ./Design/sub_multi_param_file_optimization.sh Run0
+        ```
 
 ### Parameter File Format
 
