@@ -23,7 +23,7 @@ def readable_run_name(run, varying_keys):
 # conda activate designer_3.12 ; python '/u/home/z/zeh/rwollman/zeh/Repos/Design/Design/create_figures.py' 
 if __name__ == '__main__':
     output = {}
-    for notebook_name in ['Run2']: # 88
+    for notebook_name in ['Run14']: # 88
         # notebook_name = f'Run{notebook_name}'
 
         base_path = f"/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/{notebook_name}/"
@@ -37,6 +37,8 @@ if __name__ == '__main__':
                 parameters = parameters.to_dict()['values']
                 # print(f"Run {run} was started")
             else:
+                continue
+            if not os.path.exists(os.path.join(design_results,run,'results')):
                 continue
             # next check if the run is done
             if 'Results.csv' in os.listdir(os.path.join(design_results,run,'results')):
