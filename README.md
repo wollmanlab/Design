@@ -36,22 +36,73 @@ Additionally, CIPHER includes **robustness/training rules** that don't directly 
 CIPHER consists of two main components:
 
 ### 1. Encoder (Projection Layer)
-- **Type**: Embedding layer (n_genes × n_bit)
-- **Purpose**: Maps each gene to a contribution weight for each bit
-- **Activation**: Configurable (tanh, sigmoid, linear, relu) with constraints applied
-- **Output**: Encoding weights E (n_genes × n_bit) representing probe fractions
 
-The encoder weights are constrained by:
-- Gene-level constraints (maximum probes per gene)
-- Total probe budget (target total number of probes)
-- Activation functions that ensure valid probe fractions
+The encoder learns how to allocate probes from each gene to each bit. It uses a PyTorch `Embedding` layer with shape (n_genes × n_bit), where each row represents a gene and each column represents a bit.
+
+**How Encoder Weights Become Probes:**
+
+1. **Raw Weights**: The encoder learns raw weights `W_raw` (n_genes × n_bit) during training. These weights can be any real number.
+
+2. **Activation Function**: An activation function converts raw weights to probe fractions in a valid range:
+   - **tanh**: `E_fraction = (tanh(W_raw) + 1) / 2` → maps to [0, 1] range
+   - **sigmoid**: `E_fraction = sigmoid(W_raw)` → maps to [0, 1] range
+   - **linear**: `E_fraction = W_raw` → uses weights directly (can be negative or >1)
+   - **relu**: `E_fraction = relu(W_raw)` → maps to [0, ∞) range
+
+3. **Gene Constraints**: The probe fractions are multiplied by gene constraints to get the final probe allocation:
+   ```
+   E = E_fraction × constraints
+   ```
+   where `constraints` is a vector (n_genes) containing the maximum allowed probes per gene. This ensures no gene exceeds its constraint limit.
+
+4. **Final Encoding Weights**: The resulting `E` (n_genes × n_bit) represents the actual number of probes allocated from each gene to each bit. Each value `E[i, j]` is the number of probes from gene `i` allocated to bit `j`.
+
+**Example**: If gene 5 has a constraint of 100 probes and `E_fraction[5, 3] = 0.15` after activation, then `E[5, 3] = 0.15 × 100 = 15` probes from gene 5 are allocated to bit 3.
+
+The encoder is constrained by:
+- **Gene-level constraints**: Maximum probes per gene (enforced via multiplication)
+- **Total probe budget**: Target total number of probes (enforced via loss function)
+- **Activation functions**: Ensure probe fractions are in valid ranges
 
 ### 2. Decoder (Classification Network)
-- **Type**: Multi-layer neural network
-- **Input**: Bit projections P (n_samples × n_bit)
-- **Output**: Cell type logits (n_samples × n_categories)
-- **Architecture**: Configurable number of hidden layers (0-3+)
-- **Activation**: Configurable (relu, leaky_relu, gelu, swish, tanh)
+
+The decoder maps bit projections back to cell type predictions. It is a multi-layer neural network with configurable depth.
+
+**Architecture:**
+
+- **Input**: Bit projections `P` (n_samples × n_bit) - the measured signal intensities for each bit
+
+- **Architecture Options**:
+  - **`decoder_n_lyr = 0`**: Single linear layer
+    - `Linear(n_bit → n_categories)`
+    - Direct mapping from bits to cell type logits
+  
+  - **`decoder_n_lyr > 0`**: Multi-layer network
+    - Hidden dimension: `3 × n_bit` (e.g., for 24 bits, hidden dim = 72)
+    - Each hidden layer consists of:
+      1. `Linear(input_dim → hidden_dim)`
+      2. `BatchNorm1d(hidden_dim)` - batch normalization for training stability
+      3. Activation function (configurable: relu, leaky_relu, gelu, swish, tanh)
+      4. Optional `Dropout(p=D_drp)` if `use_noise=1`
+    - Final layer: `Linear(hidden_dim → n_categories)`
+
+**Activation Functions:**
+- **relu**: `ReLU(x) = max(0, x)` - most common, allows positive values only
+- **leaky_relu**: `LeakyReLU(x) = max(0.01x, x)` - allows small negative values
+- **gelu**: `GELU(x) = x × Φ(x)` - smooth activation, often better performance
+- **swish**: `Swish(x) = x × sigmoid(x)` - smooth, self-gated activation
+- **tanh**: `Tanh(x)` - maps to [-1, 1] range
+
+**Output R:**
+The decoder outputs `R` (n_samples × n_categories), which contains **logits** (unnormalized scores) for each cell type:
+- Each row corresponds to one sample/cell
+- Each column corresponds to one cell type category
+- Higher values indicate higher confidence for that cell type
+- The predicted cell type is: `y_predict = argmax(R, dim=1)` (the column with the highest logit)
+
+**Example**: If `R[0] = [2.3, 0.1, 5.7, 1.2]` for a cell with 4 possible cell types, the model predicts cell type 2 (index 2, with logit 5.7).
+
+The logits are used with `CrossEntropyLoss` (which applies softmax internally) to compute the classification loss during training.
 
 ### Workflow
 
