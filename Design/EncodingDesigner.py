@@ -1808,6 +1808,12 @@ class EncodingDesigner(nn.Module):
             self.best_model_state_dict = None
             self.log.info("Best model turned off. Saving the final iteration state.")
         
+        # Take the last index and add 1 for the final iteration
+        final_iter_key = int(self.learning_stats.index[-1]) + 1
+        # Initialize row for final iteration if it doesn't exist
+        if final_iter_key not in self.learning_stats.index:
+            self.learning_stats.loc[final_iter_key] = pd.Series(dtype=object)
+            
         if self.best_model_state_dict is not None:
             self.log.info(f"Loading best model state from iteration {self.best_iteration} (Train Loss: {self.best_loss:.4f}) before final save.")
             try:
@@ -1816,6 +1822,15 @@ class EncodingDesigner(nn.Module):
                 if unexpected_keys: self.log.warning(f"Unexpected keys when loading best state_dict: {unexpected_keys}")
                 self.to(self.I['device'])
                 self.log.info(f"Successfully loaded best model state for final saving.")
+                self.eval()
+                with torch.no_grad():
+                    total_final_loss, final_stats_dict = self.calculate_loss(
+                        self.X_test, self.y_test, iteration=str(final_iter_key), suffix='_test'
+                        )
+                # Add final stats to the DataFrame row
+                for key, value in final_stats_dict.items():
+                    self.learning_stats.loc[final_iter_key, key] = value
+                self.learning_stats.loc[final_iter_key, 'total_loss_test_avg'] = total_final_loss.item()
             except Exception as e:
                 self.log.error(f"Failed to load best model state before saving: {e}. Saving the final iteration state instead.")
         else:
@@ -1830,20 +1845,6 @@ class EncodingDesigner(nn.Module):
             self.log.info(f"Learning stats saved to {learning_stats_path}")
         except Exception as e:
             self.log.error(f"Failed to save final model state: {e}")
-
-        self.eval()
-        final_iter_key = 'Final'
-        # Initialize row for final iteration if it doesn't exist
-        if final_iter_key not in self.learning_stats.index:
-            self.learning_stats.loc[final_iter_key] = pd.Series(dtype=object)
-        with torch.no_grad():
-            total_final_loss, final_stats_dict = self.calculate_loss(
-                self.X_test, self.y_test, iteration="Final", suffix='_test'
-            )
-            # Add final stats to the DataFrame row
-            for key, value in final_stats_dict.items():
-                self.learning_stats.loc[final_iter_key, key] = value
-            self.learning_stats.loc[final_iter_key, 'total_loss_test_avg'] = total_final_loss.item()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         red_start = "\033[91m"; reset_color = "\033[0m"
         log_prefix = f"--- Final Eval Stats (Global Test Set) at {now_str} ---"
