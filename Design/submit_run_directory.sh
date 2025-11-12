@@ -89,7 +89,11 @@ if [[ -n "$SGE_TASK_ID" ]]; then
         echo "ERROR: File list $LIST_FILE not found. This file should have been created by the submitter."
         exit 1
     fi
-    mapfile -t FILES < "$LIST_FILE"
+    # Use a more compatible approach instead of mapfile
+    FILES=()
+    while IFS= read -r line; do
+        FILES+=("$line")
+    done < "$LIST_FILE"
     
     # Check if SGE_TASK_ID is valid for the number of files in the list
     if [[ $SGE_TASK_ID -gt ${#FILES[@]} ]] || [[ $SGE_TASK_ID -lt 1 ]]; then
@@ -140,15 +144,33 @@ else
     LIST_FILE="${RUN_DIR}/.files_to_process_task_list.txt"
     
     # Find all subdirectories that contain used_user_parameters.csv
-    find "$DESIGN_RESULTS_DIR" -name "used_user_parameters.csv" -type f | while read -r param_file; do
+    # Use a more robust approach to avoid subshell issues
+    find "$DESIGN_RESULTS_DIR" -name "used_user_parameters.csv" -type f > "${LIST_FILE}.tmp"
+    
+    # Process the temporary file to get directory names
+    while read -r param_file; do
         # Get the directory name (relative to design_results)
         dir_path=$(dirname "$param_file")
         dir_name=$(basename "$dir_path")
-        echo "$dir_name" >> "$LIST_FILE"
-    done
+        # Only add if it's not empty and doesn't end with .csv
+        if [[ -n "$dir_name" && "$dir_name" != *.csv ]]; then
+            echo "$dir_name" >> "$LIST_FILE"
+        fi
+    done < "${LIST_FILE}.tmp"
+    
+    # Clean up temporary file
+    rm -f "${LIST_FILE}.tmp"
     
     # Read the generated list into an array to count files
-    mapfile -t FILES < "$LIST_FILE"
+    if [[ -f "$LIST_FILE" ]]; then
+        # Use a more compatible approach instead of mapfile
+        FILES=()
+        while IFS= read -r line; do
+            FILES+=("$line")
+        done < "$LIST_FILE"
+    else
+        FILES=()
+    fi
     
     # Check if any files were found
     if [[ ${#FILES[@]} -eq 0 ]]; then
@@ -158,6 +180,15 @@ else
     fi
     
     echo "Found ${#FILES[@]} parameter files to process"
+    echo "File count: ${#FILES[@]}"
+    if [[ ${#FILES[@]} -gt 0 ]]; then
+        echo "First few files:"
+        for i in "${!FILES[@]}"; do
+            if [[ $i -lt 5 ]]; then
+                echo "  $((i+1)): ${FILES[$i]}"
+            fi
+        done
+    fi
     
     # Get the first file to read n_cpu from it
     FIRST_FILE_TO_PROCESS="${FILES[0]}"
@@ -181,6 +212,14 @@ else
     # Create the job array submission command
     # Replace the array size, the RUN_DIR path for logs, and the number of CPUs for -pe shared
     mkdir -p "${RUN_DIR}/job_logs"
+    
+    # Ensure we have a valid file count
+    if [[ ${#FILES[@]} -lt 1 ]]; then
+        echo "Error: No valid files found to process. File count: ${#FILES[@]}"
+        exit 1
+    fi
+    
+    echo "Creating job array with ${#FILES[@]} tasks..."
     sed -e "s/-t 1-N/-t 1-${#FILES[@]}/" \
         -e "s|job_logs/job_log.\$JOB_ID.\$TASK_ID|${RUN_DIR}/job_logs/job_log.\$JOB_ID.\$TASK_ID|" \
         -e "s/^#\$ -pe shared [0-9][0-9]*/#\$ -pe shared ${N_CPU}/" \
