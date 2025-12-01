@@ -159,15 +159,47 @@ user_parameters['input'] = input_dir
 
 
 parameter_variant_list = []
-
 parameter_variant_list.append(
     {
-    'fig':['Decoder Complexity Bit Number Tradeoff'],
-    'decoder_n_lyr':[0,1,2,3],
-    'n_bit':[3,6,12,18,24,36],
+    'fig':['Training Iterations Tradeoff'],
+    'decoder_n_lyr':[1],
+    'n_bit':[18],
     'n_probes':[50000],
+    'n_iters':[5000,10000,25000,50000,100000],
     'replicate':[1,2,3],
     })
+
+# parameter_variant_list.append(
+#     {
+#     'fig':['Measurability Loss Term Dynamic Only'],
+#     'dynamic_wt':[1],
+#     'separation_wt':[0],
+#     'decoder_n_lyr':[0,1,2,3],
+#     'n_bit':[3,6,12,18,24,36],
+#     'n_probes':[50000],
+#     'replicate':[1,2,3],
+
+#     })
+
+# parameter_variant_list.append(
+#     {
+#     'fig':['Measurability Loss Term Separability Only'],
+#     'dynamic_wt':[0],
+#     'separation_wt':[1],
+#     'decoder_n_lyr':[0,1,2,3],
+#     'n_bit':[3,6,12,18,24,36],
+#     'n_probes':[50000],
+#     'replicate':[1,2,3],
+#     })
+
+# parameter_variant_list.append(
+#     {
+#     'fig':['Decoder Complexity Bit Number Tradeoff'],
+#     'decoder_n_lyr':[0,1,2,3],
+#     'n_bit':[3,6,12,18,24,36],
+#     'n_probes':[50000],
+#     'replicate':[1,2,3],
+#     })
 
 # parameter_variant_list.append(
 #     {
