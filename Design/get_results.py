@@ -13,14 +13,17 @@ if __name__ == '__main__':
             continue
         designs = os.listdir(os.path.join(base_path,run,'design_results'))
         for design in designs:
-            if not os.path.exists(os.path.join(base_path,run,'design_results',design,'results')):
+            results_path = os.path.join(base_path,run,'design_results',design,'results')
+            if not os.path.exists(results_path):
                 print(f"Design {design} does not have a results directory")
                 continue
             print(f"Loading Design {design}")
             try:
-                results = pd.read_csv(os.path.join(base_path,run,'design_results',design,'results','Results.csv'),index_col=0)
-                results = results.loc[['Number of Probes (Constrained)','No Noise Accuracy', 'No Noise Separation','No Noise Dynamic Range']]
-                results.index = ['Probes','Accuracy','Separation','Dynamic Range']
+                results = pd.read_csv(os.path.join(results_path,'Results.csv'),index_col=0)
+                # results = pd.read_csv(os.path.join(results_path,'Results.csv'),index_col=0)
+                # results = results.loc[['Number of Probes (Constrained)','No Noise Accuracy', 'No Noise Separation','No Noise Dynamic Range']]
+                # results.index = ['Probes','Accuracy','Separation','Dynamic Range','Dynamic Fold']
+                results = results.loc[['Probes','Accuracy','Separation','Dynamic Range','Dynamic Fold']]
                 results = results.to_dict()['values']
             except Exception as e:
                 print(f"Error loading Results.csv for Design {design}: {e}")
