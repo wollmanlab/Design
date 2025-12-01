@@ -481,7 +481,8 @@ class CIPHER(nn.Module):
         current_stats['lower brightness' + suffix] = round(signal['lower'].mean().item(), 4)
         current_stats['median brightness' + suffix] = round(signal['median'].mean().item(), 4)
         current_stats['upper brightness' + suffix] = round(signal['upper'].mean().item(), 4)
-        current_stats['dynamic_range' + suffix] = round((signal['upper']-signal['lower']).mean().item(), 4)
+        dynamic_range = signal['upper']-signal['lower']
+        current_stats['dynamic_range' + suffix] = round(torch.quantile(dynamic_range,0.1).item(), 4)
 
         # --- Dynamic range loss ---
         dynamic_range = signal['median'] / signal['lower'].clamp(min=1e-8)
@@ -496,7 +497,8 @@ class CIPHER(nn.Module):
             raw_losses['dynamic_loss'] = self.I['dynamic_wt'] * fold.sum()
         else:
             raw_losses['dynamic_loss'] = torch.tensor(0, device=P_clean.device, dtype=torch.float32, requires_grad=True)
-        current_stats['dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
+        current_stats['dynamic_fold' + suffix] = round(torch.quantile(dynamic_range,0.1).item(), 4)
+        # current_stats['dynamic_fold' + suffix] = round(dynamic_range.mean().item(), 4)
 
         # --- Cell type separation loss ---
         batch_categories = torch.unique(y)
@@ -995,12 +997,15 @@ class CIPHER(nn.Module):
                         accuracy = stats.get('accuracy_test', np.nan)
                         separation = stats.get('separation_test', np.nan)
                         dynamic_range = stats.get('dynamic_range_test', np.nan)
+                        dynamic_fold = stats.get('dynamic_fold_test', np.nan)
                         self.log.info(f"{level_name} Accuracy: {round(accuracy, 4)}")
                         self.log.info(f"{level_name} Separation: {round(separation, 4)}")
                         self.log.info(f"{level_name} Dynamic Range: {round(dynamic_range, 4)}")
+                        self.log.info(f"{level_name} Dynamic Fold: {round(dynamic_fold, 4)}")
                         results_dict[f'{level_name} Accuracy'] = accuracy
                         results_dict[f'{level_name} Separation'] = separation
                         results_dict[f'{level_name} Dynamic Range'] = dynamic_range
+                        results_dict[f'{level_name} Dynamic Fold'] = dynamic_fold
                     # Save P_test averages for "No Noise" condition
                     if level_name == "No Noise":
                         self.log.info("Saving P_test averages for No Noise condition...")
@@ -1053,7 +1058,13 @@ class CIPHER(nn.Module):
             'values': list(results_dict.values())
         }, index=pd.Index(list(results_dict.keys())))
         results_path = os.path.join(self.I['output'], 'Results.csv') 
+        results_df.loc['Dynamic Fold'] = results_df.loc['No Noise Dynamic Fold']
+        results_df.loc['Dynamic Range'] = results_df.loc['No Noise Dynamic Range']
+        results_df.loc['Accuracy'] = results_df.loc['No Noise Accuracy']
+        results_df.loc['Separation'] = results_df.loc['No Noise Separation']
+        results_df.loc['Probes'] = results_df.loc['Number of Probes (Constrained)']
         results_df.to_csv(results_path)
+
         self.log.info(f"Evaluation results saved to {results_path}")
 
     def visualize(self, show_plots: bool = False) -> None:
@@ -1837,6 +1848,7 @@ class CIPHER(nn.Module):
 
         # Process labels update numerics to not have gaps
         all_y_labels = torch.cat((self.y_train, self.y_test))
+        unique_y_labels = torch.unique(all_y_labels)
         self.updated_y_label_map = {old_numeric.item(): new_numeric for new_numeric, old_numeric in enumerate(torch.unique(all_y_labels))} # old Numerical to new Numerical
         self.y_train = torch.tensor([self.updated_y_label_map[old_numeric.item()] for old_numeric in self.y_train], dtype=torch.long, device=self.I['device'])
         self.y_test = torch.tensor([self.updated_y_label_map[old_numeric.item()] for old_numeric in self.y_test], dtype=torch.long, device=self.I['device'])
