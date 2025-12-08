@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ./Design/submit_all_single_jobs_in_run.sh Run1_Figures
+# Usage: ./submit_all_single_jobs_in_run.sh Run1_Figures
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 <RunDirName>"
@@ -46,9 +46,12 @@ fi
 
 echo "Found ${#PARAM_FILES[@]} parameter files. Submitting jobs..."
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 for param_file in "${PARAM_FILES[@]}"; do
     echo "Submitting: $param_file"
-    qsub Design/submit_single_job.sh "$param_file"
+    qsub "${SCRIPT_DIR}/submit_single_job.sh" "$param_file"
 done
 
 echo "All jobs submitted." 

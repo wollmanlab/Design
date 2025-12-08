@@ -63,7 +63,7 @@ echo "Hostname: $(hostname)"
 echo "Start time: $(date)"
 
 # Run the calculation
-python -u "${CODE_DIR}/simulation.py" "$INPUT_FILE"
+python -u "${CODE_DIR}/Results/simulation.py" "$INPUT_FILE"
 
 EXIT_CODE=$?
 echo "Job completed with exit code $EXIT_CODE"
