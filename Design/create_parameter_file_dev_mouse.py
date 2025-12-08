@@ -9,15 +9,11 @@ current_user = getpass.getuser()
 print(f"User identified as : {current_user}")
 if current_user=='rwollman':
     base_dir = '/u/home/r/rwollman/project-rwollman/atlas_design/Runs/'
-    input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
 elif current_user=='zeh':
     base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/'
-    input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
 else:
     base_dir = '/u/home/z/zeh/rwollman/zeh/Projects/Design/Runs/'
-    input_dir = '/u/project/rwollman/data/Allen_WMB_2024Mar06/Training_data/'
 print(f"base_dir: {base_dir}")
-print(f"input_dir: {input_dir}")
 # Check if a command line argument was provided for the run directory
 import sys
 import re
@@ -232,7 +228,7 @@ import subprocess
 import os
 # Get the directory where this script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
-shell_script_path = os.path.join(script_dir, "sub_multi_param_file_optimization.sh")
+shell_script_path = os.path.join(script_dir, "Submission_Scripts/sub_multi_param_file_optimization.sh")
 # Make sure the shell script is executable
 os.chmod(shell_script_path, 0o755)
 # Call the shell script with the run directory as argument

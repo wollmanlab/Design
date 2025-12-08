@@ -232,7 +232,7 @@ import subprocess
 import os
 # Get the directory where this script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
-shell_script_path = os.path.join(script_dir, "sub_multi_param_file_optimization.sh")
+shell_script_path = os.path.join(script_dir, "Submission_Scripts/sub_multi_param_file_optimization.sh")
 # Make sure the shell script is executable
 os.chmod(shell_script_path, 0o755)
 # Call the shell script with the run directory as argument
