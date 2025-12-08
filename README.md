@@ -343,6 +343,118 @@ These parameters support dynamic targets that change during training:
 - `continue_training`: Continue if model loaded (0 or 1)
 - `best_model`: Save best model checkpoint (0 or 1)
 
+## Repository Structure
+
+```
+.                                   # Repository root
+├── Design/                          # Main code directory
+│   ├── CIPHER.py                   # Main CIPHER training script
+│   ├── CIPHER_diagram.png          # Architecture diagram
+│   ├── run_cipher_simple.ipynb     # Simple notebook for running CIPHER
+│   ├── create_parameter_file.py    # Parameter file generation (general)
+│   ├── create_parameter_file_lymph.py    # Parameter file generation (lymph)
+│   ├── create_parameter_file_dev_mouse.py # Parameter file generation (dev mouse)
+│   ├── Data_Format/                # Data processing scripts
+│   │   ├── data_format.py          # Allen WMB data formatting
+│   │   ├── data_format_lymph.py   # Lymph node data formatting
+│   │   ├── data_format_dev_mouse.py # Developmental mouse data formatting
+│   │   ├── create_type_tree.py    # Cell type tree generation
+│   │   └── README.md              # Data formatting documentation
+│   ├── Submission_Scripts/         # HPC job submission scripts
+│   │   ├── sub_multi_param_file_optimization.sh
+│   │   ├── sub_multi_param_file_optimization_failed_tasks.sh
+│   │   ├── submit_run_directory.sh
+│   │   ├── submit_all_single_jobs_in_run.sh
+│   │   ├── submit_single_job.sh
+│   │   ├── submit_simulation.sh
+│   │   ├── sub_python_script.sh
+│   │   ├── sub_data_format.sh
+│   │   ├── resubmit_failed_tasks.sh
+│   │   └── README.md               # Submission scripts documentation
+│   ├── Results/                     # Result analysis and visualization
+│   │   ├── simulation.py           # Simulation analysis
+│   │   ├── get_results.py          # Result aggregation
+│   │   ├── create_figures.py       # Figure generation
+│   │   └── README.md               # Results analysis documentation
+│   └── Sequences/                   # Probe sequence assembly
+│       ├── make_fasta.ipynb        # Main probe assembly notebook
+│       ├── super_probe_30mer_arms_2025Apr24.ipynb  # 30-mer readout arm generation
+│       ├── super_probe_20mer_arms_2025Apr30.ipynb  # 20-mer readout arm generation
+│       ├── optimized_sequences_30mers.csv          # Optimized 30-mer sequences
+│       ├── optimized_sequences_20mers.csv          # Optimized 20-mer sequences
+│       ├── mm10_probes_Oct28_2022.csv              # Mouse probe database
+│       └── README.md               # Sequence assembly documentation
+├── LICENSE                          # MIT License
+├── README.md                        # This file
+├── requirements.txt                 # Python dependencies
+└── setup.py                         # Package setup script
+```
+
+## High-Level Workflow and Architecture
+
+The CIPHER repository is organized into modular components that work together in a complete pipeline from raw data to experimental probe sequences:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CIPHER Workflow Pipeline                     │
+└─────────────────────────────────────────────────────────────────┘
+
+1. Data Preparation
+   └─► [Design/Data_Format/](Design/Data_Format/README.md)
+       • Process scRNA-seq data (h5ad files)
+       • Generate training/test tensors (X_train.pt, y_train.pt, etc.)
+       • Create categorical_converter.csv and constraints.csv
+       • Scripts: data_format.py, data_format_lymph.py, data_format_dev_mouse.py
+
+2. Parameter Configuration
+   └─► [Design/create_parameter_file.py](Design/create_parameter_file.py)
+       • Generate parameter files for single or batch runs
+       • Dataset-specific variants available
+
+3. CIPHER Training
+   └─► [Design/CIPHER.py](Design/CIPHER.py)
+       • Train encoder and decoder networks
+       • Optimize probe allocation and classification
+       • Output: encoding weights (E_weights.csv), model checkpoints, results
+
+4. Job Submission (HPC)
+   └─► [Design/Submission_Scripts/](Design/Submission_Scripts/README.md)
+       • Submit single jobs or batch parameter sweeps
+       • Manage array jobs and failed task resubmission
+       • Scripts: sub_multi_param_file_optimization.sh, submit_single_job.sh, etc.
+
+5. Result Analysis
+   └─► [Design/Results/](Design/Results/README.md)
+       • Run simulation analysis (simulation.py)
+       • Aggregate results across runs (get_results.py)
+       • Generate publication figures (create_figures.py)
+
+6. Probe Sequence Assembly
+   └─► [Design/Sequences/](Design/Sequences/README.md)
+       • Convert encoding weights to probe sequences
+       • Generate optimized readout arms
+       • Assemble complete probes with primers and restriction sites
+       • Notebooks: make_fasta.ipynb, super_probe_*mer_arms_*.ipynb
+```
+
+### Component Overview
+
+- **[Data_Format/](Design/Data_Format/README.md)**: Data processing and formatting scripts that convert raw scRNA-seq data into CIPHER-compatible formats. Handles multiple dataset types (Allen Brain Atlas, lymph node, developmental mouse).
+
+- **[Submission_Scripts/](Design/Submission_Scripts/README.md)**: HPC cluster job submission scripts for running CIPHER on compute clusters. Supports single jobs, array jobs, batch processing, and failed task management.
+
+- **[Results/](Design/Results/README.md)**: Analysis and visualization tools for evaluating CIPHER designs. Includes simulation testing, result aggregation, and figure generation.
+
+- **[Sequences/](Design/Sequences/README.md)**: Probe sequence assembly pipeline that converts abstract encoding weights into complete DNA probe sequences ready for experimental synthesis.
+
+### Quick Navigation
+
+- **Getting Started**: See [Quick Start: Simple Notebook](#quick-start-simple-notebook-recommended-for-first-time-users) for the easiest way to run CIPHER
+- **Data Formatting**: See [Data_Format/README.md](Design/Data_Format/README.md) for dataset-specific formatting instructions
+- **HPC Usage**: See [Submission_Scripts/README.md](Design/Submission_Scripts/README.md) for cluster job submission workflows
+- **Result Analysis**: See [Results/README.md](Design/Results/README.md) for simulation and visualization tools
+- **Probe Assembly**: See [Sequences/README.md](Design/Sequences/README.md) for converting designs to sequences
+
 ## Installation
 
 ### Option 1: Using pip (Recommended)
@@ -414,17 +526,27 @@ The notebook handles all data formatting, parameter file creation, and CIPHER ex
 Follow these steps to execute CIPHER on a single parameter configuration:
 
 1. **Format Data:**
-   - Open and run the Jupyter Notebook located at `/Design/Notebooks/data_format.ipynb`
-   - This prepares your gene expression data into the required format (X_train.pt, X_test.pt, y_train.pt, y_test.pt)
+   - Use one of the data formatting scripts in `Design/Data_Format/`:
+     - `data_format.py` - For Allen Whole Mouse Brain dataset
+     - `data_format_lymph.py` - For mouse lymph node datasets
+     - `data_format_dev_mouse.py` - For developmental mouse datasets
+   - These scripts prepare your gene expression data into the required format:
+     - `X_train.pt`, `X_test.pt`: Training and test gene expression tensors
+     - `y_train.pt`, `y_test.pt`: Training and test cell type label tensors
+     - `categorical_converter.csv`: Mapping from cell type names to integer labels (required for CIPHER)
+     - `constraints.csv`: Maximum allowed probes per gene
+   - See `Design/Data_Format/README.md` for detailed information on each script
 
-2. **Format Parameters:**
-   - Open and run the Jupyter Notebook located at `/Design/Notebooks/parameters_format.ipynb`
-   - This creates a CSV parameter file with all necessary configuration
+2. **Create Parameter File:**
+   - Use `Design/create_parameter_file.py` to create parameter files, or manually create a CSV file following the format described below
+   - For dataset-specific parameter file creation, see:
+     - `create_parameter_file_lymph.py` - For lymph node datasets
+     - `create_parameter_file_dev_mouse.py` - For developmental mouse datasets
 
 3. **Run CIPHER:**
    - Execute the main script using the following command, replacing `"path/to/parameters/file"` with the actual path to your parameters CSV file:
     ```bash
-    python /Design/CIPHER.py "path/to/parameters/file"
+    python Design/CIPHER.py "path/to/parameters/file"
     ```
 
    The script will:
@@ -439,20 +561,23 @@ Follow these steps to execute CIPHER on a single parameter configuration:
 For systematic exploration of parameter space, use the batch processing workflow:
 
 1. **Format Reference Scripts:**
-   - `data_format.py` - Formats the data for the reference dataset
-     - **Parameters to change:** `data_path`, `output_path`, `csv_file`
-     - ```bash
-        conda activate designer_3.12
-        python ./Design/data_format.py
-        ```
-   - `create_type_tree.py` - Creates the type tree for the reference (if needed)
+   - Use scripts in `Design/Data_Format/`:
+     - `data_format.py` - Formats the data for the reference dataset
+     - `data_format_lymph.py` - For lymph node datasets
+     - `data_format_dev_mouse.py` - For developmental mouse datasets
+     - `create_type_tree.py` - Creates the type tree for the reference (if needed)
+   - **Parameters to change:** `data_path`, `output_path`, `csv_file` (in each script)
+   - ```bash
+      conda activate designer_3.12
+      python Design/Data_Format/data_format.py
+      ```
 
 2. **Create Parameter Files and Submit Jobs:**
-   - `create_parameter_file.py` - Creates parameter files for all combinations and automatically submits jobs
+   - `Design/create_parameter_file.py` - Creates parameter files for all combinations and automatically submits jobs
      - **Parameters to change:** `base_dir`, `parameter_variant_list` (in the script)
      - ```bash
         conda activate designer_3.12
-        python ./Design/create_parameter_file.py [Run#]
+        python Design/create_parameter_file.py [Run#]
         ```
      - **Run number:** You can specify a run number (e.g., `Run0`, `Run1`) or let the script automatically find the next available run number
      - This script:
@@ -460,12 +585,13 @@ For systematic exploration of parameter space, use the batch processing workflow
        - Creates CSV parameter files in `Runs/Run#/params_files_to_scan/`
        - Automatically calls `sub_multi_param_file_optimization.sh` to submit jobs
    
-   - `sub_multi_param_file_optimization.sh` - Submits and manages batch jobs
+   - `Design/Submission_Scripts/sub_multi_param_file_optimization.sh` - Submits and manages batch jobs
      - **Parameters to change:** `OPT_DIR`, `CODE_DIR`, replace `Run0` with your run number
      - **Note:** This script is automatically called by `create_parameter_file.py`, but can be run manually:
      - ```bash
-        ./Design/sub_multi_param_file_optimization.sh Run0
+        ./Design/Submission_Scripts/sub_multi_param_file_optimization.sh Run0
         ```
+   - See `Design/Submission_Scripts/README.md` for detailed information on all submission scripts
 
 ### Parameter File Format
 
@@ -552,6 +678,28 @@ The projections represent the expected signal for each bit:
 - **Brightness**: Median signal intensity
 - **Probe Count**: Total number of probes used
 
+## Additional Workflows
+
+### Result Analysis
+
+After running CIPHER designs, use scripts in `Design/Results/` to analyze and visualize results:
+
+- **`simulation.py`**: Test probe designs on simulated experimental data
+- **`get_results.py`**: Aggregate results from multiple design runs
+- **`create_figures.py`**: Generate publication-quality figures
+
+See `Design/Results/README.md` for detailed documentation.
+
+### Probe Sequence Assembly
+
+After training CIPHER, convert encoding weights to complete probe sequences using notebooks in `Design/Sequences/`:
+
+- **`make_fasta.ipynb`**: Main assembly notebook that converts encoding weights to probe sequences
+- **`super_probe_30mer_arms_2025Apr24.ipynb`**: Generate optimized 30-mer readout arms (currently used)
+- **`super_probe_20mer_arms_2025Apr30.ipynb`**: Generate optimized 20-mer sequences (for future bDNA applications)
+
+See `Design/Sequences/README.md` for detailed documentation.
+
 ## Tips and Best Practices
 
 1. **Start with fewer bits**: Begin with 12-24 bits to understand the system before scaling up
@@ -561,6 +709,8 @@ The projections represent the expected signal for each bit:
 5. **Respect constraints**: Ensure `gene_constraint_wt` is high enough to prevent violations
 6. **Check convergence**: Look for plateau in loss and accuracy metrics
 7. **Save best model**: Set `best_model=1` to automatically save the best checkpoint
+8. **Use appropriate data formatting script**: Choose the correct `data_format*.py` script for your dataset type
+9. **Check submission script documentation**: See `Design/Submission_Scripts/README.md` for HPC cluster usage
 
 ## Troubleshooting
 
