@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # Standard library imports
 # conda activate dredfish_3.9 ; python /scratchdata1/GeneralStorage/Zach/Designs/Sync/code/simulation.py "/scratchdata1/GeneralStorage/Zach/Designs/Sync/params_fig_Probe Number Tradeoff (36 Bits)_decoder_n_lyr_0_n_probes_50000_n_bit_36_replicate_1"
+# conda activate dredfish_3.9 ; python /scratchdata1/GeneralStorage/Zach/Designs/Sync/code/simulation.py "/scratchdata1/GeneralStorage/Zach/Designs/Sync/TreeDPNMF_18bit"
+# conda activate dredfish_3.9 ; python /scratchdata1/GeneralStorage/Zach/Designs/Sync/code/simulation.py "/scratchdata1/GeneralStorage/Zach/Designs/Sync/TreeDPNMF_10X_18bit"
 import os
 import json
 import logging
@@ -17,69 +19,28 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm, trange
 # Scientific computing
 from sklearn.linear_model import LogisticRegression, LinearRegression, RANSACRegressor
+from sklearn.neural_network import MLPClassifier
 from scipy.interpolate import interp1d
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 from scipy.ndimage import gaussian_filter
-
+logger = logging.getLogger("Simulation")
 """ Parse Command Line Arguments """
 import argparse
-
+# conda activate dredfish_3.9 ; python /scratchdata1/GeneralStorage/Zach/Designs/Sync/code/simulation.py "/scratchdata1/GeneralStorage/Zach/Designs/Sync/params_fig_Probe Number Tradeoff (18 Bits)_decoder_n_lyr_1_n_probes_50000_n_bit_18_replicate_1"
+# conda activate dredfish_3.9 ; python /scratchdata1/GeneralStorage/Zach/Designs/Sync/code/simulation.py "/scratchdata1/GeneralStorage/Zach/Designs/Sync/TreeDPNMF_18bit"
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Run simulation analysis')
     parser.add_argument('input_path', type=str, 
                        help='Path to the design results directory')
-    parser.add_argument('--data_path', type=str, default='/u/home/z/zeh/rwollman/data',
+    parser.add_argument('--data_path', type=str, default='/scratchdata1/ExternalData',
                        help='Path to external data directory (default: /scratchdata1/ExternalData)')
     parser.add_argument('--ccf_x_min', type=float, default=0,
-                       help='Minimum CCF x coordinate (default: 4.5)')
+                       help='Minimum CCF x coordinate (default: 0)')
     parser.add_argument('--ccf_x_max', type=float, default=20,
-                       help='Maximum CCF x coordinate (default: 9.5)')
+                       help='Maximum CCF x coordinate (default: 20)')
     return parser.parse_args()
 
-# Parse command line arguments
-args = parse_arguments()
-input_path = args.input_path
-data_path = args.data_path
-ccf_x_min = args.ccf_x_min
-ccf_x_max = args.ccf_x_max
-design_name = input_path.split('/')[-1]
-
-""" Setup Logging """
-for handler in logging.root.handlers[:]:
-    logging.root.removeHandler(handler)
-log_file = os.path.join(input_path, 'simulation.log')
-logging.basicConfig(
-    filename=log_file, filemode='a',
-    format='%(message)s            |||| %(asctime)s %(name)s %(levelname)s',
-    datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
-logger = logging.getLogger("Simulation")
-
-""" Setup Paths """
-paths = {}
-paths['WeightMat'] = f"{input_path}/results/E_constrained.csv"
-paths['Design'] = f"{data_path}/Allen_Cortex_Hippocampus_SmartSeq_2023Sep07"
-paths['Reference'] = f"{data_path}/Allen_WMB_2024Mar06"
-paths['Simulation'] = f"{data_path}/Zhaung_WMB/"
-for key,val in paths.items():
-    if not os.path.exists(val):
-        logger.error(f"Path {val} does not exist.")
-        raise ValueError(f"Path {val} does not exist.")
-
-paths['Save'] = f"{input_path}/Simulation"
-if not os.path.exists(paths['Save']):
-    os.mkdir(paths['Save'])
-paths['Output'] = {}
-for path in ['Design','Reference','Simulation','Results']:
-    paths['Output'][path] = os.path.join(paths['Save'],path)
-    if not os.path.exists(paths['Output'][path]):
-        os.mkdir(paths['Output'][path])
-
-""" Load Weights """
-WeightMat = pd.read_csv(paths['WeightMat'], index_col=0)
-logger.info(f"Weights loaded. Shape: {WeightMat.shape}")
-
-""" Build Reference """
 def process_single_file(file_name, current_dataset_path, current_cell_annotation_index, current_cell_extended, current_WeightMat, current_design_name, current_projected_path, current_dataset_batch, current_dataset_name_for_path):
     """
     Processes a single data file.
@@ -162,149 +123,6 @@ def process_single_file(file_name, current_dataset_path, current_cell_annotation
         traceback.print_exc()
         return None
 
-# Main processing block
-if not os.path.exists(os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")):
-    logger.info("Starting main processing: Combined reference file does not exist.")
-    logger.info("Loading 10X data manifest and metadata...")
-    manifest_path = os.path.join(paths['Reference'], 'manifest.json')
-    try:
-        manifest = json.load(open(manifest_path))
-    except:
-        logger.info(f"Manifest file does not exist. Downloading from AWS. {manifest_path}")
-        url = 'https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/releases/%s/manifest.json' % '20230830'
-        manifest = json.loads(requests.get(url).text)
-        with open(manifest_path, 'w') as f:
-            json.dump(manifest, f)
-    
-    metadata = manifest['file_listing']['WMB-10X']['metadata']
-    rpath_cell_meta = metadata['cell_metadata']['files']['csv']['relative_path']
-    file_cell_meta = os.path.join(paths['Reference'], rpath_cell_meta)
-    cell = pd.read_csv(file_cell_meta, dtype={'cell_label':str})
-    cell.set_index('cell_label', inplace=True)
-
-    taxonomy_metadata = manifest['file_listing']['WMB-taxonomy']['metadata']
-    rpath_cluster_details = taxonomy_metadata['cluster_to_cluster_annotation_membership_pivoted']['files']['csv']['relative_path']
-    file_cluster_details = os.path.join(paths['Reference'], rpath_cluster_details)
-    cluster_details = pd.read_csv(file_cluster_details, keep_default_na=False)
-    cluster_details.set_index('cluster_alias', inplace=True)
-
-    rpath_cluster_colors = taxonomy_metadata['cluster_to_cluster_annotation_membership_color']['files']['csv']['relative_path']
-    file_cluster_colors = os.path.join(paths['Reference'], rpath_cluster_colors)
-    cluster_colors = pd.read_csv(file_cluster_colors)
-    cluster_colors.set_index('cluster_alias', inplace=True)
-
-    rpath_roi_meta = metadata['region_of_interest_metadata']['files']['csv']['relative_path']
-    file_roi_meta = os.path.join(paths['Reference'], rpath_roi_meta)
-    roi = pd.read_csv(file_roi_meta)
-    roi.set_index('acronym', inplace=True)
-    roi.rename(columns={'order':'region_of_interest_order', 'color_hex_triplet':'region_of_interest_color'}, inplace=True)
-
-    cell_extended = cell.join(cluster_details, on='cluster_alias')
-    cell_extended = cell_extended.join(cluster_colors, on='cluster_alias')
-    cell_extended = cell_extended.join(roi[['region_of_interest_order', 'region_of_interest_color']], on='region_of_interest_acronym')
-    logger.info("Metadata loaded and joined.")
-
-    data_keys = [i for i in manifest['directory_listing'].keys() if ('-10Xv' in i) and ('expression_matrices' in manifest['directory_listing'][i]['directories'].keys())]
-    cell_annotation_index = cell_extended.index
-    all_concatenated_data_batches = []
-    for key in data_keys:
-        logger.info(f"\nProcessing key: {key}")
-        data_type, dataset_batch, dataset_name_for_path = manifest['directory_listing'][key]['directories']['expression_matrices']['relative_path'].split('/')
-        os.makedirs(os.path.join(paths['Output']['Reference'], dataset_batch, dataset_name_for_path), exist_ok=True)
-        dataset_path_for_key = os.path.join(paths['Reference'], data_type, dataset_batch, dataset_name_for_path)
-        logger.info(f"Dataset path for key {key}: {dataset_path_for_key}")
-        if not os.path.isdir(dataset_path_for_key):
-            logger.warning(f"Dataset path {dataset_path_for_key} does not exist or is not a directory. Skipping.")
-            continue
-        files_in_dataset = os.listdir(dataset_path_for_key)
-        tasks_for_executor = []
-        for file_name_loop in files_in_dataset:
-            if 'log' in file_name_loop.lower(): # Make check case-insensitive
-                continue
-            if not 'WMB' in file_name_loop: # Assuming 'WMB' check is still relevant
-                continue
-            if not file_name_loop.endswith('.h5ad'): # Process only .h5ad files
-                continue
-            tasks_for_executor.append(
-                (file_name_loop, dataset_path_for_key, cell_annotation_index, cell_extended, WeightMat, design_name, paths['Output']['Reference'], dataset_batch, dataset_name_for_path)
-            )
-        if not tasks_for_executor:
-            logger.warning(f"No valid .h5ad files found to process for key {key} in {dataset_path_for_key}")
-            continue
-        current_batch_processed_data = []
-        
-        # Log memory usage before starting batch
-        try:
-            import psutil
-            process = psutil.Process()
-            memory_mb = process.memory_info().rss / 1024 / 1024
-            logger.info(f"Memory usage before batch {dataset_batch}: {memory_mb:.1f} MB")
-        except:
-            pass
-            
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            logger.info(f"Submitting {len(tasks_for_executor)} files for processing using 5 threads for batch {dataset_batch}...")
-            future_to_task_args = {executor.submit(process_single_file, *task_args): task_args for task_args in tasks_for_executor}
-            for i, future in tqdm(enumerate(as_completed(future_to_task_args)), total=len(future_to_task_args), desc=f"Processing files in batch {dataset_batch}"):
-                task_args_done = future_to_task_args[future]
-                file_name_done = task_args_done[0]
-                logger.info(f"Thread finished for file: {file_name_done} ({i+1}/{len(tasks_for_executor)})")
-                try:
-                    result_out_data = future.result()
-                    if result_out_data is not None:
-                        current_batch_processed_data.append(result_out_data)
-                except Exception as exc:
-                    logger.error(f"File {file_name_done} generated an exception during future.result(): {exc}")
-                    import traceback
-                    traceback.print_exc()
-            # Clean up futures and task args to free memory
-            del future_to_task_args
-            gc.collect()
-        if current_batch_processed_data:
-            logger.info(f"Concatenating {len(current_batch_processed_data)} processed files for batch {dataset_batch}...")
-            try:
-                concatenated_data_for_batch = anndata.concat(current_batch_processed_data, index_unique='observations')
-                batch_out_dir = os.path.join(paths['Output']['Reference'], dataset_batch)
-                os.makedirs(batch_out_dir, exist_ok=True)
-                out_path_batch_combined = os.path.join(batch_out_dir, dataset_batch + '_combined.h5ad')
-                logger.info(f"Writing combined batch data to: {out_path_batch_combined}")
-                concatenated_data_for_batch.write(out_path_batch_combined)
-                all_concatenated_data_batches.append(concatenated_data_for_batch)
-                logger.info(f"Finished processing and combining for batch {dataset_batch}")
-                # Clean up batch data to free memory
-                del current_batch_processed_data, concatenated_data_for_batch
-                gc.collect()
-            except Exception as e_concat:
-                logger.error(f"Error concatenating batch {dataset_batch}: {e_concat}")
-                import traceback
-                traceback.print_exc()
-        else:
-            logger.warning(f"No data to concatenate for batch {dataset_batch}.")
-        logger.info(' ')
-    if all_concatenated_data_batches:
-        logger.info("\nConcatenating all processed batches...")
-        try:
-            final_all_concatenated_data = anndata.concat(all_concatenated_data_batches, index_unique='observations') # Or 'raise'
-            final_output_path = os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")
-            logger.info(f"Writing final concatenated data to: {final_output_path}")
-            final_all_concatenated_data.write(final_output_path)
-            logger.info("All processing complete. Final file written.")
-            del final_all_concatenated_data # Free memory
-        except Exception as e_final_concat:
-            logger.error(f"Error during final concatenation: {e_final_concat}")
-            import traceback
-            traceback.print_exc()
-    else:
-        logger.warning("No data was processed and concatenated across all batches. Final file not written.")
-
-    logger.info("Freeing up memory...")
-    del all_concatenated_data_batches, cell_extended, cell, cluster_details, cluster_colors, roi, manifest
-else:
-    fname = os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")
-    logger.info(f"Combined reference file {fname} already exists. Skipping processing.")
-
-""" Build Simulation """
-""" Chunk Data """
 def chunk_data(fname):
     adata = anndata.read_h5ad(fname,backed='r')
     n_cells = adata.shape[0]
@@ -356,89 +174,6 @@ def chunk_data(fname):
         logger.info(f"Writing chunk {i} to {chunk_fname}")
         chunk_adata.write(chunk_fname)
         del chunk_adata
-for i in ['anterior','posterior']:
-    chunk_data(os.path.join(paths['Simulation'], f"WB_imputation_animal1_coronal_{i}.h5ad"))
-
-def process_chunk_item(chunk_h5ad_path, WeightMat_main, ccf_x_min_val, ccf_x_max_val):
-    """Processes a single data chunk file."""
-    try:
-        adata = anndata.read_h5ad(chunk_h5ad_path)
-        ccf_x_coords = np.array(adata.obsm['X_CCF'])[:, 0] / 1000.0
-        mask = (adata.obs['high_quality_transfer']) & (ccf_x_coords > ccf_x_min_val) & (ccf_x_coords < ccf_x_max_val)
-        if not np.any(mask):
-            return None
-        adata = adata[mask, :].copy()
-        adata_genes = adata.var['gene_name']
-        shared_genes = sorted(list(set(adata_genes).intersection(set(WeightMat_main.index))))
-        if not shared_genes:
-            logger.warning(f"No shared genes for {os.path.basename(chunk_h5ad_path)}")
-            return None
-        # Prepare var for gene ID mapping
-        var_temp = adata.var.copy()
-        var_temp['gene_id_col'] = var_temp.index # Store original var index (e.g. Ensembl)
-        var_temp = var_temp.set_index('gene_name', drop=False) # Set gene_name as index
-        var_temp_shared = var_temp.loc[shared_genes]
-        adata_var_indices_ordered = var_temp_shared['gene_id_col'].values
-        adata = adata[:, adata_var_indices_ordered].copy()
-        WeightMat_chunk_specific = WeightMat_main.loc[shared_genes]
-        E = torch.tensor(WeightMat_chunk_specific.values, dtype=torch.float32)
-        if hasattr(adata.X, "toarray"):
-            X_data = adata.X.toarray()
-        else:
-            X_data = adata.X
-        X = torch.tensor(X_data, dtype=torch.float32)
-        y_str = np.array(adata.obs['subclass_transfer'])
-        ccf_coords = adata.obsm['X_CCF']
-        P = X.mm(E)
-        projected_obs_df = pd.DataFrame(index=adata.obs.index)
-        projected_obs_df['subclass'] = y_str
-        projected_obs_df['ccf_x'] = ccf_coords[:, 0] / 1000.0
-        projected_obs_df['ccf_y'] = ccf_coords[:, 1] / 1000.0
-        projected_obs_df['ccf_z'] = ccf_coords[:, 2] / 1000.0
-        num_readouts = WeightMat_chunk_specific.shape[1]
-        projected_var_df = pd.DataFrame(index=[f"readout{i}" for i in range(num_readouts)])
-        projected_var_df['readout'] = [f"readout{i}" for i in range(num_readouts)]
-        projected_var_df['hybe'] = [f"hybe{i}" for i in range(num_readouts)]
-        projected_var_df['channel'] = [f"FarRed" for i in range(num_readouts)]
-        adata = anndata.AnnData(X=P.numpy(), obs=projected_obs_df.copy(), var=projected_var_df.copy())
-        # Clean up intermediate variables (but keep P for the return)
-        # del adata, WeightMat_chunk_specific, E, X, X_data, ccf_coords, P, projected_obs_df, projected_var_df
-        gc.collect()
-        return adata
-    except Exception as e:
-        logger.error(f"Error processing {os.path.basename(chunk_h5ad_path)}: {e}")
-        return None
-
-# Main processing logic
-output_file = os.path.join(paths['Output']['Simulation'], f"{design_name}.h5ad")
-if not os.path.exists(output_file):
-    all_projected_adatas = []
-    chunk_file_paths_to_process = [os.path.join(paths['Simulation'], i) for i in os.listdir(paths['Simulation']) if ('chunk' in i)]
-    if not chunk_file_paths_to_process:
-        logger.warning("No chunk files found to process.")
-    else:
-        logger.info(f"Found {len(chunk_file_paths_to_process)} chunk files to process")
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            futures = [executor.submit(process_chunk_item, cfp, WeightMat, ccf_x_min, ccf_x_max) for cfp in chunk_file_paths_to_process]
-            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing chunks"):
-                result = future.result()
-                if result is not None:
-                    all_projected_adatas.append(result)
-            # Clean up futures to free memory
-            del futures
-            gc.collect()
-        if all_projected_adatas:
-            final_projected_adata = anndata.concat(all_projected_adatas, axis=0, join='outer', merge='same')
-            final_projected_adata.write_h5ad(output_file)
-            logger.info(f"Processing complete. Final AnnData shape: {final_projected_adata.shape}")
-            del final_projected_adata, all_projected_adatas, WeightMat
-        else:
-            logger.warning("No data was successfully processed from chunks.")
-            raise ValueError("No data was successfully processed from chunks.")
-else:
-    logger.info(f"Output file {output_file} already exists. Skipping.")
-
-""" Test Simulation """
 
 def harmonize(M1, M2, pvmin=0, pvmax=100, num_quantiles=1000):
     """
@@ -450,8 +185,8 @@ def harmonize(M1, M2, pvmin=0, pvmax=100, num_quantiles=1000):
         pvmin: Lower percentile bound for outlier removal (default: 0).
         pvmax: Upper percentile bound for outlier removal (default: 100).
         num_quantiles: Number of quantiles to use for alignment (default: 1000).
-                       Higher values give finer alignment but can be more sensitive
-                       to noise.  A good starting point is 1000, but adjust as needed.
+                    Higher values give finer alignment but can be more sensitive
+                    to noise.  A good starting point is 1000, but adjust as needed.
 
     Returns:
         M2_aligned: The aligned measured data matrix.
@@ -473,7 +208,11 @@ def harmonize(M1, M2, pvmin=0, pvmax=100, num_quantiles=1000):
 
         if len(m1_valid) < 2 or len(m2_valid) < 2:  # Not enough valid data
             # Fallback:  Shift M2's median to match M1's median
+            logger.warning(f" m1_valid Not enough valid data for column {i}, shifting M2's median to match M1's median")
             M2_aligned[:, i] = m2_col - np.nanmedian(m2_col) + np.nanmedian(m1_col)
+            nan_indices = np.isnan(M2_aligned[:, i])
+            if np.any(nan_indices):  # If there are still NaNs, replace with M1's median
+                M2_aligned[nan_indices, i] = np.nanmedian(m1_col)
             continue
 
         vmin1, vmax1 = np.percentile(m1_valid, [pvmin, pvmax])
@@ -483,7 +222,11 @@ def harmonize(M1, M2, pvmin=0, pvmax=100, num_quantiles=1000):
         m2_filtered = m2_valid[(m2_valid >= vmin2) & (m2_valid <= vmax2)]
 
         if len(m1_filtered) < 2 or len(m2_filtered) < 2:  # Not enough data after filtering
+            logger.warning(f"m1_filtered Not enough valid data for column {i}, shifting M2's median to match M1's median")
             M2_aligned[:, i] = m2_col - np.nanmedian(m2_col) + np.nanmedian(m1_col)
+            nan_indices = np.isnan(M2_aligned[:, i])
+            if np.any(nan_indices):  # If there are still NaNs, replace with M1's median
+                M2_aligned[nan_indices, i] = np.nanmedian(m1_col)
             continue
         
         # 2. Quantile Normalization (using interpolation)
@@ -499,7 +242,14 @@ def harmonize(M1, M2, pvmin=0, pvmax=100, num_quantiles=1000):
         m2_quantiles, unique_indices_m2 = np.unique(m2_quantiles, return_index = True)
         m1_quantiles = m1_quantiles[unique_indices_m2]
 
-
+        if (len(m1_quantiles) < 2) | (len(m2_quantiles) < 2):
+            """ Mean center only"""
+            logger.warning(f"m1_quantiles Not enough valid data for column {i}, shifting M2's median to match M1's median")
+            M2_aligned[:, i] = m2_col - np.nanmedian(m2_col) + np.nanmedian(m1_col)
+            nan_indices = np.isnan(M2_aligned[:, i])
+            if np.any(nan_indices):  # If there are still NaNs, replace with M1's median
+                M2_aligned[nan_indices, i] = np.nanmedian(m1_col)
+            continue
         # Create an interpolation function:  m2_values -> m1_values
         interp_func = interp1d(
             m2_quantiles,
@@ -515,7 +265,7 @@ def harmonize(M1, M2, pvmin=0, pvmax=100, num_quantiles=1000):
         # 4. Handle NaNs in the result (if any)
         nan_indices = np.isnan(M2_aligned[:, i])
         if np.any(nan_indices):  # If there are still NaNs, replace with M1's median
-             M2_aligned[nan_indices, i] = np.nanmedian(m1_col)
+            M2_aligned[nan_indices, i] = np.nanmedian(m1_col)
 
     return M2_aligned
 
@@ -571,7 +321,7 @@ class KDESpatialPriors(object):
     ref='/scratchdata2/MouseBrainAtlases/MouseBrainAtlases_V0/Allen/',
     ref_levels=['class', 'subclass'],neuron=None,kernel = (0.25,0.1,0.1),
     border=1,binsize=0.1,bins=None,gates=None,types=None,symetric=False):
-        self.out_path = f"/u/home/z/zeh/rwollman/data/KDE_kernel_{kernel[0]}_{kernel[1]}_{kernel[2]}_border_{border}_binsize_{binsize}_level_{ref_levels[-1]}_neuron_{neuron}_symetric_{symetric}.pkl"
+        self.out_path = f"/scratchdata1/KDE_kernel_{kernel[0]}_{kernel[1]}_{kernel[2]}_border_{border}_binsize_{binsize}_level_{ref_levels[-1]}_neuron_{neuron}_symetric_{symetric}.pkl"
         logger.info(f"KDESpatialPriors: {self.out_path}")
         self.symetric = symetric
         if os.path.exists(self.out_path):
@@ -710,7 +460,10 @@ class SingleCellAlignmentLeveragingExpectations():
         self.n_models = 5
 
     def update_user(self,message):
-        logger.info(f"SCALE: {message}")
+        try:
+            logger.info(f"SCALE: {message}")
+        except:
+            print(f"SCALE: {message}")
 
     def unsupervised_clustering(self):
         self.update_user("Unsupervised Clustering is not up to date")
@@ -1236,34 +989,359 @@ class SingleCellAlignmentLeveragingExpectations():
                 plt.tight_layout()
                 plt.show()
 
-""" Load Simulation Data """
-adata = anndata.read_h5ad(os.path.join(paths['Output']['Simulation'],f"{design_name}.h5ad"))
-adata = adata[(adata.obs['ccf_x']>ccf_x_min) &(adata.obs['ccf_x']<ccf_x_max)].copy()
-adata.obs['true_subclass'] = adata.obs['subclass'].copy()
-adata.layers['raw'] = adata.X.copy()
-complete_reference = anndata.read_h5ad(os.path.join(paths['Output']['Reference'],f"{design_name}.h5ad"))
 
-""" Decode """
-np.random.seed(42)
-self = SingleCellAlignmentLeveragingExpectations(adata,complete_reference=complete_reference,visualize=False,verbose=False)
-self.likelihood_only = False
-self.calculate_spatial_priors()
-self.load_reference()
-self.model = LogisticRegression(max_iter=1000,random_state=42) 
-self.supervised_neuron_annotation()
-self.supervised_harmonization()
-adata = self.measured.copy()
-remove_index = {ct:ct[4:] for ct in adata.obs['subclass'].unique()}
-adata.obs['predicted_subclass'] = adata.obs['subclass'].map(remove_index)
-adata.write(os.path.join(paths['Output']['Results'],f"{design_name}.h5ad"))
-accuracy = np.mean(np.array(adata.obs['predicted_subclass'].values)==np.array(adata.obs['true_subclass'].values))
-logger.info(f"Final accuracy: {accuracy}")
+if __name__ == '__main__':
+    # Parse command line arguments
+    args = parse_arguments()
+    input_path = args.input_path
+    data_path = args.data_path
+    ccf_x_min = args.ccf_x_min
+    ccf_x_max = args.ccf_x_max
+    design_name = input_path.split('/')[-1]
 
-""" Report Results """
-results = {'accuracy': accuracy}
-# save results to json
-with open(os.path.join(paths['Output']['Results'],f"{design_name}.json"),'w') as f:
-    json.dump(results,f)
+    """ Setup Logging """
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    log_file = os.path.join(input_path, 'simulation.log')
+    logging.basicConfig(
+        filename=log_file, filemode='a',
+        format='%(message)s            |||| %(asctime)s %(name)s %(levelname)s',
+        datefmt='%Y %B %d %H:%M:%S', level=logging.INFO, force=True)
+    logger = logging.getLogger("Simulation")
+
+    """ Setup Paths """
+    paths = {}
+    paths['WeightMat'] = f"{input_path}/results/E_constrained.csv"
+    paths['Design'] = f"{data_path}/Allen_Cortex_Hippocampus_SmartSeq_2023Sep07"
+    paths['Reference'] = f"{data_path}/Allen_WMB_2024Mar06"
+    paths['Simulation'] = f"{data_path}/Zhaung_WMB/"
+    for key,val in paths.items():
+        if not os.path.exists(val):
+            logger.error(f"Path {val} does not exist.")
+            raise ValueError(f"Path {val} does not exist.")
+
+    paths['Save'] = f"{input_path}/Simulation"
+    if not os.path.exists(paths['Save']):
+        os.mkdir(paths['Save'])
+    paths['Output'] = {}
+    for path in ['Design','Reference','Simulation','Results']:
+        paths['Output'][path] = os.path.join(paths['Save'],path)
+        if not os.path.exists(paths['Output'][path]):
+            os.mkdir(paths['Output'][path])
+
+    """ Load Weights """
+    WeightMat = pd.read_csv(paths['WeightMat'], index_col=0)
+    logger.info(f"Weights loaded. Shape: {WeightMat.shape}")
+
+    """ Build Reference """
+
+    # Main processing block
+    if not os.path.exists(os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")):
+        logger.info("Starting main processing: Combined reference file does not exist.")
+        logger.info("Loading 10X data manifest and metadata...")
+        manifest_path = os.path.join(paths['Reference'], 'manifest.json')
+        try:
+            manifest = json.load(open(manifest_path))
+        except:
+            logger.info(f"Manifest file does not exist. Downloading from AWS. {manifest_path}")
+            url = 'https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/releases/%s/manifest.json' % '20230830'
+            manifest = json.loads(requests.get(url).text)
+            with open(manifest_path, 'w') as f:
+                json.dump(manifest, f)
+        
+        metadata = manifest['file_listing']['WMB-10X']['metadata']
+        rpath_cell_meta = metadata['cell_metadata']['files']['csv']['relative_path']
+        file_cell_meta = os.path.join(paths['Reference'], rpath_cell_meta)
+        cell = pd.read_csv(file_cell_meta, dtype={'cell_label':str})
+        cell.set_index('cell_label', inplace=True)
+
+        taxonomy_metadata = manifest['file_listing']['WMB-taxonomy']['metadata']
+        rpath_cluster_details = taxonomy_metadata['cluster_to_cluster_annotation_membership_pivoted']['files']['csv']['relative_path']
+        file_cluster_details = os.path.join(paths['Reference'], rpath_cluster_details)
+        cluster_details = pd.read_csv(file_cluster_details, keep_default_na=False)
+        cluster_details.set_index('cluster_alias', inplace=True)
+
+        rpath_cluster_colors = taxonomy_metadata['cluster_to_cluster_annotation_membership_color']['files']['csv']['relative_path']
+        file_cluster_colors = os.path.join(paths['Reference'], rpath_cluster_colors)
+        cluster_colors = pd.read_csv(file_cluster_colors)
+        cluster_colors.set_index('cluster_alias', inplace=True)
+
+        rpath_roi_meta = metadata['region_of_interest_metadata']['files']['csv']['relative_path']
+        file_roi_meta = os.path.join(paths['Reference'], rpath_roi_meta)
+        roi = pd.read_csv(file_roi_meta)
+        roi.set_index('acronym', inplace=True)
+        roi.rename(columns={'order':'region_of_interest_order', 'color_hex_triplet':'region_of_interest_color'}, inplace=True)
+
+        cell_extended = cell.join(cluster_details, on='cluster_alias')
+        cell_extended = cell_extended.join(cluster_colors, on='cluster_alias')
+        cell_extended = cell_extended.join(roi[['region_of_interest_order', 'region_of_interest_color']], on='region_of_interest_acronym')
+        logger.info("Metadata loaded and joined.")
+
+        data_keys = [i for i in manifest['directory_listing'].keys() if ('-10Xv' in i) and ('expression_matrices' in manifest['directory_listing'][i]['directories'].keys())]
+        cell_annotation_index = cell_extended.index
+        all_concatenated_data_batches = []
+        for key in data_keys:
+            logger.info(f"\nProcessing key: {key}")
+            data_type, dataset_batch, dataset_name_for_path = manifest['directory_listing'][key]['directories']['expression_matrices']['relative_path'].split('/')
+            os.makedirs(os.path.join(paths['Output']['Reference'], dataset_batch, dataset_name_for_path), exist_ok=True)
+            dataset_path_for_key = os.path.join(paths['Reference'], data_type, dataset_batch, dataset_name_for_path)
+            logger.info(f"Dataset path for key {key}: {dataset_path_for_key}")
+            if not os.path.isdir(dataset_path_for_key):
+                logger.warning(f"Dataset path {dataset_path_for_key} does not exist or is not a directory. Skipping.")
+                continue
+            files_in_dataset = os.listdir(dataset_path_for_key)
+            tasks_for_executor = []
+            for file_name_loop in files_in_dataset:
+                if 'log' in file_name_loop.lower(): # Make check case-insensitive
+                    continue
+                if not 'WMB' in file_name_loop: # Assuming 'WMB' check is still relevant
+                    continue
+                if not file_name_loop.endswith('.h5ad'): # Process only .h5ad files
+                    continue
+                tasks_for_executor.append(
+                    (file_name_loop, dataset_path_for_key, cell_annotation_index, cell_extended, WeightMat, design_name, paths['Output']['Reference'], dataset_batch, dataset_name_for_path)
+                )
+            if not tasks_for_executor:
+                logger.warning(f"No valid .h5ad files found to process for key {key} in {dataset_path_for_key}")
+                continue
+            current_batch_processed_data = []
+            
+            # Log memory usage before starting batch
+            try:
+                import psutil
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                logger.info(f"Memory usage before batch {dataset_batch}: {memory_mb:.1f} MB")
+            except:
+                pass
+                
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                logger.info(f"Submitting {len(tasks_for_executor)} files for processing using 5 threads for batch {dataset_batch}...")
+                future_to_task_args = {executor.submit(process_single_file, *task_args): task_args for task_args in tasks_for_executor}
+                for i, future in tqdm(enumerate(as_completed(future_to_task_args)), total=len(future_to_task_args), desc=f"Processing files in batch {dataset_batch}"):
+                    task_args_done = future_to_task_args[future]
+                    file_name_done = task_args_done[0]
+                    logger.info(f"Thread finished for file: {file_name_done} ({i+1}/{len(tasks_for_executor)})")
+                    try:
+                        result_out_data = future.result()
+                        if result_out_data is not None:
+                            current_batch_processed_data.append(result_out_data)
+                    except Exception as exc:
+                        logger.error(f"File {file_name_done} generated an exception during future.result(): {exc}")
+                        import traceback
+                        traceback.print_exc()
+                # Clean up futures and task args to free memory
+                del future_to_task_args
+                gc.collect()
+            if current_batch_processed_data:
+                logger.info(f"Concatenating {len(current_batch_processed_data)} processed files for batch {dataset_batch}...")
+                try:
+                    concatenated_data_for_batch = anndata.concat(current_batch_processed_data, index_unique='observations')
+                    batch_out_dir = os.path.join(paths['Output']['Reference'], dataset_batch)
+                    os.makedirs(batch_out_dir, exist_ok=True)
+                    out_path_batch_combined = os.path.join(batch_out_dir, dataset_batch + '_combined.h5ad')
+                    logger.info(f"Writing combined batch data to: {out_path_batch_combined}")
+                    concatenated_data_for_batch.write(out_path_batch_combined)
+                    all_concatenated_data_batches.append(concatenated_data_for_batch)
+                    logger.info(f"Finished processing and combining for batch {dataset_batch}")
+                    # Clean up batch data to free memory
+                    del current_batch_processed_data, concatenated_data_for_batch
+                    gc.collect()
+                except Exception as e_concat:
+                    logger.error(f"Error concatenating batch {dataset_batch}: {e_concat}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                logger.warning(f"No data to concatenate for batch {dataset_batch}.")
+            logger.info(' ')
+        if all_concatenated_data_batches:
+            logger.info("\nConcatenating all processed batches...")
+            try:
+                final_all_concatenated_data = anndata.concat(all_concatenated_data_batches, index_unique='observations') # Or 'raise'
+                final_output_path = os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")
+                logger.info(f"Writing final concatenated data to: {final_output_path}")
+                final_all_concatenated_data.write(final_output_path)
+                logger.info("All processing complete. Final file written.")
+                del final_all_concatenated_data # Free memory
+            except Exception as e_final_concat:
+                logger.error(f"Error during final concatenation: {e_final_concat}")
+                import traceback
+                traceback.print_exc()
+        else:
+            logger.warning("No data was processed and concatenated across all batches. Final file not written.")
+
+        logger.info("Freeing up memory...")
+        del all_concatenated_data_batches, cell_extended, cell, cluster_details, cluster_colors, roi, manifest
+    else:
+        fname = os.path.join(paths['Output']['Reference'], f"{design_name}.h5ad")
+        logger.info(f"Combined reference file {fname} already exists. Skipping processing.")
+
+    """ Build Simulation """
+    """ Chunk Data """
+
+    for i in ['anterior','posterior']:
+        chunk_data(os.path.join(paths['Simulation'], f"WB_imputation_animal1_coronal_{i}.h5ad"))
+
+    def process_chunk_item(chunk_h5ad_path, WeightMat_main, ccf_x_min_val, ccf_x_max_val):
+        """Processes a single data chunk file."""
+        try:
+            adata = anndata.read_h5ad(chunk_h5ad_path)
+            ccf_x_coords = np.array(adata.obsm['X_CCF'])[:, 0] / 1000.0
+            mask = (adata.obs['high_quality_transfer']) & (ccf_x_coords > ccf_x_min_val) & (ccf_x_coords < ccf_x_max_val)
+            if not np.any(mask):
+                return None
+            adata = adata[mask, :].copy()
+            adata_genes = adata.var['gene_name']
+            shared_genes = sorted(list(set(adata_genes).intersection(set(WeightMat_main.index))))
+            if not shared_genes:
+                logger.warning(f"No shared genes for {os.path.basename(chunk_h5ad_path)}")
+                return None
+            # Prepare var for gene ID mapping
+            var_temp = adata.var.copy()
+            var_temp['gene_id_col'] = var_temp.index # Store original var index (e.g. Ensembl)
+            var_temp = var_temp.set_index('gene_name', drop=False) # Set gene_name as index
+            var_temp_shared = var_temp.loc[shared_genes]
+            adata_var_indices_ordered = var_temp_shared['gene_id_col'].values
+            adata = adata[:, adata_var_indices_ordered].copy()
+            WeightMat_chunk_specific = WeightMat_main.loc[shared_genes]
+            E = torch.tensor(WeightMat_chunk_specific.values, dtype=torch.float32)
+            if hasattr(adata.X, "toarray"):
+                X_data = adata.X.toarray()
+            else:
+                X_data = adata.X
+            X = torch.tensor(X_data, dtype=torch.float32)
+            y_str = np.array(adata.obs['subclass_transfer'])
+            ccf_coords = adata.obsm['X_CCF']
+            P = X.mm(E)
+            projected_obs_df = pd.DataFrame(index=adata.obs.index)
+            projected_obs_df['subclass'] = y_str
+            projected_obs_df['ccf_x'] = ccf_coords[:, 0] / 1000.0
+            projected_obs_df['ccf_y'] = ccf_coords[:, 1] / 1000.0
+            projected_obs_df['ccf_z'] = ccf_coords[:, 2] / 1000.0
+            num_readouts = WeightMat_chunk_specific.shape[1]
+            projected_var_df = pd.DataFrame(index=[f"readout{i}" for i in range(num_readouts)])
+            projected_var_df['readout'] = [f"readout{i}" for i in range(num_readouts)]
+            projected_var_df['hybe'] = [f"hybe{i}" for i in range(num_readouts)]
+            projected_var_df['channel'] = [f"FarRed" for i in range(num_readouts)]
+            adata = anndata.AnnData(X=P.numpy(), obs=projected_obs_df.copy(), var=projected_var_df.copy())
+            # Clean up intermediate variables (but keep P for the return)
+            # del adata, WeightMat_chunk_specific, E, X, X_data, ccf_coords, P, projected_obs_df, projected_var_df
+            gc.collect()
+            return adata
+        except Exception as e:
+            logger.error(f"Error processing {os.path.basename(chunk_h5ad_path)}: {e}")
+            return None
+
+    # Main processing logic
+    output_file = os.path.join(paths['Output']['Simulation'], f"{design_name}.h5ad")
+    if not os.path.exists(output_file):
+        all_projected_adatas = []
+        chunk_file_paths_to_process = [os.path.join(paths['Simulation'], i) for i in os.listdir(paths['Simulation']) if ('chunk' in i)]
+        if not chunk_file_paths_to_process:
+            logger.warning("No chunk files found to process.")
+        else:
+            logger.info(f"Found {len(chunk_file_paths_to_process)} chunk files to process")
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [executor.submit(process_chunk_item, cfp, WeightMat, ccf_x_min, ccf_x_max) for cfp in chunk_file_paths_to_process]
+                for future in tqdm(as_completed(futures), total=len(futures), desc="Processing chunks"):
+                    result = future.result()
+                    if result is not None:
+                        all_projected_adatas.append(result)
+                # Clean up futures to free memory
+                del futures
+                gc.collect()
+            if all_projected_adatas:
+                final_projected_adata = anndata.concat(all_projected_adatas, axis=0, join='outer', merge='same')
+                final_projected_adata.write_h5ad(output_file)
+                logger.info(f"Processing complete. Final AnnData shape: {final_projected_adata.shape}")
+                del final_projected_adata, all_projected_adatas
+            else:
+                logger.warning("No data was successfully processed from chunks.")
+                raise ValueError("No data was successfully processed from chunks.")
+    else:
+        logger.info(f"Output file {output_file} already exists. Skipping.")
+
+    """ Test Simulation """
+
+    """ Load Simulation Data """
+    adata = anndata.read_h5ad(os.path.join(paths['Output']['Simulation'],f"{design_name}.h5ad"))
+    adata = adata[(adata.obs['ccf_x']>ccf_x_min) &(adata.obs['ccf_x']<ccf_x_max)].copy()
+    adata.obs['true_subclass'] = adata.obs['subclass'].copy()
+    adata.layers['raw'] = adata.X.copy()
+    complete_reference = anndata.read_h5ad(os.path.join(paths['Output']['Reference'],f"{design_name}.h5ad"))
+
+    """ Decode """
+    results = {}
+    for noise_level in [0,10e2,10e3,10e4]:
+        for model_type in ['LR','MLP']:
+            for likelihood_only in [True,False]:
+                if likelihood_only:
+                    save_fname = f"{model_type}_{design_name}_likelihood_only_{noise_level}.h5ad"
+                else:
+                    save_fname = f"{model_type}_{design_name}_{noise_level}.h5ad"
+                fname = os.path.join(paths['Output']['Results'],save_fname)
+                if os.path.exists(fname):
+                    adata = anndata.read_h5ad(fname)
+                else:
+                    np.random.seed(42)
+                    adata_copy = adata.copy()
+                    adata_copy.X = adata_copy.X + (np.random.rand(adata_copy.X.shape[0],adata_copy.X.shape[1]) * noise_level)
+                    adata_copy.layers['raw'] = adata_copy.X.copy()
+                    self = SingleCellAlignmentLeveragingExpectations(adata_copy,complete_reference=complete_reference,visualize=False,verbose=False)
+                    self.likelihood_only = likelihood_only
+                    self.calculate_spatial_priors()
+                    self.load_reference()
+                    if model_type == 'LR':
+                        self.model = LogisticRegression(max_iter=1000,random_state=42)
+                    elif model_type == 'MLP':
+                        self.model = MLPClassifier(hidden_layer_sizes=(WeightMat.shape[1]*3,), activation='relu', solver='adam', max_iter=1000, random_state=42)
+                    else:
+                        raise ValueError(f"Invalid model type: {model_type}")
+                    self.supervised_neuron_annotation()
+                    self.supervised_harmonization()
+                    adata = self.measured.copy()
+                    remove_index = {ct:ct[4:] for ct in adata.obs['subclass'].unique()}
+                    adata.obs['predicted_subclass'] = adata.obs['subclass'].map(remove_index)
+                    adata.write(fname)
+                accuracy = np.mean(np.array(adata.obs['predicted_subclass'].values)==np.array(adata.obs['true_subclass'].values))
+                results[f"{save_fname}_accuracy"] = accuracy
+                logger.info(f"{save_fname} accuracy: {accuracy}")
+            # central_brain_m = (adata.obs['ccf_x']>4.5) & (adata.obs['ccf_x']<9.5)
+            # central_brain_accuracy = np.mean(np.array(adata.obs['predicted_subclass'].values)==np.array(adata.obs['true_subclass'].values)[central_brain_m])
+            # results['central_brain_accuracy'] = central_brain_accuracy
+            # logger.info(f"Central brain accuracy: {central_brain_accuracy}")
+
+    # # Nonlinear Decoder
+    # fname = os.path.join(paths['Output']['Results'],f"MLP_{design_name}.h5ad")
+    # if os.path.exists(fname):
+    #     adata = anndata.read_h5ad(fname)
+    # else:
+    #     np.random.seed(42)
+    #     self = SingleCellAlignmentLeveragingExpectations(adata,complete_reference=complete_reference,visualize=False,verbose=False)
+    #     self.likelihood_only = False
+    #     self.calculate_spatial_priors()
+    #     self.load_reference()
+    #     self.model = MLPClassifier(hidden_layer_sizes=(WeightMat.shape[1]*3,), activation='relu', solver='adam', max_iter=1000, random_state=42)
+    #     self.supervised_neuron_annotation()
+    #     self.supervised_harmonization()
+    #     adata = self.measured.copy()
+    #     remove_index = {ct:ct[4:] for ct in adata.obs['subclass'].unique()}
+    #     adata.obs['predicted_subclass'] = adata.obs['subclass'].map(remove_index)
+    #     adata.write(os.path.join(paths['Output']['Results'],f"MLP_{design_name}.h5ad"))
+    # accuracy = np.mean(np.array(adata.obs['predicted_subclass'].values)==np.array(adata.obs['true_subclass'].values))
+    # results['MLP_accuracy'] = accuracy
+    # logger.info(f"Final accuracy: {accuracy}")
+    # central_brain_m = (adata.obs['ccf_x']>4.5) & (adata.obs['ccf_x']<9.5)
+    # central_brain_accuracy = np.mean(np.array(adata.obs['predicted_subclass'].values)==np.array(adata.obs['true_subclass'].values)[central_brain_m])
+    # results['MLP_central_brain_accuracy'] = central_brain_accuracy
+    # logger.info(f"Central brain accuracy: {central_brain_accuracy}")
+
+
+    logger.info(f"Results: {results}")
+    """ Report Results """
+    # save results to json
+    with open(os.path.join(paths['Output']['Results'],f"{design_name}.json"),'w') as f:
+        json.dump(results,f)
 
 
 
