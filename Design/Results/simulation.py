@@ -24,6 +24,7 @@ from scipy.interpolate import interp1d
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 from scipy.ndimage import gaussian_filter
+from pynndescent import NNDescent
 logger = logging.getLogger("Simulation")
 """ Parse Command Line Arguments """
 import argparse
@@ -578,7 +579,7 @@ class SingleCellAlignmentLeveragingExpectations():
         self.ref_medians = medians
         self.ref_stds = stds
 
-        self.update_user("Building Reference tree")
+        # self.update_user("Building Reference tree")
         # self.feature_tree_dict = {}
         # self.feature_tree_dict['labels'] = np.array(self.reference.obs.index.copy())
         # self.feature_tree_dict['tree'] = NNDescent(self.reference.layers['classification_space'], metric='euclidean', n_neighbors=15,n_trees=10,verbose=self.verbose,random_state=42)
@@ -853,13 +854,21 @@ class SingleCellAlignmentLeveragingExpectations():
 
     def determine_neighbors(self):
         self.update_user("Determining Neighbors")
-        
         self.update_user("Querying Reference tree")
-        neighbors,distances = self.feature_tree_dict['tree'].query(self.measured.layers['harmonized_classification_space'],k=15)
+        
+        for i in range(15):
+            self.measured.obs[f"reference_neighbor_{i}"] = 'Unknown'
+        for ct in np.unique(self.measured_labels):
+            m = self.measured.obs[self.ref_level]==ct
+            ref_m = self.reference.obs[self.ref_level]==ct
+            tree = NNDescent(self.reference.layers['classification_space'][ref_m,:], metric='euclidean', n_neighbors=15,n_trees=10,verbose=self.verbose,random_state=42)
+            neighbors,distances = tree.query(self.measured.layers['harmonized_classification_space'][m,:],k=15)
+            ref = self.reference[ref_m]
+            for i in range(neighbors.shape[1]):
+                self.measured.obs.loc[m,f"reference_neighbor_{i}"] = np.array(ref.obs.index[neighbors[:,i]])
         X = np.zeros_like(self.measured.layers['harmonized_classification_space'])
         for i in range(neighbors.shape[1]):
-            self.measured.obs[f"reference_neighbor_{i}"] = np.array(self.feature_tree_dict['labels'][neighbors[:,i]])
-            X = X+np.array(self.reference.layers['raw'][neighbors[:,i],:])
+            X = X+np.array(self.reference[self.measured.obs[f"reference_neighbor_{i}"].values].layers['raw'])
         X = X/neighbors.shape[1]
         self.measured.layers['imputed'] = X.copy()
 
