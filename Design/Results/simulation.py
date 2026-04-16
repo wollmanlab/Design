@@ -1293,9 +1293,31 @@ if __name__ == '__main__':
                     adata = anndata.read_h5ad(fname)
                 else:
                     np.random.seed(42)
+                    # adata_copy = adata.copy()
+                    # adata_copy.X = adata_copy.X + (np.random.rand(adata_copy.X.shape[0],adata_copy.X.shape[1]) * noise_level)
+                    # adata_copy.layers['raw'] = adata_copy.X.copy()
+
                     adata_copy = adata.copy()
-                    adata_copy.X = adata_copy.X + (np.random.rand(adata_copy.X.shape[0],adata_copy.X.shape[1]) * noise_level)
-                    adata_copy.layers['raw'] = adata_copy.X.copy()
+                    X = np.asarray(adata_copy.X, dtype=np.float32)
+
+                    bit_medians = np.median(X, axis=0)
+                    bit_medians = np.clip(bit_medians, 1.0, None)
+
+                    sigma_b = (noise_level / np.sqrt(12.0)) / bit_medians
+                    sigma_b = np.clip(sigma_b, 0.0, 0.5)
+
+                    mult_noise = np.random.normal(
+                        loc=0.0,
+                        scale=sigma_b[None, :],
+                        size=X.shape
+                    ).astype(np.float32)
+
+                    X_noisy = X * (1.0 + mult_noise)
+                    X_noisy = np.clip(X_noisy, 0, None)
+
+                    adata_copy.X = X_noisy
+                    adata_copy.layers['raw'] = X_noisy.copy()
+
                     self = SingleCellAlignmentLeveragingExpectations(adata_copy,complete_reference=complete_reference,visualize=False,verbose=False)
                     self.likelihood_only = likelihood_only
                     self.calculate_spatial_priors()
